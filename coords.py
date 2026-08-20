@@ -26,6 +26,11 @@ OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 RAIO_METROS = 1600  # cobre um parque inteiro com folga
 COORDS_PATH = Path(__file__).parent / "coords.json"
 
+# A API devolve latitude/longitude do parque, mas o dado tem erro: em 20/08/2026
+# o Epic Universe veio com longitude +81.44 (sem o sinal), que cai no Nepal.
+# Por isso todo parque passa por sanidade antes de virar centro de busca.
+DISTANCIA_MAXIMA_KM = 100  # entre parques do mesmo complexo turístico
+
 CONSULTA = """
 [out:json][timeout:90];
 (
@@ -92,10 +97,40 @@ def casar(alvo: str, candidatos: dict[str, tuple[float, float]]) -> tuple[str, f
     return (melhor, melhor_score) if melhor and melhor_score >= 0.6 else None
 
 
+def coordenadas_sanas(parques: dict[str, tuple[float, float]]) -> tuple[dict, list[str]]:
+    """Separa os parques com coordenada plausível dos que estão fora da curva.
+
+    Sem âncora fixa de Orlando: usa a mediana dos próprios parques. Um ponto a
+    mais de 100 km dos demais é erro de dado, não um parque distante — todos os
+    monitorados ficam no mesmo complexo turístico.
+    """
+    if len(parques) < 3:
+        return parques, []
+    lats = sorted(c[0] for c in parques.values())
+    lons = sorted(c[1] for c in parques.values())
+    centro = (lats[len(lats) // 2], lons[len(lons) // 2])
+
+    bons, suspeitos = {}, []
+    for nome, coord in parques.items():
+        km = monitor.distancia_metros(centro, coord) / 1000
+        if km <= DISTANCIA_MAXIMA_KM:
+            bons[nome] = coord
+            continue
+        aviso = f"{nome}: {coord} está a {km:,.0f} km dos outros parques"
+        # Erro de sinal é o caso comum. Não corrijo sozinho, mas digo qual é o
+        # conserto provável — quem decide é quem edita o coords.json.
+        invertido = (coord[0], -coord[1])
+        if monitor.distancia_metros(centro, invertido) / 1000 <= DISTANCIA_MAXIMA_KM:
+            aviso += f"\n     Provável erro de sinal na API. O correto deve ser {invertido}"
+        suspeitos.append(aviso)
+    return bons, suspeitos
+
+
 def buscar_osm(lat: float, lon: float) -> dict[str, tuple[float, float]]:
     """Atrações mapeadas no OSM ao redor do ponto: {nome normalizado: (lat, lon)}."""
     consulta = CONSULTA.format(raio=RAIO_METROS, lat=lat, lon=lon)
-    resposta = monitor.get_json(f"{OVERPASS_URL}?data={consulta}")
+    # POST, não GET: a Overpass devolve 406 para consulta longa na URL
+    resposta = monitor.post_json(OVERPASS_URL, {"data": consulta})
     achados: dict[str, tuple[float, float]] = {}
     for elemento in resposta.get("elements", []):
         nome = elemento.get("tags", {}).get("name")
@@ -143,7 +178,17 @@ def main() -> int:
         print("Nenhum parque com coordenada — nada a fazer.")
         return 1
 
-    saida = {"parks": {}, "rides": {}}
+    parques, suspeitos = coordenadas_sanas(parques)
+    for aviso in suspeitos:
+        print(f"  !! COORDENADA SUSPEITA, parque ignorado — {aviso}")
+    if suspeitos:
+        print("     (dado errado na API. Dá para corrigir à mão no coords.json,")
+        print("      em \"parks\", e rodar de novo: o que já está lá é preservado.)")
+
+    # Preserva o que já existe: correção manual não pode ser perdida na re-execução
+    saida = monitor.load_coords()
+    saida.setdefault("parks", {})
+    saida.setdefault("rides", {})
     total_ok = total_falta = 0
 
     for nome, (lat, lon) in parques.items():
@@ -156,12 +201,16 @@ def main() -> int:
             continue
         print(f"  {len(osm)} atrações mapeadas no OSM")
 
-        saida["rides"][nome] = {}
+        saida["rides"].setdefault(nome, {})
         for atracao in config["parks"][nome].get("attractions", {}):
             resultado = casar(atracao, osm)
             if resultado is None:
-                print(f"  [ FALTA ] {atracao}")
-                total_falta += 1
+                if atracao in saida["rides"][nome]:
+                    print(f"  [ MANUAL] {atracao}  (mantida do coords.json)")
+                    total_ok += 1
+                else:
+                    print(f"  [ FALTA ] {atracao}")
+                    total_falta += 1
                 continue
             osm_nome, confianca = resultado
             marca = "  [  OK  ]" if confianca >= 0.85 else "  [ CONF ]"

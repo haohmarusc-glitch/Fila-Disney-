@@ -22,10 +22,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     casa com a atração real e o tempo vem 0 sem dado — alerta falso na certa.
 11. Toda chamada externa passa por `get_json` (retry, backoff, 429). Nunca chamar `requests.get` direto.
 12. Distância/tempo a pé só sai de coordenada real do `coords.json`. Atração sem coordenada aparece sem estimativa — nunca com número inventado.
-13. `last_updated` da API é levado a sério: leitura velha não alerta e não entra em ranking (`leitura_obsoleta`).
-14. Ausência de dado **nunca** vira 0 min: `wait_time` None fica None, no banco e na mensagem.
-15. Mudou comportamento? Teste em `tests/` junto. O CI barra o merge se quebrar.
-16. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
+13. Coordenada de parque vinda da API passa por sanidade (`coordenadas_sanas`): o `parks.json` já entregou o Epic Universe com longitude positiva. Ponto fora da curva é isolado com aviso, nunca corrigido em silêncio.
+14. `last_updated` da API é levado a sério: leitura velha não alerta e não entra em ranking (`leitura_obsoleta`).
+15. Ausência de dado **nunca** vira 0 min: `wait_time` None fica None, no banco e na mensagem.
+16. Mudou comportamento? Teste em `tests/` junto. O CI barra o merge se quebrar.
+17. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
 
 ## Arquitetura
 
