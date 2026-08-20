@@ -17,7 +17,10 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
    de entrar numa mensagem: `parse_mode=HTML` + `&` cru = 400 do Telegram, e
    "Mickey & Minnie's Runaway Railway" está na watchlist.
 9. Comando só é atendido se vier do `TELEGRAM_CHAT_ID` configurado.
-10. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
+10. Fila de single rider / virtual não entra em alerta nem `/status`
+    (`FILAS_IGNORADAS`): a API publica como atração separada, o match parcial
+    casa com a atração real e o tempo vem 0 sem dado — alerta falso na certa.
+11. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
 
 ## Arquitetura
 

@@ -47,6 +47,11 @@ O `/status` consulta a API na hora — não devolve o último ciclo gravado. A
 resposta vem ordenada da menor fila para a maior, com ✅ nas atrações que já
 estão abaixo do threshold e 🔒 nas fechadas.
 
+Filas de **single rider** e virtuais ficam fora do alerta e do `/status`: a API
+publica cada uma como atração separada, o nome casa por match parcial com a
+atração de verdade e o tempo vem 0 quando não há dado — o que viraria alerta
+falso de "0 min, vai agora". Elas continuam sendo gravadas no histórico.
+
 Só o `TELEGRAM_CHAT_ID` configurado é atendido; comando de qualquer outro chat
 é ignorado com warning no log. Comandos mandados enquanto o container estava
 fora do ar são descartados na subida, para o bot não despejar um monte de
