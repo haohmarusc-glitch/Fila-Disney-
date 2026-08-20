@@ -137,6 +137,7 @@ O Queue-Times não devolve lat/lon das atrações (só `id`, `name`, `is_open`,
 docker compose exec fila-disney python coords.py --revisar   # só relatório
 docker compose exec fila-disney python coords.py             # grava coords.json
 docker compose exec fila-disney python coords.py --forcar    # refaz até o que já está pronto
+docker compose exec fila-disney python coords.py --listar    # só despeja os nomes crus do OSM
 ```
 
 ### O banco de coordenadas é o `coords.json`
@@ -179,6 +180,10 @@ diz qual é a correção provável — foi o caso do Epic Universe em 20/08/2026
 o `parks.json` entregou com longitude `+81.44` (sem o sinal, cai no Nepal). Para
 corrigir, edite `coords.json` na seção `"parks"` e rode de novo: **o script
 preserva o que já está lá**, então correção manual não se perde.
+
+Quando uma atração não casa e nem candidato aparece, o problema não é o
+casamento: é o OSM não ter devolvido aquela atração. Use `--listar` para ver os
+nomes crus e confirmar, em vez de supor.
 
 O casamento de nomes entre OSM e Queue-Times é aproximado: o script marca
 `[ OK ]`, `[ CONF ]` (confira) e `[ FALTA ]`. O que faltar pode ser preenchido à

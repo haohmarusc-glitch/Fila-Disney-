@@ -67,13 +67,20 @@ CORRECOES_COORDENADA = {
     "Universal Epic Universe": (28.44144545, -81.44867409),
 }
 
+# relation entra porque atração grande costuma ser multipolígono no OSM: sem
+# ela, VelociCoaster, Spider-Man, Ripsaw Falls e Forbidden Journey não voltavam
+# nem como candidato — e "Ripsaw Falls" dentro de "Dudley Do-Right's Ripsaw
+# Falls" casaria com 0.85 se estivesse na resposta. `out center` resolve o
+# centro de way e relation igual.
 CONSULTA = """
 [out:json][timeout:90];
 (
   node(around:{raio},{lat},{lon})["attraction"]["name"];
   way(around:{raio},{lat},{lon})["attraction"]["name"];
+  relation(around:{raio},{lat},{lon})["attraction"]["name"];
   node(around:{raio},{lat},{lon})["tourism"="attraction"]["name"];
   way(around:{raio},{lat},{lon})["tourism"="attraction"]["name"];
+  relation(around:{raio},{lat},{lon})["tourism"="attraction"]["name"];
 );
 out center;
 """
@@ -263,6 +270,7 @@ def main() -> int:
     forcar_ipv4()
     apenas_revisar = "--revisar" in sys.argv
     forcar = "--forcar" in sys.argv  # refaz até os parques já completos
+    listar = "--listar" in sys.argv  # despeja os nomes crus do OSM e sai
     config = monitor.load_config()
     nomes = list(config["parks"])
 
@@ -308,6 +316,10 @@ def main() -> int:
             falhas_overpass += 1
             continue
         print(f"  {len(osm)} atrações mapeadas no OSM")
+        if listar:  # conferir o que existe de fato, em vez de supor
+            for osm_nome in sorted(osm):
+                print(f"       {osm_nome}")
+            continue
 
         saida["rides"].setdefault(nome, {})
         for atracao in config["parks"][nome].get("attractions", {}):
