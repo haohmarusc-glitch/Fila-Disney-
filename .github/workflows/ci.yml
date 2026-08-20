@@ -30,3 +30,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build da imagem
         run: docker build -t fila-disney:ci .
+
+      # O build sozinho não pega módulo faltando no COPY: docker build não
+      # importa nada. Foi assim que o localizacao.py chegou em produção fora da
+      # imagem, com o CI verde e o container em loop de reinício.
+      - name: Smoke test — a imagem consegue importar tudo?
+        run: |
+          docker run --rm fila-disney:ci python -c "
+          import monitor, notifier, localizacao, coords, healthcheck, analyze
+          print('todos os módulos importam dentro da imagem')
+          "
+
+      - name: Smoke test — o healthcheck roda?
+        run: |
+          docker run --rm fila-disney:ci python healthcheck.py && echo inesperado || \
+            echo "healthcheck retornou não-zero sem banco, como esperado"

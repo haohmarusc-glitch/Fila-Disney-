@@ -4,7 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY monitor.py notifier.py analyze.py healthcheck.py coords.py watchlist.json ./
+COPY monitor.py notifier.py localizacao.py analyze.py healthcheck.py coords.py watchlist.json ./
 # coords.json é opcional e gerado depois; o COPY não pode falhar sem ele
 COPY coords.jso[n] ./
 
