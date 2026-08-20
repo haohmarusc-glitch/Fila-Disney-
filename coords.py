@@ -1,18 +1,19 @@
-"""Busca coordenadas das atrações no OpenStreetMap e grava coords.json.
+"""Enriquecimento de coordenadas — NÃO é etapa obrigatória do sistema.
 
-Roda UMA VEZ (ou quando a watchlist mudar). Não faz parte do loop do monitor:
-o bot só lê o coords.json pronto.
+O banco de coordenadas é o coords.json, versionado no repositório. O bot lê só
+ele; a Overpass existe para PREENCHER esse arquivo, não para servi-lo. Se a
+Overpass estiver fora, o que já está no coords.json continua valendo e o /perto
+funciona igual — só não ganha coordenada nova.
 
-    docker compose exec fila-disney python coords.py
+Uso:
     docker compose exec fila-disney python coords.py --revisar   # só relatório
+    docker compose exec fila-disney python coords.py             # grava coords.json
+    docker compose exec fila-disney python coords.py --forcar    # refaz tudo
 
-Por que OSM: o Queue-Times não devolve lat/lon (confirmado no queue_times.json,
-que traz só id, name, is_open, wait_time e last_updated). Os parques de Orlando
-são bem mapeados no OSM, e a Overpass API é aberta e sem chave.
-
-O casamento de nomes entre OSM e Queue-Times é aproximado. O que não casar sai
-listado para ajuste manual — é melhor faltar coordenada do que ter coordenada
-errada mandando o grupo para o outro lado do parque.
+Parque já completo no coords.json é pulado, e o progresso é gravado a cada
+parque: se a Overpass recusar no meio, é só rodar de novo mais tarde que ele
+continua de onde parou. Falha total da Overpass não é erro de execução — o
+script termina com 0 e diz o que ficou faltando.
 """
 import json
 import re
@@ -21,9 +22,29 @@ import time
 import unicodedata
 from pathlib import Path
 
+import localizacao
 import monitor
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Container Docker não tem IPv6 por padrão. O overpass-api.de resolve para IPv6
+# e a conexão morre com "Network is unreachable" — foi o que travou a execução
+# de 20/08/2026 depois das duas primeiras consultas terem calhado de ir por IPv4.
+def forcar_ipv4() -> None:
+    try:
+        import socket
+        import urllib3.util.connection as conexao_urllib3
+        conexao_urllib3.allowed_gai_family = lambda: socket.AF_INET
+    except Exception:  # noqa: BLE001 — sem urllib3 acessível, segue como estava
+        pass
+
+
+# Espelhos oficiais da Overpass. Se um recusa ou está fora, tenta o próximo em
+# vez de insistir no mesmo — a fila de espera de cada instância é independente.
+OVERPASS_ESPELHOS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.osm.ch/api/interpreter",
+)
+OVERPASS_URL = OVERPASS_ESPELHOS[0]
 # A Overpass é um serviço público e gratuito, com política de uso moderado.
 # Sete consultas seguidas sem pausa renderam 504, 429 e recusa de conexão na
 # primeira execução real — daí a pausa entre parques e a espera longa no 429.
@@ -37,6 +58,14 @@ COORDS_PATH = Path(__file__).parent / "coords.json"
 # o Epic Universe veio com longitude +81.44 (sem o sinal), que cai no Nepal.
 # Por isso todo parque passa por sanidade antes de virar centro de busca.
 DISTANCIA_MAXIMA_KM = 100  # entre parques do mesmo complexo turístico
+
+# Correção de dado errado de terceiro, aplicada SÓ quando o valor recebido falha
+# na sanidade. Em 20/08/2026 o parks.json entregou o Epic Universe com longitude
+# +81.44867409 (sem o sinal), que cai no Nepal. Se a API consertar, o valor bom
+# passa na sanidade e esta tabela nunca é consultada.
+CORRECOES_COORDENADA = {
+    "Universal Epic Universe": (28.44144545, -81.44867409),
+}
 
 CONSULTA = """
 [out:json][timeout:90];
@@ -119,15 +148,23 @@ def coordenadas_sanas(parques: dict[str, tuple[float, float]]) -> tuple[dict, li
 
     bons, suspeitos = {}, []
     for nome, coord in parques.items():
-        km = monitor.distancia_metros(centro, coord) / 1000
+        km = localizacao.distancia_metros(centro, coord) / 1000
         if km <= DISTANCIA_MAXIMA_KM:
             bons[nome] = coord
+            continue
+
+        # Só aqui, com o dado comprovadamente fora da curva, vale substituir.
+        correcao = CORRECOES_COORDENADA.get(nome)
+        if correcao and localizacao.distancia_metros(centro, correcao) / 1000 <= DISTANCIA_MAXIMA_KM:
+            print(f"  ** {nome}: coordenada da API está errada ({coord}); "
+                  f"usando a correção conhecida {correcao}")
+            bons[nome] = correcao
             continue
         aviso = f"{nome}: {coord} está a {km:,.0f} km dos outros parques"
         # Erro de sinal é o caso comum. Não corrijo sozinho, mas digo qual é o
         # conserto provável — quem decide é quem edita o coords.json.
         invertido = (coord[0], -coord[1])
-        if monitor.distancia_metros(centro, invertido) / 1000 <= DISTANCIA_MAXIMA_KM:
+        if localizacao.distancia_metros(centro, invertido) / 1000 <= DISTANCIA_MAXIMA_KM:
             aviso += f"\n     Provável erro de sinal na API. O correto deve ser {invertido}"
         suspeitos.append(aviso)
     return bons, suspeitos
@@ -137,9 +174,19 @@ def buscar_osm(lat: float, lon: float) -> dict[str, tuple[float, float]]:
     """Atrações mapeadas no OSM ao redor do ponto: {nome normalizado: (lat, lon)}."""
     consulta = CONSULTA.format(raio=RAIO_METROS, lat=lat, lon=lon)
     # POST, não GET: a Overpass devolve 406 para consulta longa na URL
-    resposta = monitor.post_json(
-        OVERPASS_URL, {"data": consulta},
-        tentativas=TENTATIVAS_OVERPASS, espera_minima=ESPERA_MINIMA_429_S)
+    erros = []
+    for espelho in OVERPASS_ESPELHOS:
+        try:
+            resposta = monitor.post_json(
+                espelho, {"data": consulta},
+                tentativas=TENTATIVAS_OVERPASS, espera_minima=ESPERA_MINIMA_429_S)
+            break
+        except Exception as exc:  # noqa: BLE001 — espelho fora, tenta o próximo
+            print(f"  .. espelho {espelho.split('/')[2]} indisponível")
+            erros.append(f"{espelho.split('/')[2]}: {exc}")
+    else:
+        raise RuntimeError("nenhum espelho da Overpass respondeu:\n     "
+                           + "\n     ".join(erros))
     achados: dict[str, tuple[float, float]] = {}
     for elemento in resposta.get("elements", []):
         nome = elemento.get("tags", {}).get("name")
@@ -193,6 +240,7 @@ def gravar(saida: dict) -> None:
 
 
 def main() -> int:
+    forcar_ipv4()
     apenas_revisar = "--revisar" in sys.argv
     forcar = "--forcar" in sys.argv  # refaz até os parques já completos
     config = monitor.load_config()
@@ -212,8 +260,8 @@ def main() -> int:
         print("      em \"parks\", e rodar de novo: o que já está lá é preservado.)")
 
     # Preserva o que já existe: correção manual não pode ser perdida na re-execução
-    total_ok = total_falta = 0
-    saida = monitor.load_coords()
+    total_ok = total_falta = falhas_overpass = 0
+    saida = localizacao.load_coords()
     saida.setdefault("parks", {})
     saida.setdefault("rides", {})
 
@@ -236,6 +284,7 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 — um parque falho não aborta o resto
             print(f"  !! Overpass falhou: {exc}")
             print("     Rode de novo mais tarde: o que já foi resolvido é preservado.")
+            falhas_overpass += 1
             continue
         print(f"  {len(osm)} atrações mapeadas no OSM")
 
@@ -268,7 +317,17 @@ def main() -> int:
     print(f"Gravado em {COORDS_PATH}")
     print("As marcadas [ CONF ] merecem conferência; as [ FALTA ] podem ser")
     print("preenchidas à mão em coords.json, no formato \"Nome\": [lat, lon].")
-    return 0
+
+    if total_ok:
+        print()
+        print("O coords.json já serve: o /perto usa o que estiver aqui e ignora o")
+        print("resto. Commite o arquivo para virar o banco local do projeto.")
+    if falhas_overpass:
+        print()
+        print(f"A Overpass não respondeu para {falhas_overpass} parque(s). Isso NÃO")
+        print("é falha do sistema: rode de novo mais tarde para completar, ou")
+        print("preencha à mão. O bot funciona com o que já existe.")
+    return 0  # Overpass fora nunca é erro de execução
 
 
 if __name__ == "__main__":

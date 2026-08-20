@@ -139,6 +139,24 @@ docker compose exec fila-disney python coords.py             # grava coords.json
 docker compose exec fila-disney python coords.py --forcar    # refaz até o que já está pronto
 ```
 
+### O banco de coordenadas é o `coords.json`
+
+Ele é **versionado no repositório** e é a única fonte que o bot lê em runtime. A
+Overpass serve para *preencher* esse arquivo, não para servi-lo:
+
+```
+Overpass  ──(uma vez, opcional)──>  coords.json  ──(sempre)──>  /perto
+```
+
+Consequências práticas: o `/perto` funciona sem rede externa nenhuma além do
+Queue-Times; Overpass fora do ar não afeta o bot rodando; atração sem
+coordenada aparece na lista sem estimativa de caminhada, em vez de sumir; e o
+`coords.py` termina com código 0 mesmo se a Overpass não responder para parque
+nenhum, porque isso não é falha do sistema.
+
+Se preferir, dá para pular a Overpass inteira e preencher o `coords.json` à
+mão, no formato `"Nome da Atração": [lat, lon]`.
+
 A Overpass é serviço público e gratuito, com política de uso moderado: o script
 espaça as consultas em 20s e espera 45s no 429. Ainda assim ela pode recusar —
 nesse caso **rode de novo mais tarde**, que ele continua de onde parou: o

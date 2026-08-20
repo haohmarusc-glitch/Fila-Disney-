@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+import localizacao  # noqa: E402 — ciclo resolvido: uso só dentro de funções
 import notifier
 
 logging.basicConfig(
@@ -257,8 +258,17 @@ def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status is not None and 400 <= status < 500 and status != 429:
                 break
-            if tentativa < tentativas:
+            # "Network is unreachable" e DNS quebrado não melhoram esperando: o
+            # espera_minima existe para servidor pedindo calma, não para rota
+            # inexistente. Insistir 45s aqui só empata a execução.
+            if isinstance(exc, ConnectionError) or isinstance(
+                    exc, getattr(requests, "ConnectionError", ())):
+                if tentativa >= 2:
+                    break
+                espera = HTTP_BACKOFF_BASE
+            elif tentativa < tentativas:
                 espera = max(HTTP_BACKOFF_BASE ** tentativa, espera_minima)
+            if tentativa < tentativas:
                 log.warning("Falha em %s (tentativa %d/%d): %s — nova tentativa em %ds",
                             url, tentativa, tentativas, exc, espera)
                 _dormir(espera)
@@ -362,116 +372,6 @@ def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
         if watched.lower() in ride_name.lower() or ride_name.lower() in watched.lower():
             return threshold
     return None
-
-
-# ---------------------------------------------------------------- localização
-
-VELOCIDADE_M_POR_MIN = 84      # 5 km/h
-FATOR_CAMINHO = 1.3            # linha reta vira caminho real dentro do parque
-RAIO_PARQUE_METROS = 2500      # além disso você não está nesse parque
-MAPS_URL = ("https://www.google.com/maps/dir/?api=1"
-            "&origin={o_lat},{o_lon}&destination={d_lat},{d_lon}&travelmode=walking")
-
-
-def load_coords() -> dict:
-    """coords.json é opcional: sem ele o bot roda igual, só sem /perto."""
-    try:
-        with open(COORDS_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {"parks": {}, "rides": {}}
-
-
-def distancia_metros(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Haversine. Em escala de parque o erro é irrelevante e não precisa de lib."""
-    raio = 6_371_000
-    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
-    h = (math.sin((lat2 - lat1) / 2) ** 2
-         + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2)
-    return 2 * raio * math.asin(math.sqrt(h))
-
-
-def minutos_a_pe(metros: float) -> int:
-    """Estimativa, não rota. Google Maps não mapeia caminho interno de parque."""
-    return max(1, round(metros * FATOR_CAMINHO / VELOCIDADE_M_POR_MIN))
-
-
-def parque_mais_proximo(posicao: tuple[float, float], coords: dict) -> str | None:
-    candidatos = [
-        (distancia_metros(posicao, tuple(coord)), nome)
-        for nome, coord in coords.get("parks", {}).items()
-    ]
-    if not candidatos:
-        return None
-    distancia, nome = min(candidatos)
-    return nome if distancia <= RAIO_PARQUE_METROS else None
-
-
-def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
-    """(total, fila, caminhada, metros, atração, coord) ordenado por tempo total.
-
-    O critério é fila + caminhada, não menor fila: 19 min de fila a 7 min de
-    caminhada ganha de 16 min de fila a 13 min de caminhada.
-    """
-    do_parque = coords.get("rides", {}).get(park_name, {})
-    limite_obsoleto = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
-    park_cfg = config["parks"].get(park_name, {})
-
-    itens = []
-    for _land, ride in iter_rides(payload):
-        nome = ride["name"]
-        if fila_paralela(nome) or not ride.get("is_open"):
-            continue
-        if leitura_obsoleta(ride, limite_obsoleto):
-            continue
-        fila = ride.get("wait_time")
-        if fila is None or get_threshold(park_cfg, nome) is None:
-            continue
-        coord = do_parque.get(nome)
-        if coord is None:  # sem coordenada entra no fim, sem estimativa
-            itens.append((None, fila, None, None, nome, None))
-            continue
-        metros = distancia_metros(posicao, tuple(coord))
-        caminhada = minutos_a_pe(metros)
-        itens.append((fila + caminhada, fila, caminhada, metros, nome, tuple(coord)))
-
-    com_coord = sorted([i for i in itens if i[0] is not None])
-    sem_coord = sorted([i for i in itens if i[0] is None], key=lambda i: i[1])
-    return com_coord + sem_coord
-
-
-def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5) -> str:
-    ranking = ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn)
-    if not ranking:
-        return (f"📍 <b>{notifier.esc(park_name)}</b>\n\n"
-                "Nenhuma atração da watchlist aberta com dado agora.")
-
-    linhas = [
-        f"📍 Você está em <b>{notifier.esc(park_name)}</b>",
-        f"🕒 {now_park(config).strftime('%Hh%M')} no horário do parque",
-        "",
-        "Ordenado por <b>fila + caminhada</b>:",
-        "",
-    ]
-    medalhas = ("🥇", "🥈", "🥉", "4️⃣", "5️⃣")
-    for i, (total, fila, caminhada, metros, nome, coord) in enumerate(ranking[:limite]):
-        medalha = medalhas[i] if i < len(medalhas) else "•"
-        seta = marca_tendencia(conn, park_name, nome)
-        if total is None:
-            linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — fila {fila} min{seta}")
-            linhas.append("     <i>sem coordenada: distância desconhecida</i>")
-            continue
-        linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — <b>{total} min</b> no total")
-        linhas.append(f"     fila {fila} min{seta} · 🚶 {caminhada} min ({metros:.0f} m)")
-
-    melhor = ranking[0]
-    if melhor[5] is not None:
-        rota = MAPS_URL.format(o_lat=posicao[0], o_lon=posicao[1],
-                               d_lat=melhor[5][0], d_lon=melhor[5][1])
-        linhas += ["", f'🗺️ <a href="{rota}">Abrir rota até {notifier.esc(melhor[4])}</a>']
-    linhas += ["", "Caminhada é estimativa por distância, não rota.",
-               "Powered by Queue-Times.com"]
-    return "\n".join(linhas)
 
 
 # ---------------------------------------------------------------- tendência
@@ -844,7 +744,7 @@ def responder_localizacao(latitude: float, longitude: float, conn: sqlite3.Conne
                 "Rode <code>python coords.py</code> uma vez no servidor.")
 
     posicao = (latitude, longitude)
-    park_name = parque_mais_proximo(posicao, coords)
+    park_name = localizacao.parque_mais_proximo(posicao, coords)
     if park_name is None:
         return ("📍 Não achei nenhum parque monitorado perto de você. "
                 "Este recurso só funciona dentro dos parques.")
@@ -856,7 +756,7 @@ def responder_localizacao(latitude: float, longitude: float, conn: sqlite3.Conne
     except requests.RequestException as exc:
         log.error("Falha ao buscar %s para localização: %s", park_name, exc)
         return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
-    return format_perto(posicao, park_name, payload, config, coords, conn)
+    return localizacao.format_perto(posicao, park_name, payload, config, coords, conn)
 
 
 def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:
@@ -1115,7 +1015,7 @@ def main() -> None:
     if sem_id:
         log.warning("Dias de parque sem alerta (parque não resolvido na API): %s", sorted(sem_id))
 
-    coords = load_coords()
+    coords = localizacao.load_coords()
     com_coord = sum(len(r) for r in coords.get("rides", {}).values())
     if com_coord:
         log.info("coords.json: %d atrações com coordenada — /perto ativo", com_coord)

@@ -85,10 +85,11 @@ class BaseTeste(unittest.TestCase):
         sys.modules["requests"] = _requests
         self.requests = _requests
 
-        for nome in ("notifier", "monitor"):
+        for nome in ("notifier", "monitor", "localizacao", "coords"):
             sys.modules.pop(nome, None)
         self.notifier = importlib.import_module("notifier")
         self.monitor = importlib.import_module("monitor")
+        self.loc = importlib.import_module("localizacao")
 
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

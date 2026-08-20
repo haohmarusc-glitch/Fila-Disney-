@@ -30,6 +30,9 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 
 ## Arquitetura
 
+`coords.json` é o banco local de coordenadas, versionado. A Overpass (`coords.py`) é enriquecimento de uma vez só, nunca dependência de runtime — o `monitor.py` não conhece a Overpass. `localizacao.py` isola tudo que fala de geografia.
+
+
 - `monitor.py` — loop de 5 min: fetch → grava SQLite → checa thresholds → alerta.
   Entre um ciclo e outro fica em long polling do Telegram atendendo comandos
   (`/status`, `/parques`, `/help`) — mesma thread, sem concorrência com o SQLite
