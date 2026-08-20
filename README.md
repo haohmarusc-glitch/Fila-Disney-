@@ -39,7 +39,7 @@ docker compose logs -f  # deve mostrar "Parques resolvidos: {...}"
 | Comando | O que faz |
 |---|---|
 | `/status` | Fila agora das atrações da watchlist do parque do dia |
-| `/status <parque>` | Fila de qualquer parque monitorado (`/status Epcot`, `/status IOA`) |
+| `/status <parque>` | Fila de qualquer parque monitorado (`/status Epcot`, `/status islands`) |
 | `/resumo` | Previsão do dia pelo histórico — o mesmo texto que chega às 7h |
 | `/resumo <parque>` | Previsão de um parque específico, em qualquer data |
 | `/menores` | Ranking das menores filas do parque **inteiro** agora |
@@ -101,6 +101,28 @@ Com `only_park_days: false` ele manda também nos dias sem parque, avisando que
 está em modo coleta. O padrão é `true` para não virar spam diário até outubro.
 Se o container subir depois das 7h, o resumo ainda sai — vale por 2 horas — e
 nunca é enviado duas vezes no mesmo dia.
+
+### Como escrever o nome do parque
+
+O nome casa por pedaço, sem diferenciar maiúscula. Siglas **não** funcionam
+(`IOA`, `USF`, `MK`) porque não são pedaço do nome que a API usa:
+
+| Digite | Resolve para |
+|---|---|
+| `magic` | Disney Magic Kingdom |
+| `epcot` | Epcot |
+| `hollywood` | Disney Hollywood Studios |
+| `animal` | Disney Animal Kingdom |
+| `islands` ou `adventure` | Islands Of Adventure At Universal Orlando |
+| `studios at` | Universal Studios At Universal Orlando |
+| `epic` | Universal Epic Universe |
+
+`universal`, `studios` e `disney` sozinhos casam com mais de um parque — nesse
+caso o bot lista as opções em vez de escolher. O Universal Studios precisa do
+`at` para não empatar com o Hollywood Studios.
+
+Cada mensagem vale por um comando: se você mandar várias linhas de uma vez, só
+a primeira é executada.
 
 Só o `TELEGRAM_CHAT_ID` configurado é atendido; comando de qualquer outro chat
 é ignorado com warning no log. Comandos mandados enquanto o container estava
