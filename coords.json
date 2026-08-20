@@ -1,0 +1,265 @@
+{
+  "parks": {
+    "Disney Magic Kingdom": [
+      28.417663,
+      -81.581212
+    ],
+    "Epcot": [
+      28.374694,
+      -81.549404
+    ],
+    "Disney Hollywood Studios": [
+      28.3575294,
+      -81.5582714
+    ],
+    "Disney Animal Kingdom": [
+      28.3530666,
+      -81.5911943
+    ],
+    "Universal Studios At Universal Orlando": [
+      28.4749822,
+      -81.466497
+    ],
+    "Islands Of Adventure At Universal Orlando": [
+      28.472243,
+      -81.4678556
+    ],
+    "Universal Epic Universe": [
+      28.44144545,
+      -81.44867409
+    ]
+  },
+  "rides": {
+    "Disney Magic Kingdom": {
+      "Seven Dwarfs Mine Train": [
+        28.420634,
+        -81.580052
+      ],
+      "TRON Lightcycle / Run": [
+        28.420514,
+        -81.57672
+      ],
+      "Space Mountain": [
+        28.41915,
+        -81.577248
+      ],
+      "Big Thunder Mountain Railroad": [
+        28.420306,
+        -81.584725
+      ],
+      "Tiana's Bayou Adventure": [
+        28.419145,
+        -81.58516
+      ],
+      "Peter Pan's Flight": [
+        28.420154,
+        -81.581999
+      ],
+      "Jungle Cruise": [
+        28.417943,
+        -81.58347
+      ],
+      "Haunted Mansion": [
+        28.420849,
+        -81.582905
+      ],
+      "Pirates of the Caribbean": [
+        28.417722,
+        -81.584931
+      ],
+      "Buzz Lightyear's Space Ranger Spin": [
+        28.418016,
+        -81.579777
+      ]
+    },
+    "Epcot": {
+      "Guardians of the Galaxy: Cosmic Rewind": [
+        28.37552,
+        -81.546947
+      ],
+      "Frozen Ever After": [
+        28.370803,
+        -81.546235
+      ],
+      "Remy's Ratatouille Adventure": [
+        28.367924,
+        -81.55286
+      ],
+      "Test Track": [
+        28.372856,
+        -81.547218
+      ],
+      "Mission: SPACE": [
+        28.373901,
+        -81.546716
+      ],
+      "Soarin' Around the World": [
+        28.372853,
+        -81.552699
+      ]
+    },
+    "Disney Hollywood Studios": {
+      "Star Wars: Rise of the Resistance": [
+        28.354287,
+        -81.560481
+      ],
+      "Slinky Dog Dash": [
+        28.356394,
+        -81.562328
+      ],
+      "Millennium Falcon: Smugglers Run": [
+        28.353524,
+        -81.561703
+      ],
+      "Mickey & Minnie's Runaway Railway": [
+        28.356255,
+        -81.560447
+      ],
+      "Tower of Terror": [
+        28.360016,
+        -81.55994
+      ],
+      "Rock 'n' Roller Coaster": [
+        28.359642,
+        -81.561521
+      ],
+      "Toy Story Mania!": [
+        28.356023,
+        -81.561335
+      ],
+      "Alien Swirling Saucers": [
+        28.355653,
+        -81.562725
+      ]
+    },
+    "Disney Animal Kingdom": {
+      "Avatar Flight of Passage": [
+        28.354861,
+        -81.592826
+      ],
+      "Na'vi River Journey": [
+        28.354764,
+        -81.592192
+      ],
+      "Kilimanjaro Safaris": [
+        28.359727,
+        -81.592406
+      ],
+      "Kali River Rapids": [
+        28.359536,
+        -81.588062
+      ],
+      "Expedition Everest": [
+        28.358611,
+        -81.587202
+      ]
+    },
+    "Universal Studios At Universal Orlando": {
+      "Harry Potter and the Escape from Gringotts": [
+        28.480158,
+        -81.470037
+      ],
+      "Revenge of the Mummy": [
+        28.476863,
+        -81.469985
+      ],
+      "Transformers: The Ride 3D": [
+        28.4764,
+        -81.468439
+      ],
+      "MEN IN BLACK Alien Attack": [
+        28.480905,
+        -81.467587
+      ],
+      "The Simpsons Ride": [
+        28.479453,
+        -81.467509
+      ],
+      "E.T. Adventure": [
+        28.477618,
+        -81.466557
+      ],
+      "Villain-Con Minion Blast": [
+        28.475569,
+        -81.467864
+      ]
+    },
+    "Islands Of Adventure At Universal Orlando": {
+      "Hagrid's Magical Creatures Motorbike Adventure": [
+        28.473436,
+        -81.473509
+      ],
+      "The Incredible Hulk Coaster": [
+        28.471502,
+        -81.468776
+      ],
+      "Skull Island: Reign of Kong": [
+        28.469061,
+        -81.473049
+      ],
+      "Jurassic Park River Adventure": [
+        28.470291,
+        -81.473936
+      ],
+      "Flight of the Hippogriff": [
+        28.472446,
+        -81.473792
+      ],
+      "Jurassic World VelociCoaster": [
+        28.471099,
+        -81.472491
+      ],
+      "Harry Potter and the Forbidden Journey": [
+        28.471876,
+        -81.473948
+      ],
+      "The Amazing Adventures of Spider-Man": [
+        28.470055,
+        -81.469659
+      ],
+      "Ripsaw Falls": [
+        28.469214,
+        -81.47183
+      ],
+      "Doctor Doom's Fearfall": [
+        28.470524,
+        -81.469297
+      ]
+    },
+    "Universal Epic Universe": {
+      "Harry Potter and the Battle at the Ministry": [
+        28.443753,
+        -81.448174
+      ],
+      "Stardust Racers": [
+        28.441555,
+        -81.446542
+      ],
+      "Mine-Cart Madness": [
+        28.438127,
+        -81.448869
+      ],
+      "Monsters Unchained: The Frankenstein Experiment": [
+        28.440751,
+        -81.450971
+      ],
+      "Mario Kart: Bowser's Challenge": [
+        28.438288,
+        -81.44795
+      ],
+      "Hiccup's Wing Gliders": [
+        28.441252,
+        -81.444494
+      ],
+      "Curse of the Werewolf": [
+        28.439683,
+        -81.449637
+      ],
+      "Constellation Carousel": [
+        28.440293,
+        -81.447783
+      ]
+    }
+  },
+  "aliases": {}
+}
