@@ -14,6 +14,7 @@ import json
 import logging
 import sqlite3
 import time
+import math
 import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -32,6 +33,7 @@ log = logging.getLogger("monitor")
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "data" / "history.db"
 WATCHLIST_PATH = BASE_DIR / "watchlist.json"
+COORDS_PATH = BASE_DIR / "coords.json"
 
 PARKS_URL = "https://queue-times.com/parks.json"
 QUEUE_URL = "https://queue-times.com/parks/{park_id}/queue_times.json"
@@ -299,6 +301,25 @@ def mark_alerted(conn: sqlite3.Connection, park: str, ride: str) -> None:
 # Continuam sendo gravadas no histórico; ficam fora só de alerta e /status.
 FILAS_IGNORADAS = ("single rider", "virtual line", "virtual queue")
 
+# A API entrega last_updated por atração. Leitura parada há muito tempo é número
+# velho: alertar "20 min" com dado de 3h atrás manda o grupo para uma fila que
+# não existe mais. Só afeta alerta e ranking — o histórico continua gravando tudo.
+OBSOLETO_MINUTOS_PADRAO = 30
+
+
+def leitura_obsoleta(ride: dict, limite_min: int = OBSOLETO_MINUTOS_PADRAO) -> bool:
+    """True se o last_updated da atração for mais velho que o limite."""
+    bruto = ride.get("last_updated")
+    if not bruto:
+        return False  # sem o campo não dá para julgar: vale o dado
+    try:
+        marca = datetime.fromisoformat(str(bruto).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if marca.tzinfo is not None:
+        marca = marca.astimezone(timezone.utc).replace(tzinfo=None)
+    return utc_now() - marca > timedelta(minutes=limite_min)
+
 
 def fila_paralela(ride_name: str) -> bool:
     """True para single rider / fila virtual — entrada separada na API, tempo 0."""
@@ -314,6 +335,116 @@ def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
         if watched.lower() in ride_name.lower() or ride_name.lower() in watched.lower():
             return threshold
     return None
+
+
+# ---------------------------------------------------------------- localização
+
+VELOCIDADE_M_POR_MIN = 84      # 5 km/h
+FATOR_CAMINHO = 1.3            # linha reta vira caminho real dentro do parque
+RAIO_PARQUE_METROS = 2500      # além disso você não está nesse parque
+MAPS_URL = ("https://www.google.com/maps/dir/?api=1"
+            "&origin={o_lat},{o_lon}&destination={d_lat},{d_lon}&travelmode=walking")
+
+
+def load_coords() -> dict:
+    """coords.json é opcional: sem ele o bot roda igual, só sem /perto."""
+    try:
+        with open(COORDS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"parks": {}, "rides": {}}
+
+
+def distancia_metros(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Haversine. Em escala de parque o erro é irrelevante e não precisa de lib."""
+    raio = 6_371_000
+    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = (math.sin((lat2 - lat1) / 2) ** 2
+         + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2)
+    return 2 * raio * math.asin(math.sqrt(h))
+
+
+def minutos_a_pe(metros: float) -> int:
+    """Estimativa, não rota. Google Maps não mapeia caminho interno de parque."""
+    return max(1, round(metros * FATOR_CAMINHO / VELOCIDADE_M_POR_MIN))
+
+
+def parque_mais_proximo(posicao: tuple[float, float], coords: dict) -> str | None:
+    candidatos = [
+        (distancia_metros(posicao, tuple(coord)), nome)
+        for nome, coord in coords.get("parks", {}).items()
+    ]
+    if not candidatos:
+        return None
+    distancia, nome = min(candidatos)
+    return nome if distancia <= RAIO_PARQUE_METROS else None
+
+
+def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
+    """(total, fila, caminhada, metros, atração, coord) ordenado por tempo total.
+
+    O critério é fila + caminhada, não menor fila: 19 min de fila a 7 min de
+    caminhada ganha de 16 min de fila a 13 min de caminhada.
+    """
+    do_parque = coords.get("rides", {}).get(park_name, {})
+    limite_obsoleto = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
+    park_cfg = config["parks"].get(park_name, {})
+
+    itens = []
+    for _land, ride in iter_rides(payload):
+        nome = ride["name"]
+        if fila_paralela(nome) or not ride.get("is_open"):
+            continue
+        if leitura_obsoleta(ride, limite_obsoleto):
+            continue
+        fila = ride.get("wait_time")
+        if fila is None or get_threshold(park_cfg, nome) is None:
+            continue
+        coord = do_parque.get(nome)
+        if coord is None:  # sem coordenada entra no fim, sem estimativa
+            itens.append((None, fila, None, None, nome, None))
+            continue
+        metros = distancia_metros(posicao, tuple(coord))
+        caminhada = minutos_a_pe(metros)
+        itens.append((fila + caminhada, fila, caminhada, metros, nome, tuple(coord)))
+
+    com_coord = sorted([i for i in itens if i[0] is not None])
+    sem_coord = sorted([i for i in itens if i[0] is None], key=lambda i: i[1])
+    return com_coord + sem_coord
+
+
+def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5) -> str:
+    ranking = ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn)
+    if not ranking:
+        return (f"📍 <b>{notifier.esc(park_name)}</b>\n\n"
+                "Nenhuma atração da watchlist aberta com dado agora.")
+
+    linhas = [
+        f"📍 Você está em <b>{notifier.esc(park_name)}</b>",
+        f"🕒 {now_park(config).strftime('%Hh%M')} no horário do parque",
+        "",
+        "Ordenado por <b>fila + caminhada</b>:",
+        "",
+    ]
+    medalhas = ("🥇", "🥈", "🥉", "4️⃣", "5️⃣")
+    for i, (total, fila, caminhada, metros, nome, coord) in enumerate(ranking[:limite]):
+        medalha = medalhas[i] if i < len(medalhas) else "•"
+        seta = marca_tendencia(conn, park_name, nome)
+        if total is None:
+            linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — fila {fila} min{seta}")
+            linhas.append("     <i>sem coordenada: distância desconhecida</i>")
+            continue
+        linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — <b>{total} min</b> no total")
+        linhas.append(f"     fila {fila} min{seta} · 🚶 {caminhada} min ({metros:.0f} m)")
+
+    melhor = ranking[0]
+    if melhor[5] is not None:
+        rota = MAPS_URL.format(o_lat=posicao[0], o_lon=posicao[1],
+                               d_lat=melhor[5][0], d_lon=melhor[5][1])
+        linhas += ["", f'🗺️ <a href="{rota}">Abrir rota até {notifier.esc(melhor[4])}</a>']
+    linhas += ["", "Caminhada é estimativa por distância, não rota.",
+               "Powered by Queue-Times.com"]
+    return "\n".join(linhas)
 
 
 # ---------------------------------------------------------------- tendência
@@ -370,12 +501,15 @@ def menores_filas(payload: dict, config: dict, park_name: str, limite: int,
     ranking inteiro, que é justamente o que o comando existe para mostrar.
     """
     park_cfg = config["parks"].get(park_name, {})
+    limite_obsoleto = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
     abertas = []
     for _land, ride in iter_rides(payload):
         nome = ride["name"]
         if fila_paralela(nome):
             continue
         if not ride.get("is_open"):
+            continue
+        if leitura_obsoleta(ride, limite_obsoleto):
             continue
         wait = ride.get("wait_time")
         if wait is None:
@@ -627,6 +761,7 @@ HELP = (
     "/resumo — previsão do dia pelo histórico (o mesmo das 7h)\n"
     "/resumo &lt;parque&gt; — previsão de um parque específico\n"
     "/parques — parques monitorados\n"
+    "/perto — melhor atração agora considerando fila + caminhada\n"
     "/health — estado do monitor (coleta, banco, parques)\n"
     "/help — esta mensagem\n\n"
     "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
@@ -666,6 +801,37 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
     ])
 
 
+PEDIR_LOCALIZACAO = (
+    "📍 Manda sua localização que eu digo para onde ir.\n\n"
+    "Toque no botão abaixo, ou no clipe 📎 → <b>Localização</b>.\n\n"
+    "Eu comparo <b>fila + caminhada</b> das atrações da sua watchlist e devolvo "
+    "as melhores, com rota."
+)
+
+
+def responder_localizacao(latitude: float, longitude: float, conn: sqlite3.Connection,
+                          config: dict, park_ids: dict[str, int], coords: dict) -> str:
+    """Resposta ao envio de localização: melhor atração por tempo total."""
+    if not coords.get("parks"):
+        return ("Ainda não tenho as coordenadas das atrações. "
+                "Rode <code>python coords.py</code> uma vez no servidor.")
+
+    posicao = (latitude, longitude)
+    park_name = parque_mais_proximo(posicao, coords)
+    if park_name is None:
+        return ("📍 Não achei nenhum parque monitorado perto de você. "
+                "Este recurso só funciona dentro dos parques.")
+    if park_name not in park_ids:
+        return f"O parque mais próximo é {notifier.esc(park_name)}, mas ele não resolveu na API."
+
+    try:
+        payload = fetch_queue_times(park_ids[park_name])
+    except requests.RequestException as exc:
+        log.error("Falha ao buscar %s para localização: %s", park_name, exc)
+        return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
+    return format_perto(posicao, park_name, payload, config, coords, conn)
+
+
 def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:
     """Parques cujo nome contém a busca (mesmo espírito do match da watchlist)."""
     q = query.strip().lower()
@@ -676,18 +842,21 @@ def format_status(park_name: str, payload: dict, config: dict,
                   conn: sqlite3.Connection | None = None) -> str:
     """Monta a resposta do /status: watchlist do parque com a fila de agora."""
     park_cfg = config["parks"].get(park_name, {})
-    abertas, fechadas = [], []
+    limite_obsoleto = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
+    abertas, fechadas, obsoletas = [], [], []
     for _land, ride in iter_rides(payload):
         threshold = get_threshold(park_cfg, ride["name"])
         if threshold is None:  # fora da watchlist: não polui a mensagem
             continue
         wait = ride.get("wait_time")
-        if ride.get("is_open") and wait is not None:
-            abertas.append((wait, ride["name"], threshold))
-        else:
+        if not ride.get("is_open") or wait is None:
             fechadas.append(ride["name"])
+        elif leitura_obsoleta(ride, limite_obsoleto):
+            obsoletas.append((ride["name"], wait))
+        else:
+            abertas.append((wait, ride["name"], threshold))
 
-    if not abertas and not fechadas:
+    if not abertas and not fechadas and not obsoletas:
         return (
             f"🎢 <b>{notifier.esc(park_name)}</b>\n\n"
             "Nenhuma atração da watchlist voltou da API agora. "
@@ -702,6 +871,8 @@ def format_status(park_name: str, payload: dict, config: dict,
         linhas.append(f"{marca} {notifier.esc(ride)} — <b>{wait} min</b>{seta} (alerta ≤ {threshold})")
     for ride in sorted(fechadas):
         linhas.append(f"🔒 {notifier.esc(ride)} — fechada")
+    for ride, wait in sorted(obsoletas):
+        linhas.append(f"⏳ {notifier.esc(ride)} — {wait} min (dado desatualizado)")
     linhas += ["", "✅ = no ponto de ir · ↓ caindo · ↑ subindo (últimos 35 min)",
                "Powered by Queue-Times.com"]
     return "\n".join(linhas)
@@ -722,6 +893,8 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
         return None  # conversa solta no chat não é comando
     if cmd in ("/start", "/help", "/ajuda"):
         return HELP
+    if cmd in ("/perto", "/agora"):
+        return PEDIR_LOCALIZACAO
     if cmd == "/health":
         return format_health(conn, config, park_ids)
     if cmd == "/parques":
@@ -762,26 +935,42 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     return format_status(park_name, payload, config, conn)
 
 
-def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict, park_ids: dict[str, int], timeout: int) -> int | None:
+def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
+                   park_ids: dict[str, int], timeout: int,
+                   coords: dict | None = None) -> int | None:
     """Consome os updates pendentes e responde. Devolve o novo offset."""
+    coords = coords if coords is not None else {"parks": {}, "rides": {}}
     for update in notifier.get_updates(offset, timeout=timeout):
         offset = update["update_id"] + 1
         message = update.get("message") or update.get("edited_message") or {}
-        text = message.get("text", "")
-        if not text:
-            continue
         chat_id = message.get("chat", {}).get("id")
+        localizacao = message.get("location")
+        text = message.get("text", "")
+        if not text and not localizacao:
+            continue
         if not notifier.is_authorized(chat_id):
             log.warning("Comando ignorado de chat não autorizado: %s", chat_id)
             continue
+
+        if localizacao:
+            log.info("Localização recebida")
+            notifier.send(responder_localizacao(
+                localizacao["latitude"], localizacao["longitude"],
+                conn, config, park_ids, coords))
+            continue
+
         resposta = handle_command(text, conn, config, park_ids)
         if resposta:
             log.info("Comando atendido: %s", text.split()[0])
-            notifier.send(resposta)
+            # /perto só é útil com o botão de localização junto
+            botao = notifier.BOTAO_LOCALIZACAO if resposta is PEDIR_LOCALIZACAO else None
+            notifier.send(resposta, botao)
     return offset
 
 
-def wait_serving_commands(offset: int | None, conn: sqlite3.Connection, config: dict, park_ids: dict[str, int], seconds: int) -> int | None:
+def wait_serving_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
+                          park_ids: dict[str, int], seconds: int,
+                          coords: dict | None = None) -> int | None:
     """Espera até o próximo ciclo atendendo comandos. Nunca propaga exceção."""
     deadline = time.monotonic() + seconds
     while True:
@@ -796,7 +985,7 @@ def wait_serving_commands(offset: int | None, conn: sqlite3.Connection, config: 
             time.sleep(restante)
             return offset
         try:
-            offset = serve_commands(offset, conn, config, park_ids, timeout=espera)
+            offset = serve_commands(offset, conn, config, park_ids, espera, coords)
         except Exception:  # noqa: BLE001 — comando quebrado não derruba a coleta
             log.exception("Erro ao atender comandos do Telegram")
             time.sleep(min(restante, 5))
@@ -811,6 +1000,7 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
     ts = utc_now().isoformat()
     alert_parks = is_alert_day(config)
     cooldown = config.get("alert", {}).get("cooldown_minutes", 45)
+    obsoleto_min = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
     quiet = in_quiet_hours(config)
 
     for park_name, park_id in park_ids.items():
@@ -831,6 +1021,8 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
             if quiet or park_name not in alert_parks:
                 continue
             if not ride.get("is_open"):
+                continue
+            if leitura_obsoleta(ride, obsoleto_min):
                 continue
             threshold = get_threshold(config["parks"].get(park_name, {}), ride["name"])
             if threshold is None:
@@ -896,6 +1088,13 @@ def main() -> None:
     if sem_id:
         log.warning("Dias de parque sem alerta (parque não resolvido na API): %s", sorted(sem_id))
 
+    coords = load_coords()
+    com_coord = sum(len(r) for r in coords.get("rides", {}).values())
+    if com_coord:
+        log.info("coords.json: %d atrações com coordenada — /perto ativo", com_coord)
+    else:
+        log.info("Sem coords.json — /perto vai pedir para rodar coords.py")
+
     notifier.send(
         "✅ Monitor de filas iniciado. Mande /status para ver a fila agora.\n"
         "Powered by Queue-Times.com"
@@ -916,7 +1115,8 @@ def main() -> None:
             maybe_send_daily_summary(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — resumo quebrado não pode parar a coleta
             log.exception("Erro no resumo diário")
-        offset = wait_serving_commands(offset, conn, config, park_ids, POLL_INTERVAL_SECONDS)
+        offset = wait_serving_commands(offset, conn, config, park_ids,
+                                       POLL_INTERVAL_SECONDS, coords)
 
 
 if __name__ == "__main__":

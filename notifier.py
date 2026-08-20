@@ -28,17 +28,28 @@ def esc(text) -> str:
     return html.escape(str(text), quote=False)
 
 
-def send(text: str) -> bool:
+BOTAO_LOCALIZACAO = {
+    "keyboard": [[{"text": "📍 Enviar minha localização", "request_location": True}]],
+    "resize_keyboard": True,
+    "one_time_keyboard": True,
+}
+
+
+def send(text: str, reply_markup: dict | None = None) -> bool:
     """Envia mensagem ao Telegram. Retorna True em caso de sucesso."""
     if not configured():
         log.warning("Telegram não configurado (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID). Msg: %s", text)
         return False
+    corpo = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,  # link de rota não vira card gigante
+    }
+    if reply_markup:
+        corpo["reply_markup"] = reply_markup
     try:
-        resp = requests.post(
-            f"{API_BASE}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"},
-            timeout=HTTP_TIMEOUT,
-        )
+        resp = requests.post(f"{API_BASE}/sendMessage", json=corpo, timeout=HTTP_TIMEOUT)
         if resp.status_code != 200:
             log.error("Telegram HTTP %s: %s", resp.status_code, resp.text[:200])
             return False

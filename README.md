@@ -64,6 +64,7 @@ Nas atualizações seguintes basta `git pull && docker compose up -d --build`.
 | `/menores` | Ranking das menores filas do parque **inteiro** agora |
 | `/menores <parque>` | Ranking de um parque específico |
 | `/parques` | Lista os parques que o monitor resolveu na API |
+| `/perto` (ou `/agora`) | Melhor atração agora por **fila + caminhada**, a partir da sua localização |
 | `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
 | `/help` | Ajuda |
 
@@ -104,6 +105,54 @@ o ciclo de coleta já buscou.
 Diferença para o `/status`: o alerta e o `/status` olham só a **sua watchlist**,
 enquanto o `/menores` ranqueia o **parque inteiro** e marca com ⭐ o que está na
 watchlist — serve para achar fila curta em atração que você não listou.
+
+## Localização: `/perto`
+
+Mande `/perto` e depois sua localização (o bot mostra um botão; também dá pelo
+clipe 📎 → Localização). Ele detecta em qual parque você está e responde a
+watchlist ordenada por **fila + caminhada**, com link de rota:
+
+```
+📍 Você está em Disney Hollywood Studios
+
+🥇 Toy Story Mania! — 27 min no total
+     fila 25 min ↓8 · 🚶 2 min (100 m)
+🥈 Slinky Dog Dash — 31 min no total
+     fila 20 min · 🚶 11 min (1000 m)
+
+🗺️ Abrir rota até Toy Story Mania!
+```
+
+O critério é o tempo total, não a menor fila: 25 min de fila do lado ganha de
+20 min do outro lado do parque.
+
+O bot **não** consegue puxar sua posição sozinho — você compartilha quando quer.
+
+### Coordenadas: rode uma vez
+
+O Queue-Times não devolve lat/lon das atrações (só `id`, `name`, `is_open`,
+`wait_time` e `last_updated`), então as coordenadas vêm do OpenStreetMap:
+
+```bash
+docker compose exec fila-disney python coords.py --revisar   # só relatório
+docker compose exec fila-disney python coords.py             # grava coords.json
+```
+
+O casamento de nomes entre OSM e Queue-Times é aproximado: o script marca
+`[ OK ]`, `[ CONF ]` (confira) e `[ FALTA ]`. O que faltar pode ser preenchido à
+mão no `coords.json`, no formato `"Nome da atração": [lat, lon]`. Atração sem
+coordenada aparece no fim da lista, sem estimativa — **nunca com distância
+inventada**.
+
+Sem `coords.json` o monitor roda igual; só o `/perto` fica indisponível.
+
+## Dado desatualizado
+
+A API traz `last_updated` por atração. Leitura parada há mais de
+`alert.max_staleness_minutes` (padrão 30) não gera alerta nem entra em ranking —
+"5 min de fila" com dado de 3h atrás mandaria o grupo para uma fila que não
+existe mais. No `/status` ela aparece como ⏳ *dado desatualizado*, e o histórico
+continua gravando normalmente.
 
 ## Resumo diário das 7h
 

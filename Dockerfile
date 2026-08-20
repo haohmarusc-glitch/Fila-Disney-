@@ -4,7 +4,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY monitor.py notifier.py analyze.py healthcheck.py watchlist.json ./
+COPY monitor.py notifier.py analyze.py healthcheck.py coords.py watchlist.json ./
+# coords.json é opcional e gerado depois; o COPY não pode falhar sem ele
+COPY coords.jso[n] ./
 
 # Usuário não-root. O data/ é volume e precisa pertencer a ele.
 RUN useradd --create-home --uid 10001 fila \
