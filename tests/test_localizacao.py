@@ -224,3 +224,65 @@ class TestCasamentoDeNomes(BaseTeste):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSanidadeDasCoordenadas(BaseTeste):
+    """O parks.json trouxe Epic Universe com longitude positiva em 20/08/2026."""
+
+    def setUp(self):
+        super().setUp()
+        import importlib
+        self.coords = importlib.import_module("coords")
+        self.reais = {
+            "Disney Magic Kingdom": (28.417663, -81.581212),
+            "Epcot": (28.374694, -81.549404),
+            "Disney Hollywood Studios": (28.3575294, -81.5582714),
+            "Disney Animal Kingdom": (28.3530666, -81.5911943),
+            "Universal Studios At Universal Orlando": (28.4749822, -81.466497),
+            "Islands Of Adventure At Universal Orlando": (28.472243, -81.4678556),
+            "Universal Epic Universe": (28.44144545, 81.44867409),
+        }
+
+    def test_isola_o_parque_com_dado_errado(self):
+        bons, suspeitos = self.coords.coordenadas_sanas(self.reais)
+        self.assertNotIn("Universal Epic Universe", bons)
+        self.assertEqual(len(bons), 6, "os outros seis seguem normalmente")
+        self.assertEqual(len(suspeitos), 1)
+
+    def test_aponta_o_erro_de_sinal(self):
+        _bons, suspeitos = self.coords.coordenadas_sanas(self.reais)
+        self.assertIn("erro de sinal", suspeitos[0])
+        self.assertIn("-81.44867409", suspeitos[0], "sugere a coordenada corrigida")
+
+    def test_todas_boas_passam_inteiras(self):
+        boas = {k: v for k, v in self.reais.items() if k != "Universal Epic Universe"}
+        bons, suspeitos = self.coords.coordenadas_sanas(boas)
+        self.assertEqual(len(bons), 6)
+        self.assertEqual(suspeitos, [])
+
+    def test_poucos_parques_nao_da_para_julgar(self):
+        dois = {"A": (28.4, -81.5), "B": (0.0, 0.0)}
+        bons, suspeitos = self.coords.coordenadas_sanas(dois)
+        self.assertEqual(len(bons), 2, "com menos de 3 não há mediana confiável")
+        self.assertEqual(suspeitos, [])
+
+
+class TestHttpOverpass(BaseTeste):
+    def test_post_json_usa_post_e_identifica_o_user_agent(self):
+        self.requests.roteador_post = lambda url, payload: Resposta({"elements": []})
+        self.monitor.post_json("http://overpass", {"data": "consulta"})
+        self.assertEqual(self.requests.posts, [{"data": "consulta"}])
+        self.assertIn("Fila-Disney", self.requests.headers_enviados["User-Agent"],
+                      "Overpass devolve 406 para o User-Agent padrão do requests")
+
+    def test_get_json_tambem_manda_user_agent(self):
+        self.requests.roteador = lambda url: Resposta({"ok": 1})
+        self.monitor.get_json("http://x")
+        self.assertIn("Fila-Disney", self.requests.headers_enviados["User-Agent"])
+
+    def test_post_tambem_retenta(self):
+        respostas = [Resposta(status=500), Resposta({"elements": []})]
+        self.requests.roteador_post = lambda url, payload: respostas.pop(0)
+        self.assertEqual(self.monitor.post_json("http://overpass", {"data": "q"}),
+                         {"elements": []})
+        self.assertEqual(len(self.requests.posts), 2)

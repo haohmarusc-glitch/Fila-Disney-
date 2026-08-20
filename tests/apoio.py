@@ -60,13 +60,15 @@ class RequestsFalso(types.ModuleType):
         self.roteador = lambda url: Resposta({})
         self.roteador_post = lambda url, payload: Resposta({"ok": True})
 
-    def get(self, url, params=None, timeout=None):
+    def get(self, url, params=None, timeout=None, headers=None):
         self.gets.append(url)
+        self.headers_enviados = headers
         return self.roteador(url)
 
-    def post(self, url, json=None, timeout=None):
-        self.posts.append(json)
-        return self.roteador_post(url, json)
+    def post(self, url, json=None, data=None, timeout=None, headers=None):
+        self.posts.append(json if json is not None else data)
+        self.headers_enviados = headers
+        return self.roteador_post(url, json if json is not None else data)
 
 
 _requests = RequestsFalso()

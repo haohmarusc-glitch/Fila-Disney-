@@ -138,6 +138,12 @@ docker compose exec fila-disney python coords.py --revisar   # só relatório
 docker compose exec fila-disney python coords.py             # grava coords.json
 ```
 
+Se algum parque vier com coordenada implausível, o script isola aquele parque e
+diz qual é a correção provável — foi o caso do Epic Universe em 20/08/2026, que
+o `parks.json` entregou com longitude `+81.44` (sem o sinal, cai no Nepal). Para
+corrigir, edite `coords.json` na seção `"parks"` e rode de novo: **o script
+preserva o que já está lá**, então correção manual não se perde.
+
 O casamento de nomes entre OSM e Queue-Times é aproximado: o script marca
 `[ OK ]`, `[ CONF ]` (confira) e `[ FALTA ]`. O que faltar pode ser preenchido à
 mão no `coords.json`, no formato `"Nome da atração": [lat, lon]`. Atração sem

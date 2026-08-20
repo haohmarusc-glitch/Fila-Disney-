@@ -204,16 +204,37 @@ def _dormir(segundos: float) -> None:
     time.sleep(segundos)  # isolado para o teste conseguir substituir
 
 
+USER_AGENT = ("Fila-Disney/1.0 (monitor de filas de parques; "
+              "https://github.com/haohmarusc-glitch/Fila-Disney-)")
+
+
 def get_json(url: str, *, tentativas: int = HTTP_TENTATIVAS) -> object:
-    """GET com retry e backoff. Respeita Retry-After no 429.
+    """GET com retry e backoff. Respeita Retry-After no 429."""
+    return requisicao_json("GET", url, tentativas=tentativas)
+
+
+def post_json(url: str, dados: dict, *, tentativas: int = HTTP_TENTATIVAS) -> object:
+    """POST form-encoded. A Overpass exige POST para consulta e recusa GET longo."""
+    return requisicao_json("POST", url, dados=dados, tentativas=tentativas)
+
+
+def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
+                    tentativas: int = HTTP_TENTATIVAS) -> object:
+    """Núcleo HTTP com retry e backoff.
 
     Um ciclo perdido é histórico perdido para sempre, então vale insistir um
     pouco. Erro 4xx que não seja 429 não é retentado: não vai melhorar sozinho.
+    Manda User-Agent identificável — a Overpass devolve 406 para o padrão do
+    python-requests.
     """
     ultimo_erro: Exception | None = None
+    cabecalhos = {"User-Agent": USER_AGENT}
     for tentativa in range(1, tentativas + 1):
         try:
-            resp = requests.get(url, timeout=HTTP_TIMEOUT)
+            if metodo == "POST":
+                resp = requests.post(url, data=dados, headers=cabecalhos, timeout=HTTP_TIMEOUT)
+            else:
+                resp = requests.get(url, headers=cabecalhos, timeout=HTTP_TIMEOUT)
             if resp.status_code == 429:
                 espera = float(resp.headers.get("Retry-After") or HTTP_BACKOFF_BASE ** tentativa)
                 log.warning("429 em %s — aguardando %.0fs", url, espera)
