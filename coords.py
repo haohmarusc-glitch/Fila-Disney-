@@ -133,6 +133,25 @@ def casar(alvo: str, candidatos: dict[str, tuple[float, float]]) -> tuple[str, f
     return (melhor, melhor_score) if melhor and melhor_score >= 0.6 else None
 
 
+def candidatos_proximos(alvo: str, candidatos: dict, quantos: int = 3) -> list[tuple[str, float]]:
+    """Os nomes do OSM mais parecidos, ignorando o corte de confiança.
+
+    Serve para o log de FALTA ser acionável: sem isso sobra "não achei" e a
+    pessoa tem que garimpar o OSM na mão para descobrir como a atração se chama
+    lá. Mesma ideia do aviso de parque não resolvido.
+    """
+    alvo_tokens = tokens(alvo)
+    if not alvo_tokens:
+        return []
+    pontuados = []
+    for nome in candidatos:
+        outros = tokens(nome)
+        if outros:
+            pontuados.append((len(alvo_tokens & outros) / len(alvo_tokens | outros), nome))
+    pontuados.sort(reverse=True)
+    return [(nome, score) for score, nome in pontuados[:quantos] if score > 0]
+
+
 def coordenadas_sanas(parques: dict[str, tuple[float, float]]) -> tuple[dict, list[str]]:
     """Separa os parques com coordenada plausível dos que estão fora da curva.
 
@@ -264,6 +283,7 @@ def main() -> int:
     saida = localizacao.load_coords()
     saida.setdefault("parks", {})
     saida.setdefault("rides", {})
+    saida.setdefault("aliases", {})  # nome da watchlist -> nome no OSM, editável
 
     pendentes = []
     for nome, coord in parques.items():
@@ -290,6 +310,12 @@ def main() -> int:
 
         saida["rides"].setdefault(nome, {})
         for atracao in config["parks"][nome].get("attractions", {}):
+            apelido = saida.get("aliases", {}).get(atracao)
+            if apelido and normalizar(apelido) in osm:
+                saida["rides"][nome][atracao] = list(osm[normalizar(apelido)])
+                print(f"  [ ALIAS ] {atracao}  ->  {normalizar(apelido)}")
+                total_ok += 1
+                continue
             resultado = casar(atracao, osm)
             if resultado is None:
                 if atracao in saida["rides"][nome]:
@@ -297,6 +323,8 @@ def main() -> int:
                     total_ok += 1
                 else:
                     print(f"  [ FALTA ] {atracao}")
+                    for candidato, score in candidatos_proximos(atracao, osm):
+                        print(f"             candidato no OSM: {candidato}  ({score:.2f})")
                     total_falta += 1
                 continue
             osm_nome, confianca = resultado
