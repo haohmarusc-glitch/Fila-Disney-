@@ -548,7 +548,10 @@ def format_status(park_name: str, payload: dict, config: dict) -> str:
 
 def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> str | None:
     """Interpreta um comando do chat. Devolve a resposta ou None (ignorar)."""
-    parts = text.strip().split(maxsplit=1)
+    # só a primeira linha: no Telegram dá para mandar vários comandos numa
+    # mensagem só, e sem isso o resto vira argumento do primeiro.
+    primeira_linha = text.strip().splitlines()[0] if text.strip() else ""
+    parts = primeira_linha.split(maxsplit=1)
     if not parts:
         return None
     cmd = parts[0].split("@")[0].lower()  # em grupo o Telegram manda /status@NomeDoBot
