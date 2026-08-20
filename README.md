@@ -13,6 +13,9 @@ O monitor tem dois modos, escolhidos automaticamente pela data (fuso `America/Ne
 | **Coleta** | Todos os dias | Grava tempo de fila de todas as atrações dos 7 parques no SQLite a cada 5 min |
 | **Alerta** | Dias listados em `park_days` | Além de gravar, envia alerta no Telegram quando uma atração da watchlist do parque do dia cai abaixo do threshold |
 
+Nos dois modos o bot responde comandos no Telegram — dá para consultar a fila
+sob demanda sem esperar alerta nenhum.
+
 Regras de alerta: cooldown de 45 min por atração (não spamma), silêncio entre 22h e 7h, só alerta o parque programado para o dia.
 
 ## Deploy no VPS
@@ -30,6 +33,24 @@ docker compose logs -f  # deve mostrar "Parques resolvidos: {...}"
 1. Fale com o `@BotFather` → `/newbot` → copie o token para `.env`
 2. Mande `/start` pro seu bot
 3. Acesse `https://api.telegram.org/bot<TOKEN>/getUpdates` e copie o `chat.id` para `.env`
+
+## Comandos no bot
+
+| Comando | O que faz |
+|---|---|
+| `/status` | Fila agora das atrações da watchlist do parque do dia |
+| `/status <parque>` | Fila de qualquer parque monitorado (`/status Epcot`, `/status IOA`) |
+| `/parques` | Lista os parques que o monitor resolveu na API |
+| `/help` | Ajuda |
+
+O `/status` consulta a API na hora — não devolve o último ciclo gravado. A
+resposta vem ordenada da menor fila para a maior, com ✅ nas atrações que já
+estão abaixo do threshold e 🔒 nas fechadas.
+
+Só o `TELEGRAM_CHAT_ID` configurado é atendido; comando de qualquer outro chat
+é ignorado com warning no log. Comandos mandados enquanto o container estava
+fora do ar são descartados na subida, para o bot não despejar um monte de
+resposta atrasada de uma vez.
 
 ## Configuração (`watchlist.json`)
 
@@ -61,7 +82,7 @@ Não automatiza compras nem reservas no My Disney Experience — isso viola os t
 ```
 monitor.py        # loop principal: polling + persistência + alertas
 docs/ROTEIRO.md   # roteiro da viagem (fonte de verdade do park_days)
-notifier.py       # envio Telegram
+notifier.py       # Telegram: envio de mensagens + leitura de comandos
 analyze.py        # análise do histórico (CLI)
 watchlist.json    # parques, atrações, thresholds, dias da viagem
 data/history.db   # SQLite (criado em runtime, fora do git)
@@ -69,7 +90,7 @@ data/history.db   # SQLite (criado em runtime, fora do git)
 
 ## Roadmap (backlog para Claude Code)
 
-- [ ] Comando `/status` no bot (fila atual da watchlist sob demanda)
+- [x] Comando `/status` no bot (fila atual da watchlist sob demanda)
 - [ ] Resumo diário automático às 7h com previsão do dia baseada no histórico
 - [ ] Dashboard web opcional em `disney.premercadosc.com` (React + endpoint FastAPI lendo o SQLite)
 - [ ] Detectar atração reaberta após "Down" (filas despencam nos primeiros minutos)

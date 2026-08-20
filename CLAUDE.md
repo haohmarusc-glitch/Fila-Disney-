@@ -13,12 +13,19 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 5. O loop principal (`monitor.py:main`) nunca pode morrer por exceção de ciclo — sempre catch amplo com log.
 6. Timestamps no banco em UTC ISO; conversão para horário do parque (`America/New_York`) só na exibição/análise.
 7. Idioma de comentários, logs e mensagens Telegram: português (BR).
-8. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
+8. Todo nome vindo da API (atração, parque, land) passa por `notifier.esc` antes
+   de entrar numa mensagem: `parse_mode=HTML` + `&` cru = 400 do Telegram, e
+   "Mickey & Minnie's Runaway Railway" está na watchlist.
+9. Comando só é atendido se vier do `TELEGRAM_CHAT_ID` configurado.
+10. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
 
 ## Arquitetura
 
-- `monitor.py` — loop de 5 min: fetch → grava SQLite → checa thresholds → alerta
-- `notifier.py` — Telegram (env: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
+- `monitor.py` — loop de 5 min: fetch → grava SQLite → checa thresholds → alerta.
+  Entre um ciclo e outro fica em long polling do Telegram atendendo comandos
+  (`/status`, `/parques`, `/help`) — mesma thread, sem concorrência com o SQLite
+- `notifier.py` — transporte Telegram: `send`, `get_updates`, `esc` (env:
+  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
 - `analyze.py` — CLI de análise do histórico
 - `watchlist.json` — config declarativa (parques, atrações, thresholds, dias)
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`

@@ -6,6 +6,9 @@ Modos de operação (automáticos, por data):
 - COLETA: fora das datas da viagem, apenas grava histórico no SQLite.
 - ALERTA: nos dias de parque (park_days), além de gravar, envia alertas
   no Telegram quando uma atração da watchlist cai abaixo do threshold.
+
+Nos dois modos o bot atende comandos no Telegram (/status, /parques, /help)
+enquanto espera o próximo ciclo de coleta.
 """
 import json
 import logging
@@ -33,6 +36,7 @@ PARKS_URL = "https://queue-times.com/parks.json"
 QUEUE_URL = "https://queue-times.com/parks/{park_id}/queue_times.json"
 
 POLL_INTERVAL_SECONDS = 300  # 5 min — mesma frequência de atualização da API
+COMMAND_POLL_SECONDS = 20    # long polling do Telegram dentro da espera entre ciclos
 HTTP_TIMEOUT = 15
 
 
@@ -168,6 +172,140 @@ def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
     return None
 
 
+# ---------------------------------------------------------------- comandos
+
+HELP = (
+    "🎢 <b>Monitor de filas</b>\n\n"
+    "/status — fila atual da watchlist do parque de hoje\n"
+    "/status &lt;parque&gt; — fila de um parque específico (ex.: <code>/status Epcot</code>)\n"
+    "/parques — parques monitorados\n"
+    "/help — esta mensagem\n\n"
+    "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
+    "Powered by Queue-Times.com"
+)
+
+
+def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:
+    """Parques cujo nome contém a busca (mesmo espírito do match da watchlist)."""
+    q = query.strip().lower()
+    return [name for name in park_ids if q in name.lower()]
+
+
+def format_status(park_name: str, payload: dict, config: dict) -> str:
+    """Monta a resposta do /status: watchlist do parque com a fila de agora."""
+    park_cfg = config["parks"].get(park_name, {})
+    abertas, fechadas = [], []
+    for _land, ride in iter_rides(payload):
+        threshold = get_threshold(park_cfg, ride["name"])
+        if threshold is None:  # fora da watchlist: não polui a mensagem
+            continue
+        wait = ride.get("wait_time")
+        if ride.get("is_open") and wait is not None:
+            abertas.append((wait, ride["name"], threshold))
+        else:
+            fechadas.append(ride["name"])
+
+    if not abertas and not fechadas:
+        return (
+            f"🎢 <b>{notifier.esc(park_name)}</b>\n\n"
+            "Nenhuma atração da watchlist voltou da API agora. "
+            "Se persistir, confira os nomes em <code>watchlist.json</code>."
+        )
+
+    agora = now_park(config).strftime("%Hh%M")
+    linhas = [f"🎢 <b>{notifier.esc(park_name)}</b>", f"🕒 {agora} no horário do parque", ""]
+    for wait, ride, threshold in sorted(abertas):
+        marca = "✅" if wait <= threshold else "▫️"
+        linhas.append(f"{marca} {notifier.esc(ride)} — <b>{wait} min</b> (alerta ≤ {threshold})")
+    for ride in sorted(fechadas):
+        linhas.append(f"🔒 {notifier.esc(ride)} — fechada")
+    linhas += ["", "✅ = já está no ponto de ir", "Powered by Queue-Times.com"]
+    return "\n".join(linhas)
+
+
+def handle_command(text: str, config: dict, park_ids: dict[str, int]) -> str | None:
+    """Interpreta um comando do chat. Devolve a resposta ou None (ignorar)."""
+    parts = text.strip().split(maxsplit=1)
+    if not parts:
+        return None
+    cmd = parts[0].split("@")[0].lower()  # em grupo o Telegram manda /status@NomeDoBot
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if not cmd.startswith("/"):
+        return None  # conversa solta no chat não é comando
+    if cmd in ("/start", "/help", "/ajuda"):
+        return HELP
+    if cmd == "/parques":
+        nomes = "\n".join(f"• {notifier.esc(n)}" for n in park_ids)
+        return f"🎢 <b>Parques monitorados</b>\n{nomes}"
+    if cmd != "/status":
+        return HELP
+
+    if arg:
+        matches = match_parks(arg, park_ids)
+        if not matches:
+            return f"Não achei parque com “{notifier.esc(arg)}”. Veja /parques."
+        if len(matches) > 1:
+            opcoes = "\n".join(f"• {notifier.esc(n)}" for n in matches)
+            return f"“{notifier.esc(arg)}” casa com mais de um parque:\n{opcoes}"
+        park_name = matches[0]
+    else:
+        do_dia = [p for p in is_alert_day(config) if p in park_ids]
+        if not do_dia:
+            return (
+                "Hoje não é dia de parque — o monitor está só coletando histórico.\n"
+                "Use <code>/status &lt;parque&gt;</code> para ver qualquer um. Veja /parques."
+            )
+        park_name = do_dia[0]
+
+    try:
+        payload = fetch_queue_times(park_ids[park_name])
+    except requests.RequestException as exc:
+        log.error("Falha ao buscar %s para /status: %s", park_name, exc)
+        return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
+    return format_status(park_name, payload, config)
+
+
+def serve_commands(offset: int | None, config: dict, park_ids: dict[str, int], timeout: int) -> int | None:
+    """Consome os updates pendentes e responde. Devolve o novo offset."""
+    for update in notifier.get_updates(offset, timeout=timeout):
+        offset = update["update_id"] + 1
+        message = update.get("message") or update.get("edited_message") or {}
+        text = message.get("text", "")
+        if not text:
+            continue
+        chat_id = message.get("chat", {}).get("id")
+        if not notifier.is_authorized(chat_id):
+            log.warning("Comando ignorado de chat não autorizado: %s", chat_id)
+            continue
+        resposta = handle_command(text, config, park_ids)
+        if resposta:
+            log.info("Comando atendido: %s", text.split()[0])
+            notifier.send(resposta)
+    return offset
+
+
+def wait_serving_commands(offset: int | None, config: dict, park_ids: dict[str, int], seconds: int) -> int | None:
+    """Espera até o próximo ciclo atendendo comandos. Nunca propaga exceção."""
+    deadline = time.monotonic() + seconds
+    while True:
+        restante = deadline - time.monotonic()
+        if restante <= 0:
+            return offset
+        if not notifier.configured():  # sem Telegram, só dorme e segue coletando
+            time.sleep(min(restante, 30))
+            continue
+        espera = int(min(COMMAND_POLL_SECONDS, restante))
+        if espera < 1:  # sobra menos de 1s: não vale abrir outro long poll
+            time.sleep(restante)
+            return offset
+        try:
+            offset = serve_commands(offset, config, park_ids, timeout=espera)
+        except Exception:  # noqa: BLE001 — comando quebrado não derruba a coleta
+            log.exception("Erro ao atender comandos do Telegram")
+            time.sleep(min(restante, 5))
+
+
 # ---------------------------------------------------------------- ciclo
 
 def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> None:
@@ -229,14 +367,18 @@ def main() -> None:
     if missing:
         log.warning("Parques NÃO monitorados (nome não bateu na API): %s", missing)
 
-    notifier.send("✅ Monitor de filas iniciado. Powered by Queue-Times.com")
+    notifier.send(
+        "✅ Monitor de filas iniciado. Mande /status para ver a fila agora.\n"
+        "Powered by Queue-Times.com"
+    )
+    offset = notifier.drop_pending_updates()
 
     while True:
         try:
             run_cycle(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — loop nunca deve morrer
             log.exception("Erro no ciclo de coleta")
-        time.sleep(POLL_INTERVAL_SECONDS)
+        offset = wait_serving_commands(offset, config, park_ids, POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
