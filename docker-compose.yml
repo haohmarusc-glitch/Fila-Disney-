@@ -7,3 +7,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./watchlist.json:/app/watchlist.json:ro
+    logging:              # sem isso o log cresce sem limite no disco do VPS
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

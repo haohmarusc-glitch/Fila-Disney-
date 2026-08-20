@@ -14,7 +14,8 @@ import json
 import logging
 import sqlite3
 import time
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -38,6 +39,8 @@ QUEUE_URL = "https://queue-times.com/parks/{park_id}/queue_times.json"
 POLL_INTERVAL_SECONDS = 300  # 5 min — mesma frequência de atualização da API
 COMMAND_POLL_SECONDS = 20    # long polling do Telegram dentro da espera entre ciclos
 HTTP_TIMEOUT = 15
+HTTP_TENTATIVAS = 3          # a API cai por segundos; desistir na primeira perde o ciclo
+HTTP_BACKOFF_BASE = 2        # espera 2s, 4s entre tentativas
 
 
 # ---------------------------------------------------------------- config
@@ -45,6 +48,36 @@ HTTP_TIMEOUT = 15
 def load_config() -> dict:
     with open(WATCHLIST_PATH, encoding="utf-8") as f:
         return json.load(f)
+
+
+def validar_config(config: dict) -> list[str]:
+    """Problemas de configuração que fariam o monitor falhar calado.
+
+    Devolve lista de mensagens; vazia quer dizer config sã. Só valida o que tem
+    consequência silenciosa — nome de parque errado já vira warning na resolução.
+    """
+    problemas = []
+    if not config.get("parks"):
+        problemas.append("watchlist.json sem nenhum parque em 'parks'")
+    if not config.get("trip", {}).get("timezone"):
+        problemas.append("trip.timezone ausente — sem ele não dá para saber a hora do parque")
+    for dia, parques in config.get("park_days", {}).items():
+        try:
+            date.fromisoformat(dia)
+        except ValueError:
+            problemas.append(f"park_days: {dia!r} não é uma data ISO (AAAA-MM-DD)")
+        for parque in parques:
+            if parque not in config.get("parks", {}):
+                problemas.append(f"park_days {dia}: {parque!r} não existe em 'parks'")
+    quiet = config.get("alert", {}).get("quiet_hours") or {}
+    for campo in ("start", "end"):
+        valor = quiet.get(campo)
+        if valor is not None and not re.fullmatch(r"\d{2}:\d{2}", valor):
+            problemas.append(f"alert.quiet_hours.{campo} = {valor!r} não está em HH:MM")
+    hora_resumo = config.get("daily_summary", {}).get("hour")
+    if hora_resumo is not None and not re.fullmatch(r"\d{2}:\d{2}", hora_resumo):
+        problemas.append(f"daily_summary.hour = {hora_resumo!r} não está em HH:MM")
+    return problemas
 
 
 def utc_now() -> datetime:
@@ -76,6 +109,9 @@ def init_db() -> sqlite3.Connection:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_wait_park_ride_ts ON wait_times (park, ride, ts)"
+    )
+    conn.execute(  # resumo e tendência varrem por parque+tempo, sem filtrar ride
+        "CREATE INDEX IF NOT EXISTS idx_wait_park_ts ON wait_times (park, ts)"
     )
     conn.execute(
         """
@@ -109,9 +145,9 @@ def init_db() -> sqlite3.Connection:
 
 def resolve_park_ids(wanted_names: list[str]) -> dict[str, int]:
     """Resolve nomes de parques em IDs consultando parks.json (nunca hardcode)."""
-    resp = requests.get(PARKS_URL, timeout=HTTP_TIMEOUT)
-    resp.raise_for_status()
-    groups = resp.json()
+    groups = get_json(PARKS_URL)
+    if not isinstance(groups, list):
+        raise RespostaInvalida("parks.json não veio como lista")
 
     available: dict[str, int] = {}
     for group in groups:
@@ -158,10 +194,53 @@ def suggest_park_names(key: str, available: dict[str, int], limit: int = 5) -> l
     return [pname for _, pname in scored[:limit]]
 
 
+class RespostaInvalida(requests.RequestException):
+    """JSON veio, mas não no formato que esperamos — tratado como falha de rede."""
+
+
+def _dormir(segundos: float) -> None:
+    time.sleep(segundos)  # isolado para o teste conseguir substituir
+
+
+def get_json(url: str, *, tentativas: int = HTTP_TENTATIVAS) -> object:
+    """GET com retry e backoff. Respeita Retry-After no 429.
+
+    Um ciclo perdido é histórico perdido para sempre, então vale insistir um
+    pouco. Erro 4xx que não seja 429 não é retentado: não vai melhorar sozinho.
+    """
+    ultimo_erro: Exception | None = None
+    for tentativa in range(1, tentativas + 1):
+        try:
+            resp = requests.get(url, timeout=HTTP_TIMEOUT)
+            if resp.status_code == 429:
+                espera = float(resp.headers.get("Retry-After") or HTTP_BACKOFF_BASE ** tentativa)
+                log.warning("429 em %s — aguardando %.0fs", url, espera)
+                ultimo_erro = requests.HTTPError("429 Too Many Requests")
+                if tentativa < tentativas:
+                    _dormir(espera)
+                continue
+            if 400 <= resp.status_code < 500:
+                resp.raise_for_status()  # não adianta repetir
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.RequestException, ValueError) as exc:
+            ultimo_erro = exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status is not None and 400 <= status < 500 and status != 429:
+                break
+            if tentativa < tentativas:
+                espera = HTTP_BACKOFF_BASE ** tentativa
+                log.warning("Falha em %s (tentativa %d/%d): %s — nova tentativa em %ds",
+                            url, tentativa, tentativas, exc, espera)
+                _dormir(espera)
+    raise requests.RequestException(f"{url}: {ultimo_erro}") from ultimo_erro
+
+
 def fetch_queue_times(park_id: int) -> dict:
-    resp = requests.get(QUEUE_URL.format(park_id=park_id), timeout=HTTP_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    payload = get_json(QUEUE_URL.format(park_id=park_id))
+    if not isinstance(payload, dict) or not ("lands" in payload or "rides" in payload):
+        raise RespostaInvalida(f"parque {park_id}: JSON sem 'lands' nem 'rides'")
+    return payload
 
 
 def iter_rides(payload: dict):
@@ -237,6 +316,50 @@ def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
     return None
 
 
+# ---------------------------------------------------------------- tendência
+
+JANELA_TENDENCIA_MIN = 35   # ~7 ciclos de 5 min
+DELTA_TENDENCIA_MIN = 5     # variação menor que isso é ruído da própria API
+
+
+def tendencia(conn: sqlite3.Connection, park: str, ride: str) -> tuple[str, int] | None:
+    """(seta, variação em min) comparando a fila de agora com ~35 min atrás.
+
+    Existe porque "31 min e subindo" e "31 min e caindo" são decisões opostas
+    dentro do parque, e o threshold sozinho não distingue as duas.
+    """
+    corte = (utc_now() - timedelta(minutes=JANELA_TENDENCIA_MIN)).isoformat()
+    linhas = conn.execute(
+        """
+        SELECT ts, wait_time FROM wait_times
+        WHERE park = ? AND ride = ? AND is_open = 1 AND wait_time IS NOT NULL AND ts >= ?
+        ORDER BY ts
+        """,
+        (park, ride, corte),
+    ).fetchall()
+    if len(linhas) < 2:
+        return None
+    variacao = linhas[-1][1] - linhas[0][1]
+    if variacao <= -DELTA_TENDENCIA_MIN:
+        return "↓", variacao
+    if variacao >= DELTA_TENDENCIA_MIN:
+        return "↑", variacao
+    return "→", variacao
+
+
+def marca_tendencia(conn: sqlite3.Connection | None, park: str, ride: str) -> str:
+    """Sufixo pronto para a mensagem, ou string vazia se não há dado."""
+    if conn is None:
+        return ""
+    resultado = tendencia(conn, park, ride)
+    if resultado is None:
+        return ""
+    seta, variacao = resultado
+    if seta == "→":
+        return " →"
+    return f" {seta}{abs(variacao)}"
+
+
 # ---------------------------------------------------------------- menores filas
 
 def menores_filas(payload: dict, config: dict, park_name: str, limite: int,
@@ -285,7 +408,8 @@ def format_menores(park_name: str, payload: dict, config: dict, limite: int) -> 
     return "\n".join(linhas)
 
 
-def format_top_alert(park_name: str, ranking: list, config: dict) -> str:
+def format_top_alert(park_name: str, ranking: list, config: dict,
+                     conn: sqlite3.Connection | None = None) -> str:
     """Mensagem curta do alerta recorrente — chega a cada N min, tem que ser enxuta."""
     agora = now_park(config).strftime("%Hh%M")
     medalhas = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣")
@@ -293,7 +417,8 @@ def format_top_alert(park_name: str, ranking: list, config: dict) -> str:
     for i, (wait, ride, threshold) in enumerate(ranking):
         marca = " ✅" if threshold is not None and wait <= threshold else ""
         medalha = medalhas[i] if i < len(medalhas) else "•"
-        linhas.append(f"{medalha} {notifier.esc(ride)} — <b>{wait} min</b>{marca}")
+        seta = marca_tendencia(conn, park_name, ride)
+        linhas.append(f"{medalha} {notifier.esc(ride)} — <b>{wait} min</b>{seta}{marca}")
     return "\n".join(linhas)
 
 
@@ -337,7 +462,7 @@ def maybe_send_top_alert(conn: sqlite3.Connection, config: dict, park_ids: dict[
     )
     if not ranking:
         return
-    if notifier.send(format_top_alert(park_name, ranking, config)):
+    if notifier.send(format_top_alert(park_name, ranking, config, conn)):
         marcar_top_alert(conn)
         log.info("Top-%d de menores filas enviado (%s)", len(ranking), park_name)
 
@@ -502,10 +627,43 @@ HELP = (
     "/resumo — previsão do dia pelo histórico (o mesmo das 7h)\n"
     "/resumo &lt;parque&gt; — previsão de um parque específico\n"
     "/parques — parques monitorados\n"
+    "/health — estado do monitor (coleta, banco, parques)\n"
     "/help — esta mensagem\n\n"
     "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
     "Powered by Queue-Times.com"
 )
+
+
+def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> str:
+    """Estado do monitor: dá para responder 'está vivo?' sem abrir SSH."""
+    ultima = conn.execute("SELECT MAX(ts) FROM wait_times").fetchone()[0]
+    total, dias = conn.execute(
+        "SELECT COUNT(*), COUNT(DISTINCT date(ts)) FROM wait_times"
+    ).fetchone()
+    esperados = len(config.get("parks", {}))
+    tamanho_mb = DB_PATH.stat().st_size / 1_000_000 if DB_PATH.exists() else 0
+
+    if ultima:
+        atraso = (utc_now() - datetime.fromisoformat(ultima)).total_seconds() / 60
+        # 2 ciclos de folga antes de chamar de atraso
+        saude = "🟢" if atraso < POLL_INTERVAL_SECONDS / 60 * 2 else "🔴"
+        coleta = f"há {atraso:.0f} min"
+    else:
+        saude, coleta = "🔴", "nunca"
+
+    alertas = conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0]
+    do_dia = [p for p in is_alert_day(config) if p in park_ids]
+    return "\n".join([
+        f"{saude} <b>Monitor de filas</b>",
+        "",
+        f"Última coleta: {coleta}",
+        f"Parques resolvidos: {len(park_ids)}/{esperados}",
+        f"Histórico: {total:,} leituras em {dias} dia(s) · {tamanho_mb:.1f} MB".replace(",", "."),
+        f"Alertas já enviados: {alertas}",
+        f"Hoje: {notifier.esc(do_dia[0]) if do_dia else 'sem parque (modo coleta)'}",
+        "",
+        f"Ciclo a cada {POLL_INTERVAL_SECONDS // 60} min · {now_park(config).strftime('%Hh%M')} no parque",
+    ])
 
 
 def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:
@@ -514,7 +672,8 @@ def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:
     return [name for name in park_ids if q in name.lower()]
 
 
-def format_status(park_name: str, payload: dict, config: dict) -> str:
+def format_status(park_name: str, payload: dict, config: dict,
+                  conn: sqlite3.Connection | None = None) -> str:
     """Monta a resposta do /status: watchlist do parque com a fila de agora."""
     park_cfg = config["parks"].get(park_name, {})
     abertas, fechadas = [], []
@@ -539,10 +698,12 @@ def format_status(park_name: str, payload: dict, config: dict) -> str:
     linhas = [f"🎢 <b>{notifier.esc(park_name)}</b>", f"🕒 {agora} no horário do parque", ""]
     for wait, ride, threshold in sorted(abertas):
         marca = "✅" if wait <= threshold else "▫️"
-        linhas.append(f"{marca} {notifier.esc(ride)} — <b>{wait} min</b> (alerta ≤ {threshold})")
+        seta = marca_tendencia(conn, park_name, ride)
+        linhas.append(f"{marca} {notifier.esc(ride)} — <b>{wait} min</b>{seta} (alerta ≤ {threshold})")
     for ride in sorted(fechadas):
         linhas.append(f"🔒 {notifier.esc(ride)} — fechada")
-    linhas += ["", "✅ = já está no ponto de ir", "Powered by Queue-Times.com"]
+    linhas += ["", "✅ = no ponto de ir · ↓ caindo · ↑ subindo (últimos 35 min)",
+               "Powered by Queue-Times.com"]
     return "\n".join(linhas)
 
 
@@ -561,6 +722,8 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
         return None  # conversa solta no chat não é comando
     if cmd in ("/start", "/help", "/ajuda"):
         return HELP
+    if cmd == "/health":
+        return format_health(conn, config, park_ids)
     if cmd == "/parques":
         nomes = "\n".join(f"• {notifier.esc(n)}" for n in park_ids)
         return f"🎢 <b>Parques monitorados</b>\n{nomes}"
@@ -596,7 +759,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     if cmd == "/menores":
         limite = config.get("top_alert", {}).get("list_size", 10)
         return format_menores(park_name, payload, config, limite)
-    return format_status(park_name, payload, config)
+    return format_status(park_name, payload, config, conn)
 
 
 def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict, park_ids: dict[str, int], timeout: int) -> int | None:
@@ -677,7 +840,8 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
                 continue
             if recently_alerted(conn, park_name, ride["name"], cooldown):
                 continue
-            if notifier.send(notifier.format_alert(park_name, ride["name"], wait, threshold)):
+            seta = marca_tendencia(conn, park_name, ride["name"])
+            if notifier.send(notifier.format_alert(park_name, ride["name"], wait, threshold, seta)):
                 mark_alerted(conn, park_name, ride["name"])
                 log.info("ALERTA: %s / %s = %s min", park_name, ride["name"], wait)
 
@@ -694,6 +858,18 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
 
 def main() -> None:
     config = load_config()
+    problemas = validar_config(config)
+    for problema in problemas:
+        log.error("Config inválida: %s", problema)
+    if problemas:
+        raise SystemExit("watchlist.json com problema — corrija os erros acima")
+
+    if not notifier.configured():
+        log.warning(
+            "TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID ausentes: coleta segue, "
+            "mas nenhum alerta e nenhum comando vão funcionar"
+        )
+
     conn = init_db()
 
     park_names = list(config["parks"].keys())

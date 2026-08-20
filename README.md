@@ -28,6 +28,25 @@ docker compose up -d --build
 docker compose logs -f  # deve mostrar "Parques resolvidos: {...}"
 ```
 
+### Atualizando um deploy existente
+
+⚠️ **Uma vez só, na atualização que trouxe o usuário não-root:** o container
+deixou de rodar como root, então o `data/` do host precisa mudar de dono, senão
+o SQLite fica sem permissão de escrita e o monitor não sobe.
+
+```bash
+cd /root/Fila-Disney-
+git pull
+sudo chown -R 10001:10001 data     # só nesta atualização
+docker compose up -d --build
+docker compose logs --tail=20
+```
+
+Se esquecer, o log mostra `unable to open database file`. O `chown` resolve
+sem perder o histórico.
+
+Nas atualizações seguintes basta `git pull && docker compose up -d --build`.
+
 ### Criar o bot Telegram (2 min)
 
 1. Fale com o `@BotFather` → `/newbot` → copie o token para `.env`
@@ -45,11 +64,14 @@ docker compose logs -f  # deve mostrar "Parques resolvidos: {...}"
 | `/menores` | Ranking das menores filas do parque **inteiro** agora |
 | `/menores <parque>` | Ranking de um parque específico |
 | `/parques` | Lista os parques que o monitor resolveu na API |
+| `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
 | `/help` | Ajuda |
 
 O `/status` consulta a API na hora — não devolve o último ciclo gravado. A
 resposta vem ordenada da menor fila para a maior, com ✅ nas atrações que já
-estão abaixo do threshold e 🔒 nas fechadas.
+estão abaixo do threshold e 🔒 nas fechadas. A seta mostra a tendência dos
+últimos 35 minutos: `↓12` caiu 12 min, `↑8` subiu 8, `→` estável. Dentro do
+parque "31 min e subindo" e "31 min e caindo" são decisões opostas.
 
 Filas de **single rider** e virtuais ficam fora do alerta e do `/status`: a API
 publica cada uma como atração separada, o nome casa por match parcial com a
@@ -115,6 +137,23 @@ resposta atrasada de uma vez.
 - `alert`: cooldown e quiet hours
 
 Os IDs dos parques **não são hardcoded**: o monitor resolve pelo nome consultando `https://queue-times.com/parks.json` na inicialização. Se um parque não resolver, aparece warning no log — ajuste o nome no JSON para bater com o da API.
+
+## Testes
+
+Sem dependência extra — `unittest` da stdlib:
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+Cobrem os casos que quebram calado: quiet hours na virada da meia-noite,
+cooldown por atração e por parque, chat não autorizado, API fora do ar, HTTP 429
+com `Retry-After`, JSON inválido, atração fechada, fila sem dado (que **não**
+pode virar 0 min), nome de parque ambíguo, troca de EDT para EST, virada do dia
+e reinício do container sem redisparar alerta.
+
+O CI (`.github/workflows/ci.yml`) roda isso e o build da imagem em todo push e
+pull request.
 
 ## Análise pré-viagem
 
