@@ -1,0 +1,102 @@
+{
+  "trip": {
+    "start": "2026-10-12",
+    "end": "2026-10-25",
+    "timezone": "America/New_York"
+  },
+  "park_days": {
+    "2026-10-13": ["Disney Magic Kingdom"],
+    "2026-10-14": ["Epcot"],
+    "2026-10-15": ["Disney Hollywood Studios"],
+    "2026-10-16": ["Disney Animal Kingdom"],
+    "2026-10-17": ["Disney Magic Kingdom"],
+    "2026-10-19": ["Universal Studios Florida"],
+    "2026-10-20": ["Universal Islands Of Adventure"],
+    "2026-10-21": ["Universal Epic Universe"],
+    "2026-10-22": ["Universal Studios Florida"],
+    "2026-10-23": ["Universal Islands Of Adventure"]
+  },
+  "parks": {
+    "Disney Magic Kingdom": {
+      "default_threshold": 30,
+      "attractions": {
+        "Seven Dwarfs Mine Train": 45,
+        "TRON Lightcycle / Run": 45,
+        "Space Mountain": 35,
+        "Big Thunder Mountain Railroad": 35,
+        "Tiana's Bayou Adventure": 40,
+        "Peter Pan's Flight": 30,
+        "Jungle Cruise": 35,
+        "Haunted Mansion": 30,
+        "Pirates of the Caribbean": 25
+      }
+    },
+    "Epcot": {
+      "default_threshold": 30,
+      "attractions": {
+        "Guardians of the Galaxy: Cosmic Rewind": 50,
+        "Frozen Ever After": 40,
+        "Remy's Ratatouille Adventure": 40,
+        "Test Track": 40,
+        "Soarin' Around the World": 30,
+        "Mission: SPACE": 25
+      }
+    },
+    "Disney Hollywood Studios": {
+      "default_threshold": 30,
+      "attractions": {
+        "Star Wars: Rise of the Resistance": 60,
+        "Slinky Dog Dash": 50,
+        "Millennium Falcon: Smugglers Run": 35,
+        "Mickey & Minnie's Runaway Railway": 40,
+        "Tower of Terror": 40,
+        "The Twilight Zone Tower of Terror": 40,
+        "Toy Story Mania!": 30
+      }
+    },
+    "Disney Animal Kingdom": {
+      "default_threshold": 25,
+      "attractions": {
+        "Avatar Flight of Passage": 60,
+        "Na'vi River Journey": 40,
+        "Expedition Everest": 30,
+        "Kilimanjaro Safaris": 35,
+        "DINOSAUR": 25
+      }
+    },
+    "Universal Studios Florida": {
+      "default_threshold": 30,
+      "attractions": {
+        "Harry Potter and the Escape from Gringotts": 45,
+        "Hollywood Rip Ride Rockit": 35,
+        "Revenge of the Mummy": 30,
+        "Transformers: The Ride 3D": 30,
+        "MEN IN BLACK Alien Attack": 25
+      }
+    },
+    "Universal Islands Of Adventure": {
+      "default_threshold": 30,
+      "attractions": {
+        "Hagrid's Magical Creatures Motorbike Adventure": 60,
+        "Jurassic World VelociCoaster": 50,
+        "Harry Potter and the Forbidden Journey": 40,
+        "The Incredible Hulk Coaster": 35,
+        "The Amazing Adventures of Spider-Man": 30
+      }
+    },
+    "Universal Epic Universe": {
+      "default_threshold": 40,
+      "attractions": {
+        "Harry Potter and the Battle at the Ministry": 75,
+        "Stardust Racers": 60,
+        "Monsters Unchained: The Frankenstein Experiment": 50,
+        "Mario Kart: Bowser's Challenge": 50,
+        "Curse of the Werewolf": 40
+      }
+    }
+  },
+  "alert": {
+    "cooldown_minutes": 45,
+    "quiet_hours": { "start": "22:00", "end": "07:00" }
+  }
+}

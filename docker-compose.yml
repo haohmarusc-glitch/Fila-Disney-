@@ -1,0 +1,9 @@
+services:
+  fila-disney:
+    build: .
+    container_name: fila-disney
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./watchlist.json:/app/watchlist.json:ro
