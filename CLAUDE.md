@@ -13,6 +13,7 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 5. O loop principal (`monitor.py:main`) nunca pode morrer por exceção de ciclo — sempre catch amplo com log.
 6. Timestamps no banco em UTC ISO; conversão para horário do parque (`America/New_York`) só na exibição/análise.
 7. Idioma de comentários, logs e mensagens Telegram: português (BR).
+8. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
 
 ## Arquitetura
 
@@ -20,6 +21,7 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `notifier.py` — Telegram (env: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
 - `analyze.py` — CLI de análise do histórico
 - `watchlist.json` — config declarativa (parques, atrações, thresholds, dias)
+- `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
 - `data/history.db` — SQLite, volume Docker, fora do git
 
 Tabelas: `wait_times(ts, park, land, ride, wait_time, is_open)` e `alerts_sent(park, ride, sent_at)`.
@@ -34,6 +36,7 @@ docker compose exec fila-disney python analyze.py   # análise
 
 ## Datas críticas
 
-- Disney: 13–17/out (Lightning Lane compra 3 dias antes, manual, ~7h da manhã)
-- Universal: 19–23/out
+- Disney: 13/out HS, 14/out AK, 15/out EPCOT, 17/out MK (16/out sem parque). Lightning Lane compra 3 dias antes, manual, ~7h da manhã
+- Universal: 19/out IOA, 20/out USF, 21/out EU (Express Pass só no EU)
+- 16, 18 e 22–25/out não têm parque: modo coleta apenas
 - Antes de 12/out: modo coleta. Durante: modo alerta automático via `park_days`.
