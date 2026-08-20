@@ -92,6 +92,10 @@
       "Mission: SPACE": [
         28.373901,
         -81.546716
+      ],
+      "Soarin' Around the World": [
+        28.372853,
+        -81.552699
       ]
     },
     "Disney Hollywood Studios": {
@@ -144,6 +148,10 @@
       "Kali River Rapids": [
         28.359536,
         -81.588062
+      ],
+      "Expedition Everest": [
+        28.358611,
+        -81.587202
       ]
     },
     "Universal Studios At Universal Orlando": {
@@ -190,12 +198,32 @@
         -81.473049
       ],
       "Jurassic Park River Adventure": [
-        28.470252,
-        -81.473782
+        28.470291,
+        -81.473936
       ],
       "Flight of the Hippogriff": [
-        28.472447,
-        -81.473834
+        28.472446,
+        -81.473792
+      ],
+      "Jurassic World VelociCoaster": [
+        28.471099,
+        -81.472491
+      ],
+      "Harry Potter and the Forbidden Journey": [
+        28.471876,
+        -81.473948
+      ],
+      "The Amazing Adventures of Spider-Man": [
+        28.470055,
+        -81.469659
+      ],
+      "Ripsaw Falls": [
+        28.469214,
+        -81.47183
+      ],
+      "Doctor Doom's Fearfall": [
+        28.470524,
+        -81.469297
       ]
     },
     "Universal Epic Universe": {
