@@ -402,6 +402,20 @@ def main() -> None:
     if missing:
         log.warning("Parques NÃO monitorados (nome não bateu na API): %s", missing)
 
+    # park_days usa os nomes de parks como chave; se divergirem, o dia de parque
+    # vira dia de coleta sem nenhum erro aparecer — daí o aviso explícito.
+    agendados = {p for dias in config.get("park_days", {}).values() for p in dias}
+    orfaos = agendados - set(config["parks"])
+    if orfaos:
+        log.warning(
+            "park_days aponta para parque que não existe em parks: %s — "
+            "esses dias NÃO vão alertar",
+            sorted(orfaos),
+        )
+    sem_id = agendados & missing
+    if sem_id:
+        log.warning("Dias de parque sem alerta (parque não resolvido na API): %s", sorted(sem_id))
+
     notifier.send(
         "✅ Monitor de filas iniciado. Mande /status para ver a fila agora.\n"
         "Powered by Queue-Times.com"
