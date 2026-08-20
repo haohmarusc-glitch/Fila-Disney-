@@ -34,7 +34,7 @@ docker compose logs -f  # deve mostrar "Parques resolvidos: {...}"
 ## Configuração (`watchlist.json`)
 
 - `trip`: período da viagem e timezone
-- `park_days`: qual parque em qual dia (modo alerta)
+- `park_days`: qual parque em qual dia (modo alerta). Segue `docs/ROTEIRO.md`; dias sem parque ficam de fora e caem no modo coleta
 - `parks.<nome>.attractions`: atração → threshold em minutos. O nome faz match parcial case-insensitive com o nome da API, então "Frozen" casa com "Frozen Ever After"
 - `alert`: cooldown e quiet hours
 
@@ -60,6 +60,7 @@ Não automatiza compras nem reservas no My Disney Experience — isso viola os t
 
 ```
 monitor.py        # loop principal: polling + persistência + alertas
+docs/ROTEIRO.md   # roteiro da viagem (fonte de verdade do park_days)
 notifier.py       # envio Telegram
 analyze.py        # análise do histórico (CLI)
 watchlist.json    # parques, atrações, thresholds, dias da viagem
