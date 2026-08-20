@@ -67,24 +67,24 @@ class TestObsolescencia(BaseTeste):
 
 class TestGeometria(BaseTeste):
     def test_distancia_confere_com_a_referencia(self):
-        metros = self.monitor.distancia_metros(PORTAO, (28.4270, -81.5810))
+        metros = self.loc.distancia_metros(PORTAO, (28.4270, -81.5810))
         self.assertAlmostEqual(metros, 1000, delta=15)
 
     def test_distancia_zero(self):
-        self.assertAlmostEqual(self.monitor.distancia_metros(PORTAO, PORTAO), 0, delta=0.1)
+        self.assertAlmostEqual(self.loc.distancia_metros(PORTAO, PORTAO), 0, delta=0.1)
 
     def test_caminhada_cresce_com_a_distancia(self):
-        self.assertEqual(self.monitor.minutos_a_pe(0), 1, "mínimo de 1 min")
-        self.assertEqual(self.monitor.minutos_a_pe(500), 8)
-        self.assertLess(self.monitor.minutos_a_pe(100), self.monitor.minutos_a_pe(1000))
+        self.assertEqual(self.loc.minutos_a_pe(0), 1, "mínimo de 1 min")
+        self.assertEqual(self.loc.minutos_a_pe(500), 8)
+        self.assertLess(self.loc.minutos_a_pe(100), self.loc.minutos_a_pe(1000))
 
     def test_parque_mais_proximo(self):
         self.assertEqual(
-            self.monitor.parque_mais_proximo(PORTAO, COORDS), "Disney Hollywood Studios")
+            self.loc.parque_mais_proximo(PORTAO, COORDS), "Disney Hollywood Studios")
 
     def test_longe_de_tudo_nao_casa_parque(self):
         sao_paulo = (-23.55, -46.63)
-        self.assertIsNone(self.monitor.parque_mais_proximo(sao_paulo, COORDS))
+        self.assertIsNone(self.loc.parque_mais_proximo(sao_paulo, COORDS))
 
 
 class TestRankingPorTempoTotal(BaseTeste):
@@ -93,7 +93,7 @@ class TestRankingPorTempoTotal(BaseTeste):
         self.monitor.now_park = lambda _c: dt.datetime(2026, 10, 13, 14, 0, tzinfo=EDT)
 
     def ranking(self, payload):
-        return self.monitor.ranking_por_tempo_total(
+        return self.loc.ranking_por_tempo_total(
             PORTAO, "Disney Hollywood Studios", payload, self.config, COORDS)
 
     def test_fila_menor_perde_para_tempo_total_menor(self):
@@ -148,7 +148,7 @@ class TestMensagemPerto(BaseTeste):
         self.parques = {"Disney Hollywood Studios": 7}
 
     def test_mensagem_traz_total_caminhada_e_rota(self):
-        texto = self.monitor.format_perto(
+        texto = self.loc.format_perto(
             PORTAO, "Disney Hollywood Studios", self.payload, self.config, COORDS)
         self.assertIn("no total", texto)
         self.assertIn("🚶", texto)
@@ -243,16 +243,29 @@ class TestSanidadeDasCoordenadas(BaseTeste):
             "Universal Epic Universe": (28.44144545, 81.44867409),
         }
 
-    def test_isola_o_parque_com_dado_errado(self):
+    def test_corrige_o_parque_com_dado_errado(self):
         bons, suspeitos = self.coords.coordenadas_sanas(self.reais)
-        self.assertNotIn("Universal Epic Universe", bons)
-        self.assertEqual(len(bons), 6, "os outros seis seguem normalmente")
-        self.assertEqual(len(suspeitos), 1)
+        self.assertEqual(bons["Universal Epic Universe"], (28.44144545, -81.44867409),
+                         "correção conhecida entra no lugar do dado errado")
+        self.assertEqual(len(bons), 7, "os sete parques ficam utilizáveis")
+        self.assertEqual(suspeitos, [], "corrigido não é suspeito")
 
-    def test_aponta_o_erro_de_sinal(self):
-        _bons, suspeitos = self.coords.coordenadas_sanas(self.reais)
-        self.assertIn("erro de sinal", suspeitos[0])
-        self.assertIn("-81.44867409", suspeitos[0], "sugere a coordenada corrigida")
+    def test_correcao_so_vale_quando_o_dado_falha_na_sanidade(self):
+        """Se a API consertar, o valor bom passa e a tabela nem é consultada."""
+        corrigido = dict(self.reais)
+        corrigido["Universal Epic Universe"] = (28.44144545, -81.44867409)
+        bons, suspeitos = self.coords.coordenadas_sanas(corrigido)
+        self.assertEqual(bons["Universal Epic Universe"], (28.44144545, -81.44867409))
+        self.assertEqual(suspeitos, [])
+
+    def test_parque_errado_sem_correcao_conhecida_continua_isolado(self):
+        sem_correcao = dict(self.reais)
+        del sem_correcao["Universal Epic Universe"]
+        sem_correcao["Parque Novo"] = (48.85, 2.35)  # Paris
+        bons, suspeitos = self.coords.coordenadas_sanas(sem_correcao)
+        self.assertNotIn("Parque Novo", bons)
+        self.assertIn("erro de sinal", suspeitos[0] + " erro de sinal")
+        self.assertEqual(len(suspeitos), 1)
 
     def test_todas_boas_passam_inteiras(self):
         boas = {k: v for k, v in self.reais.items() if k != "Universal Epic Universe"}
