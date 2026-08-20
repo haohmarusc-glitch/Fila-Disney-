@@ -14,7 +14,7 @@ import json
 import logging
 import sqlite3
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -45,6 +45,16 @@ HTTP_TIMEOUT = 15
 def load_config() -> dict:
     with open(WATCHLIST_PATH, encoding="utf-8") as f:
         return json.load(f)
+
+
+def utc_now() -> datetime:
+    """Agora em UTC, sem tzinfo.
+
+    datetime.utcnow() está deprecado no 3.12, mas o .replace(tzinfo=None) é de
+    propósito: o banco já tem histórico gravado sem offset e misturar os dois
+    formatos na mesma coluna bagunçaria o strftime do analyze.py.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ---------------------------------------------------------------- db
@@ -100,12 +110,37 @@ def resolve_park_ids(wanted_names: list[str]) -> dict[str, int]:
             resolved[name] = available[key]
             continue
         # fallback: match parcial (ex.: "Epcot" dentro de "Epcot Theme Park")
-        matches = [pid for pname, pid in available.items() if key in pname or pname in key]
+        matches = [pname for pname in available if key in pname or pname in key]
         if len(matches) == 1:
-            resolved[name] = matches[0]
+            resolved[name] = available[matches[0]]
+        elif matches:
+            log.warning(
+                "Parque ambíguo na API: %r casa com %s — use o nome exato no watchlist.json",
+                name, matches,
+            )
         else:
-            log.warning("Parque não resolvido na API: %r (matches=%s)", name, matches)
+            log.warning(
+                "Parque não resolvido na API: %r. Nomes parecidos disponíveis: %s "
+                "— copie o exato para o watchlist.json",
+                name, suggest_park_names(key, available) or "(nenhum)",
+            )
     return resolved
+
+
+def suggest_park_names(key: str, available: dict[str, int], limit: int = 5) -> list[str]:
+    """Nomes da API que dividem palavras com o procurado.
+
+    Existe para o log de parque não resolvido ser acionável: sem isso ele só
+    dizia "matches=[]" e você tinha que ir garimpar o parks.json na mão.
+    """
+    tokens = {t for t in key.split() if len(t) > 3}
+    scored = []
+    for pname in available:
+        comuns = len(tokens & {t for t in pname.split() if len(t) > 3})
+        if comuns:
+            scored.append((comuns, pname))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [pname for _, pname in scored[:limit]]
 
 
 def fetch_queue_times(park_id: int) -> dict:
@@ -147,7 +182,7 @@ def in_quiet_hours(config: dict) -> bool:
 
 
 def recently_alerted(conn: sqlite3.Connection, park: str, ride: str, cooldown_min: int) -> bool:
-    cutoff = (datetime.utcnow() - timedelta(minutes=cooldown_min)).isoformat()
+    cutoff = (utc_now() - timedelta(minutes=cooldown_min)).isoformat()
     row = conn.execute(
         "SELECT 1 FROM alerts_sent WHERE park = ? AND ride = ? AND sent_at > ? LIMIT 1",
         (park, ride, cutoff),
@@ -158,7 +193,7 @@ def recently_alerted(conn: sqlite3.Connection, park: str, ride: str, cooldown_mi
 def mark_alerted(conn: sqlite3.Connection, park: str, ride: str) -> None:
     conn.execute(
         "INSERT INTO alerts_sent (park, ride, sent_at) VALUES (?, ?, ?)",
-        (park, ride, datetime.utcnow().isoformat()),
+        (park, ride, utc_now().isoformat()),
     )
     conn.commit()
 
@@ -309,7 +344,7 @@ def wait_serving_commands(offset: int | None, config: dict, park_ids: dict[str, 
 # ---------------------------------------------------------------- ciclo
 
 def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> None:
-    ts = datetime.utcnow().isoformat()
+    ts = utc_now().isoformat()
     alert_parks = is_alert_day(config)
     cooldown = config.get("alert", {}).get("cooldown_minutes", 45)
     quiet = in_quiet_hours(config)
@@ -366,6 +401,20 @@ def main() -> None:
     missing = set(park_names) - set(park_ids)
     if missing:
         log.warning("Parques NÃO monitorados (nome não bateu na API): %s", missing)
+
+    # park_days usa os nomes de parks como chave; se divergirem, o dia de parque
+    # vira dia de coleta sem nenhum erro aparecer — daí o aviso explícito.
+    agendados = {p for dias in config.get("park_days", {}).values() for p in dias}
+    orfaos = agendados - set(config["parks"])
+    if orfaos:
+        log.warning(
+            "park_days aponta para parque que não existe em parks: %s — "
+            "esses dias NÃO vão alertar",
+            sorted(orfaos),
+        )
+    sem_id = agendados & missing
+    if sem_id:
+        log.warning("Dias de parque sem alerta (parque não resolvido na API): %s", sorted(sem_id))
 
     notifier.send(
         "✅ Monitor de filas iniciado. Mande /status para ver a fila agora.\n"

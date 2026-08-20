@@ -10,8 +10,8 @@
     "2026-10-14": ["Disney Animal Kingdom"],
     "2026-10-15": ["Epcot"],
     "2026-10-17": ["Disney Magic Kingdom"],
-    "2026-10-19": ["Universal Islands Of Adventure"],
-    "2026-10-20": ["Universal Studios Florida"],
+    "2026-10-19": ["Islands Of Adventure At Universal Orlando"],
+    "2026-10-20": ["Universal Studios At Universal Orlando"],
     "2026-10-21": ["Universal Epic Universe"]
   },
   "parks": {
@@ -64,7 +64,7 @@
         "Kali River Rapids": 30
       }
     },
-    "Universal Studios Florida": {
+    "Universal Studios At Universal Orlando": {
       "default_threshold": 30,
       "attractions": {
         "Harry Potter and the Escape from Gringotts": 45,
@@ -77,7 +77,7 @@
         "Villain-Con Minion Blast": 25
       }
     },
-    "Universal Islands Of Adventure": {
+    "Islands Of Adventure At Universal Orlando": {
       "default_threshold": 30,
       "attractions": {
         "Hagrid's Magical Creatures Motorbike Adventure": 60,

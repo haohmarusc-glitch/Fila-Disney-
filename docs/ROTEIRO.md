@@ -26,7 +26,7 @@ histórico de todos os 7 parques, só não manda Telegram.
 O dia 18/10 tem uma esticada **opcional** ao Wizarding World de dia (um dos 2
 dias grátis do ingresso Universal). Ficou fora do `park_days` de propósito, para
 não encher o dia de descanso de notificação — se o grupo decidir ir, basta
-acrescentar `"2026-10-18": ["Universal Islands Of Adventure"]` (ou USF).
+acrescentar `"2026-10-18": ["Islands Of Adventure At Universal Orlando"]` (ou USF).
 
 ## Por que os dias caem assim
 
