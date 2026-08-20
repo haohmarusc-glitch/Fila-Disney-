@@ -163,8 +163,18 @@ def mark_alerted(conn: sqlite3.Connection, park: str, ride: str) -> None:
     conn.commit()
 
 
+# Filas paralelas que a API publica como atração separada. O match parcial da
+# watchlist casa com elas ("Test Track" dentro de "Test Track Presented by
+# Chevrolet Single Rider") e elas reportam 0 min quando não há dado — o que
+# viraria alerta falso de "0 min, vai agora" logo no primeiro ciclo do dia.
+# Continuam sendo gravadas no histórico; ficam fora só de alerta e /status.
+FILAS_IGNORADAS = ("single rider", "virtual line", "virtual queue")
+
+
 def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
-    """Threshold da atração; se não listada, usa default do parque apenas se watch_all."""
+    """Threshold da atração; None se não estiver na watchlist do parque."""
+    if any(termo in ride_name.lower() for termo in FILAS_IGNORADAS):
+        return None
     attractions = park_cfg.get("attractions", {})
     for watched, threshold in attractions.items():
         if watched.lower() in ride_name.lower() or ride_name.lower() in watched.lower():
