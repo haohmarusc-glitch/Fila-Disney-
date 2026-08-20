@@ -89,10 +89,10 @@ def is_authorized(chat_id) -> bool:
     return str(chat_id) == str(CHAT_ID)
 
 
-def format_alert(park: str, ride: str, wait: int, threshold: int) -> str:
+def format_alert(park: str, ride: str, wait: int, threshold: int, tendencia: str = "") -> str:
     return (
         f"🎢 <b>{esc(ride)}</b>\n"
-        f"⏱ Fila agora: <b>{wait} min</b> (alerta ≤ {threshold} min)\n"
+        f"⏱ Fila agora: <b>{wait} min</b>{tendencia} (alerta ≤ {threshold} min)\n"
         f"📍 {esc(park)}\n"
         f"➡️ Vai agora!"
     )

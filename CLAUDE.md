@@ -9,7 +9,7 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 1. **NUNCA** implementar automação de compra/reserva no My Disney Experience ou apps oficiais da Disney/Universal — viola ToS e arrisca os ingressos. Este projeto só lê dados públicos de fila.
 2. Manter a atribuição "Powered by Queue-Times.com" visível (exigência da API gratuita).
 3. IDs de parque nunca hardcoded — sempre resolver por nome via `parks.json`.
-4. Dependências mínimas: hoje só `requests`. Antes de adicionar libs, avaliar stdlib.
+4. Dependências mínimas: hoje só `requests`, com versão fixada. Antes de adicionar libs, avaliar stdlib — os testes usam `unittest` por isso.
 5. O loop principal (`monitor.py:main`) nunca pode morrer por exceção de ciclo — sempre catch amplo com log.
 6. Timestamps no banco em UTC ISO; conversão para horário do parque (`America/New_York`) só na exibição/análise.
 7. Idioma de comentários, logs e mensagens Telegram: português (BR).
@@ -20,7 +20,10 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 10. Fila de single rider / virtual não entra em alerta nem `/status`
     (`FILAS_IGNORADAS`): a API publica como atração separada, o match parcial
     casa com a atração real e o tempo vem 0 sem dado — alerta falso na certa.
-11. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
+11. Toda chamada externa passa por `get_json` (retry, backoff, 429). Nunca chamar `requests.get` direto.
+12. Ausência de dado **nunca** vira 0 min: `wait_time` None fica None, no banco e na mensagem.
+13. Mudou comportamento? Teste em `tests/` junto. O CI barra o merge se quebrar.
+14. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
 
 ## Arquitetura
 
@@ -43,6 +46,7 @@ O resumo diário lê o histórico agrupando por hora UTC e desloca pelo offset d
 ## Comandos
 
 ```bash
+python -m unittest discover -s tests -t .   # testes (stdlib, sem dependência extra)
 docker compose up -d --build      # deploy
 docker compose logs -f            # logs
 docker compose exec fila-disney python analyze.py   # análise
