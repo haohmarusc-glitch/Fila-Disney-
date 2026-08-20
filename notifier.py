@@ -1,4 +1,5 @@
-"""Notificador Telegram — envia alertas de fila para o chat configurado."""
+"""Notificador Telegram — envia alertas de fila e recebe comandos do chat."""
+import html
 import logging
 import os
 
@@ -8,19 +9,35 @@ log = logging.getLogger("notifier")
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+API_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+HTTP_TIMEOUT = 10
+POLL_TIMEOUT = 20  # long polling: quanto o Telegram segura a conexão sem novidade
+
+
+def configured() -> bool:
+    return bool(BOT_TOKEN and CHAT_ID)
+
+
+def esc(text) -> str:
+    """Escapa para parse_mode HTML.
+
+    Obrigatório em qualquer nome vindo da API: "Mickey & Minnie's Runaway Railway"
+    com o & cru faz o Telegram devolver 400 e a mensagem não sai.
+    """
+    return html.escape(str(text), quote=False)
 
 
 def send(text: str) -> bool:
     """Envia mensagem ao Telegram. Retorna True em caso de sucesso."""
-    if not BOT_TOKEN or not CHAT_ID:
+    if not configured():
         log.warning("Telegram não configurado (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID). Msg: %s", text)
         return False
     try:
         resp = requests.post(
-            API_URL,
+            f"{API_BASE}/sendMessage",
             json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"},
-            timeout=10,
+            timeout=HTTP_TIMEOUT,
         )
         if resp.status_code != 200:
             log.error("Telegram HTTP %s: %s", resp.status_code, resp.text[:200])
@@ -31,10 +48,51 @@ def send(text: str) -> bool:
         return False
 
 
+def get_updates(offset: int | None = None, timeout: int = POLL_TIMEOUT) -> list[dict]:
+    """Long polling do getUpdates. Devolve [] em qualquer falha.
+
+    Quem chama está dentro do loop principal: nenhuma falha de rede daqui pode
+    virar exceção lá em cima.
+    """
+    if not configured():
+        return []
+    try:
+        resp = requests.get(
+            f"{API_BASE}/getUpdates",
+            params={"offset": offset, "timeout": timeout},
+            timeout=timeout + HTTP_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            log.error("getUpdates HTTP %s: %s", resp.status_code, resp.text[:200])
+            return []
+        return resp.json().get("result", [])
+    except (requests.RequestException, ValueError) as exc:
+        log.error("Falha no getUpdates: %s", exc)
+        return []
+
+
+def drop_pending_updates() -> int | None:
+    """Descarta o backlog acumulado enquanto o bot esteve fora do ar.
+
+    Sem isso, ao subir o container o bot responderia de uma vez a todo /status
+    mandado durante a queda. Devolve o offset inicial (último update_id + 1).
+    """
+    updates = get_updates(timeout=0)
+    if not updates:
+        return None
+    log.info("Descartados %d update(s) antigos do Telegram", len(updates))
+    return updates[-1]["update_id"] + 1
+
+
+def is_authorized(chat_id) -> bool:
+    """Só o chat configurado manda comandos — o token do bot vaza fácil."""
+    return str(chat_id) == str(CHAT_ID)
+
+
 def format_alert(park: str, ride: str, wait: int, threshold: int) -> str:
     return (
-        f"🎢 <b>{ride}</b>\n"
+        f"🎢 <b>{esc(ride)}</b>\n"
         f"⏱ Fila agora: <b>{wait} min</b> (alerta ≤ {threshold} min)\n"
-        f"📍 {park}\n"
+        f"📍 {esc(park)}\n"
         f"➡️ Vai agora!"
     )
