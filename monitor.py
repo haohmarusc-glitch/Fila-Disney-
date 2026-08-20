@@ -88,6 +88,14 @@ def init_db() -> sqlite3.Connection:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS top_alert (
+            id      INTEGER PRIMARY KEY CHECK (id = 1),   -- linha única
+            sent_at TEXT NOT NULL                         -- ISO UTC do último envio
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS daily_summary (
             sent_on TEXT PRIMARY KEY          -- data no fuso do parque
         )
@@ -213,15 +221,125 @@ def mark_alerted(conn: sqlite3.Connection, park: str, ride: str) -> None:
 FILAS_IGNORADAS = ("single rider", "virtual line", "virtual queue")
 
 
+def fila_paralela(ride_name: str) -> bool:
+    """True para single rider / fila virtual — entrada separada na API, tempo 0."""
+    return any(termo in ride_name.lower() for termo in FILAS_IGNORADAS)
+
+
 def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
     """Threshold da atração; None se não estiver na watchlist do parque."""
-    if any(termo in ride_name.lower() for termo in FILAS_IGNORADAS):
+    if fila_paralela(ride_name):
         return None
     attractions = park_cfg.get("attractions", {})
     for watched, threshold in attractions.items():
         if watched.lower() in ride_name.lower() or ride_name.lower() in watched.lower():
             return threshold
     return None
+
+
+# ---------------------------------------------------------------- menores filas
+
+def menores_filas(payload: dict, config: dict, park_name: str, limite: int,
+                  apenas_watchlist: bool) -> list[tuple[int, str, int | None]]:
+    """(espera, atração, threshold) das menores filas abertas, da menor para a maior.
+
+    Filas paralelas ficam de fora: reportam 0 min sem dado e ocupariam o topo do
+    ranking inteiro, que é justamente o que o comando existe para mostrar.
+    """
+    park_cfg = config["parks"].get(park_name, {})
+    abertas = []
+    for _land, ride in iter_rides(payload):
+        nome = ride["name"]
+        if fila_paralela(nome):
+            continue
+        if not ride.get("is_open"):
+            continue
+        wait = ride.get("wait_time")
+        if wait is None:
+            continue
+        threshold = get_threshold(park_cfg, nome)
+        if apenas_watchlist and threshold is None:
+            continue
+        abertas.append((wait, nome, threshold))
+    abertas.sort(key=lambda item: (item[0], item[1]))
+    return abertas[:limite]
+
+
+def format_menores(park_name: str, payload: dict, config: dict, limite: int) -> str:
+    """Ranking das menores filas do parque inteiro — inclui o que não é watchlist."""
+    ranking = menores_filas(payload, config, park_name, limite, apenas_watchlist=False)
+    if not ranking:
+        return f"📉 <b>{notifier.esc(park_name)}</b>\n\nNenhuma atração aberta agora."
+
+    agora = now_park(config).strftime("%Hh%M")
+    linhas = [
+        f"📉 <b>Menores filas — {notifier.esc(park_name)}</b>",
+        f"🕒 {agora} no horário do parque",
+        "",
+    ]
+    for wait, ride, threshold in ranking:
+        marca = "✅" if threshold is not None and wait <= threshold else "▫️"
+        estrela = " ⭐" if threshold is not None else ""   # está na sua watchlist
+        linhas.append(f"{marca} <b>{wait} min</b> · {notifier.esc(ride)}{estrela}")
+    linhas += ["", "⭐ = está na sua watchlist", "Powered by Queue-Times.com"]
+    return "\n".join(linhas)
+
+
+def format_top_alert(park_name: str, ranking: list, config: dict) -> str:
+    """Mensagem curta do alerta recorrente — chega a cada N min, tem que ser enxuta."""
+    agora = now_park(config).strftime("%Hh%M")
+    medalhas = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣")
+    linhas = [f"⚡ <b>Menores filas agora</b> · {notifier.esc(park_name)} · {agora}"]
+    for i, (wait, ride, threshold) in enumerate(ranking):
+        marca = " ✅" if threshold is not None and wait <= threshold else ""
+        medalha = medalhas[i] if i < len(medalhas) else "•"
+        linhas.append(f"{medalha} {notifier.esc(ride)} — <b>{wait} min</b>{marca}")
+    return "\n".join(linhas)
+
+
+def top_alert_atrasado(conn: sqlite3.Connection, intervalo_min: int) -> bool:
+    """True se já passou o intervalo desde o último envio (ou se nunca houve)."""
+    row = conn.execute("SELECT sent_at FROM top_alert WHERE id = 1").fetchone()
+    if not row:
+        return True
+    return datetime.fromisoformat(row[0]) <= utc_now() - timedelta(minutes=intervalo_min)
+
+
+def marcar_top_alert(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO top_alert (id, sent_at) VALUES (1, ?)", (utc_now().isoformat(),)
+    )
+    conn.commit()
+
+
+def maybe_send_top_alert(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int],
+                         payloads: dict[str, dict]) -> None:
+    """Manda as N menores filas do parque do dia, a cada N minutos."""
+    cfg = config.get("top_alert", {})
+    if not cfg.get("enabled", False):
+        return
+    if in_quiet_hours(config):
+        return
+
+    do_dia = [p for p in is_alert_day(config) if p in park_ids]
+    if not do_dia and cfg.get("only_park_days", True):
+        return
+    park_name = (do_dia or list(park_ids))[0]
+
+    payload = payloads.get(park_name)
+    if payload is None:  # o fetch deste parque falhou neste ciclo
+        return
+    if not top_alert_atrasado(conn, cfg.get("every_minutes", 10)):
+        return
+
+    ranking = menores_filas(
+        payload, config, park_name, cfg.get("count", 3), apenas_watchlist=True
+    )
+    if not ranking:
+        return
+    if notifier.send(format_top_alert(park_name, ranking, config)):
+        marcar_top_alert(conn)
+        log.info("Top-%d de menores filas enviado (%s)", len(ranking), park_name)
 
 
 # ---------------------------------------------------------------- resumo diário
@@ -379,6 +497,8 @@ HELP = (
     "🎢 <b>Monitor de filas</b>\n\n"
     "/status — fila atual da watchlist do parque de hoje\n"
     "/status &lt;parque&gt; — fila de um parque específico (ex.: <code>/status Epcot</code>)\n"
+    "/menores — ranking das menores filas do parque inteiro agora\n"
+    "/menores &lt;parque&gt; — ranking de um parque específico\n"
     "/resumo — previsão do dia pelo histórico (o mesmo das 7h)\n"
     "/resumo &lt;parque&gt; — previsão de um parque específico\n"
     "/parques — parques monitorados\n"
@@ -441,7 +561,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     if cmd == "/parques":
         nomes = "\n".join(f"• {notifier.esc(n)}" for n in park_ids)
         return f"🎢 <b>Parques monitorados</b>\n{nomes}"
-    if cmd not in ("/status", "/resumo"):
+    if cmd not in ("/status", "/resumo", "/menores"):
         return HELP
 
     if arg:
@@ -467,8 +587,12 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     try:
         payload = fetch_queue_times(park_ids[park_name])
     except requests.RequestException as exc:
-        log.error("Falha ao buscar %s para /status: %s", park_name, exc)
+        log.error("Falha ao buscar %s para %s: %s", park_name, cmd, exc)
         return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
+
+    if cmd == "/menores":
+        limite = config.get("top_alert", {}).get("list_size", 10)
+        return format_menores(park_name, payload, config, limite)
     return format_status(park_name, payload, config)
 
 
@@ -514,7 +638,10 @@ def wait_serving_commands(offset: int | None, conn: sqlite3.Connection, config: 
 
 # ---------------------------------------------------------------- ciclo
 
-def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> None:
+def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> dict[str, dict]:
+    """Coleta, grava e alerta. Devolve os payloads do ciclo, reaproveitados pelo
+    alerta de menores filas — assim ele não repete a chamada na API."""
+    payloads: dict[str, dict] = {}
     ts = utc_now().isoformat()
     alert_parks = is_alert_day(config)
     cooldown = config.get("alert", {}).get("cooldown_minutes", 45)
@@ -526,6 +653,7 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
         except requests.RequestException as exc:
             log.error("Falha ao buscar %s: %s", park_name, exc)
             continue
+        payloads[park_name] = payload
 
         rows = []
         for land, ride in iter_rides(payload):
@@ -557,6 +685,8 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
             )
             conn.commit()
             log.info("%s: %d atrações gravadas", park_name, len(rows))
+
+    return payloads
 
 
 def main() -> None:
@@ -594,10 +724,15 @@ def main() -> None:
     offset = notifier.drop_pending_updates()
 
     while True:
+        payloads: dict[str, dict] = {}
         try:
-            run_cycle(conn, config, park_ids)
+            payloads = run_cycle(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — loop nunca deve morrer
             log.exception("Erro no ciclo de coleta")
+        try:
+            maybe_send_top_alert(conn, config, park_ids, payloads)
+        except Exception:  # noqa: BLE001 — alerta quebrado não pode parar a coleta
+            log.exception("Erro no alerta de menores filas")
         try:
             maybe_send_daily_summary(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — resumo quebrado não pode parar a coleta

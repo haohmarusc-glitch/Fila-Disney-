@@ -34,7 +34,9 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
 - `data/history.db` — SQLite, volume Docker, fora do git
 
-Tabelas: `wait_times(ts, park, land, ride, wait_time, is_open)`, `alerts_sent(park, ride, sent_at)` e `daily_summary(sent_on)` — esta última guarda a data (no fuso do parque) em que o resumo das 7h já saiu, para não repetir.
+Tabelas: `wait_times(ts, park, land, ride, wait_time, is_open)`, `alerts_sent(park, ride, sent_at)` e `daily_summary(sent_on)` — esta última guarda a data (no fuso do parque) em que o resumo das 7h já saiu, para não repetir. `top_alert(id=1, sent_at)` guarda o último envio do alerta de menores filas.
+
+`run_cycle` devolve os payloads que buscou; o alerta de menores filas consome esse dicionário em vez de refazer o fetch. Se um parque falhou no ciclo, ele simplesmente não está no dicionário e o alerta pula a rodada.
 
 O resumo diário lê o histórico agrupando por hora UTC e desloca pelo offset do fuso calculado na hora (`park_utc_offset_horas`), nunca por offset fixo: em novembro Orlando volta ao EST e um `-4` cravado erraria tudo em 1h.
 

@@ -42,6 +42,8 @@ docker compose logs -f  # deve mostrar "Parques resolvidos: {...}"
 | `/status <parque>` | Fila de qualquer parque monitorado (`/status Epcot`, `/status IOA`) |
 | `/resumo` | Previsão do dia pelo histórico — o mesmo texto que chega às 7h |
 | `/resumo <parque>` | Previsão de um parque específico, em qualquer data |
+| `/menores` | Ranking das menores filas do parque **inteiro** agora |
+| `/menores <parque>` | Ranking de um parque específico |
 | `/parques` | Lista os parques que o monitor resolveu na API |
 | `/help` | Ajuda |
 
@@ -53,6 +55,33 @@ Filas de **single rider** e virtuais ficam fora do alerta e do `/status`: a API
 publica cada uma como atração separada, o nome casa por match parcial com a
 atração de verdade e o tempo vem 0 quando não há dado — o que viraria alerta
 falso de "0 min, vai agora". Elas continuam sendo gravadas no histórico.
+
+## Alerta das menores filas
+
+Em dia de parque, a cada 10 minutos, o bot manda as 3 atrações da watchlist com
+a menor fila naquele momento:
+
+```
+⚡ Menores filas agora · Disney Hollywood Studios · 14h32
+1️⃣ Alien Swirling Saucers — 15 min ✅
+2️⃣ Toy Story Mania! — 25 min ✅
+3️⃣ Tower of Terror — 30 min
+```
+
+Configurável em `watchlist.json`:
+
+```json
+"top_alert": { "enabled": true, "every_minutes": 10, "count": 3, "list_size": 10, "only_park_days": true }
+```
+
+A cada 10 min das 7h às 22h dá cerca de 90 mensagens por dia de parque — suba
+`every_minutes` se for demais. As quiet hours valem também para ele, então nada
+chega entre 22h e 7h. Não gasta chamada extra na API: reaproveita o payload que
+o ciclo de coleta já buscou.
+
+Diferença para o `/status`: o alerta e o `/status` olham só a **sua watchlist**,
+enquanto o `/menores` ranqueia o **parque inteiro** e marca com ⭐ o que está na
+watchlist — serve para achar fila curta em atração que você não listou.
 
 ## Resumo diário das 7h
 
