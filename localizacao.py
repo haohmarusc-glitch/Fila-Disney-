@@ -33,7 +33,9 @@ PESOS_PADRAO = {"tempo": 0.5, "historico": 0.3, "tendencia": 0.2}
 def load_coords() -> dict:
     """coords.json é opcional: sem ele o bot roda igual, só sem /perto."""
     try:
-        with open(monitor.COORDS_PATH, encoding="utf-8") as f:
+        caminho = (monitor.COORDS_PATH if monitor.COORDS_PATH.exists()
+                   else monitor.COORDS_PATH_REPO)
+        with open(caminho, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {"parks": {}, "rides": {}}

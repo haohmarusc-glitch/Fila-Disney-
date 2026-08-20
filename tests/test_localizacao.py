@@ -380,3 +380,36 @@ class TestCandidatosNoLog(BaseTeste):
     def test_limita_a_quantidade_pedida(self):
         muitos = {f"river ride {i}": (0.0, 0.0) for i in range(10)}
         self.assertLessEqual(len(self.coords.candidatos_proximos("River Ride", muitos, 3)), 3)
+
+
+class TestPersistenciaDoCoords(BaseTeste):
+    """coords.json em /app some no rebuild: só data/ é volume."""
+
+    def test_grava_no_volume_e_nao_na_raiz(self):
+        import importlib
+        mod = importlib.import_module("monitor")
+        caminho_real = mod.BASE_DIR / "data" / "coords.json"
+        self.assertEqual(caminho_real.parent.name, "data",
+                         "gravar fora de data/ perde o trabalho no próximo --build")
+
+    def test_le_do_volume_quando_existe(self):
+        import json as _json
+        self.monitor.COORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self.monitor.COORDS_PATH.write_text(
+            _json.dumps({"parks": {"X": [1, 2]}, "rides": {}}), encoding="utf-8")
+        import importlib
+        loc = importlib.import_module("localizacao")
+        self.assertEqual(loc.load_coords()["parks"], {"X": [1, 2]})
+
+    def test_cai_no_versionado_quando_o_volume_esta_vazio(self):
+        import json as _json, importlib
+        self.assertFalse(self.monitor.COORDS_PATH.exists())
+        self.monitor.COORDS_PATH_REPO.write_text(
+            _json.dumps({"parks": {"DoRepo": [3, 4]}, "rides": {}}), encoding="utf-8")
+        loc = importlib.import_module("localizacao")
+        self.assertEqual(loc.load_coords()["parks"], {"DoRepo": [3, 4]})
+
+    def test_sem_nenhum_dos_dois_nao_estoura(self):
+        import importlib
+        loc = importlib.import_module("localizacao")
+        self.assertEqual(loc.load_coords(), {"parks": {}, "rides": {}})
