@@ -136,7 +136,13 @@ O Queue-Times não devolve lat/lon das atrações (só `id`, `name`, `is_open`,
 ```bash
 docker compose exec fila-disney python coords.py --revisar   # só relatório
 docker compose exec fila-disney python coords.py             # grava coords.json
+docker compose exec fila-disney python coords.py --forcar    # refaz até o que já está pronto
 ```
+
+A Overpass é serviço público e gratuito, com política de uso moderado: o script
+espaça as consultas em 20s e espera 45s no 429. Ainda assim ela pode recusar —
+nesse caso **rode de novo mais tarde**, que ele continua de onde parou: o
+progresso é gravado a cada parque e parque já completo é pulado.
 
 Se algum parque vier com coordenada implausível, o script isola aquele parque e
 diz qual é a correção provável — foi o caso do Epic Universe em 20/08/2026, que

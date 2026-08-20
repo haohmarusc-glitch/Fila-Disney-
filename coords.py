@@ -17,12 +17,19 @@ errada mandando o grupo para o outro lado do parque.
 import json
 import re
 import sys
+import time
 import unicodedata
 from pathlib import Path
 
 import monitor
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# A Overpass é um serviço público e gratuito, com política de uso moderado.
+# Sete consultas seguidas sem pausa renderam 504, 429 e recusa de conexão na
+# primeira execução real — daí a pausa entre parques e a espera longa no 429.
+PAUSA_ENTRE_PARQUES_S = 20
+TENTATIVAS_OVERPASS = 5
+ESPERA_MINIMA_429_S = 45
 RAIO_METROS = 1600  # cobre um parque inteiro com folga
 COORDS_PATH = Path(__file__).parent / "coords.json"
 
@@ -130,7 +137,9 @@ def buscar_osm(lat: float, lon: float) -> dict[str, tuple[float, float]]:
     """Atrações mapeadas no OSM ao redor do ponto: {nome normalizado: (lat, lon)}."""
     consulta = CONSULTA.format(raio=RAIO_METROS, lat=lat, lon=lon)
     # POST, não GET: a Overpass devolve 406 para consulta longa na URL
-    resposta = monitor.post_json(OVERPASS_URL, {"data": consulta})
+    resposta = monitor.post_json(
+        OVERPASS_URL, {"data": consulta},
+        tentativas=TENTATIVAS_OVERPASS, espera_minima=ESPERA_MINIMA_429_S)
     achados: dict[str, tuple[float, float]] = {}
     for elemento in resposta.get("elements", []):
         nome = elemento.get("tags", {}).get("name")
@@ -167,8 +176,25 @@ def coordenadas_dos_parques(nomes: list[str]) -> dict[str, tuple[float, float]]:
     return resolvidos
 
 
+def parque_completo(nome: str, config: dict, saida: dict) -> bool:
+    """True se o coords.json já tem todas as atrações da watchlist deste parque.
+
+    Existe para a re-execução ser barata: a Overpass é serviço público e não
+    merece ser consultada de novo por um parque que já está resolvido.
+    """
+    desejadas = set(config["parks"].get(nome, {}).get("attractions", {}))
+    return bool(desejadas) and desejadas <= set(saida.get("rides", {}).get(nome, {}))
+
+
+def gravar(saida: dict) -> None:
+    COORDS_PATH.write_text(
+        json.dumps(saida, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def main() -> int:
     apenas_revisar = "--revisar" in sys.argv
+    forcar = "--forcar" in sys.argv  # refaz até os parques já completos
     config = monitor.load_config()
     nomes = list(config["parks"])
 
@@ -186,18 +212,30 @@ def main() -> int:
         print("      em \"parks\", e rodar de novo: o que já está lá é preservado.)")
 
     # Preserva o que já existe: correção manual não pode ser perdida na re-execução
+    total_ok = total_falta = 0
     saida = monitor.load_coords()
     saida.setdefault("parks", {})
     saida.setdefault("rides", {})
-    total_ok = total_falta = 0
 
-    for nome, (lat, lon) in parques.items():
+    pendentes = []
+    for nome, coord in parques.items():
+        saida["parks"][nome] = list(coord)
+        if parque_completo(nome, config, saida) and not forcar:
+            print(f"=== {nome}: já completo no coords.json, pulando ===")
+            total_ok += len(saida["rides"][nome])
+            continue
+        pendentes.append((nome, coord))
+
+    for indice, (nome, (lat, lon)) in enumerate(pendentes):
+        if indice:  # espaça as consultas: a Overpass pede uso moderado
+            print(f"\n(aguardando {PAUSA_ENTRE_PARQUES_S}s antes da próxima consulta)")
+            time.sleep(PAUSA_ENTRE_PARQUES_S)
         print(f"\n=== {nome} ({lat}, {lon}) ===")
-        saida["parks"][nome] = [lat, lon]
         try:
             osm = buscar_osm(lat, lon)
         except Exception as exc:  # noqa: BLE001 — um parque falho não aborta o resto
             print(f"  !! Overpass falhou: {exc}")
+            print("     Rode de novo mais tarde: o que já foi resolvido é preservado.")
             continue
         print(f"  {len(osm)} atrações mapeadas no OSM")
 
@@ -218,14 +256,15 @@ def main() -> int:
             saida["rides"][nome][atracao] = list(osm[osm_nome])
             total_ok += 1
 
+        if not apenas_revisar:  # grava a cada parque: queda no meio não perde nada
+            gravar(saida)
+
     print(f"\n{'=' * 60}\n{total_ok} com coordenada · {total_falta} sem")
     if apenas_revisar:
         print("--revisar: nada gravado.")
         return 0
 
-    COORDS_PATH.write_text(
-        json.dumps(saida, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    gravar(saida)
     print(f"Gravado em {COORDS_PATH}")
     print("As marcadas [ CONF ] merecem conferência; as [ FALTA ] podem ser")
     print("preenchidas à mão em coords.json, no formato \"Nome\": [lat, lon].")

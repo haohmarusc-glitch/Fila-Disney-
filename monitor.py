@@ -213,13 +213,16 @@ def get_json(url: str, *, tentativas: int = HTTP_TENTATIVAS) -> object:
     return requisicao_json("GET", url, tentativas=tentativas)
 
 
-def post_json(url: str, dados: dict, *, tentativas: int = HTTP_TENTATIVAS) -> object:
+def post_json(url: str, dados: dict, *, tentativas: int = HTTP_TENTATIVAS,
+              espera_minima: float = 0) -> object:
     """POST form-encoded. A Overpass exige POST para consulta e recusa GET longo."""
-    return requisicao_json("POST", url, dados=dados, tentativas=tentativas)
+    return requisicao_json("POST", url, dados=dados, tentativas=tentativas,
+                           espera_minima=espera_minima)
 
 
 def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
-                    tentativas: int = HTTP_TENTATIVAS) -> object:
+                    tentativas: int = HTTP_TENTATIVAS,
+                    espera_minima: float = 0) -> object:
     """Núcleo HTTP com retry e backoff.
 
     Um ciclo perdido é histórico perdido para sempre, então vale insistir um
@@ -236,7 +239,10 @@ def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
             else:
                 resp = requests.get(url, headers=cabecalhos, timeout=HTTP_TIMEOUT)
             if resp.status_code == 429:
-                espera = float(resp.headers.get("Retry-After") or HTTP_BACKOFF_BASE ** tentativa)
+                espera = max(
+                    float(resp.headers.get("Retry-After") or HTTP_BACKOFF_BASE ** tentativa),
+                    espera_minima,  # a Overpass libera slot em dezenas de segundos
+                )
                 log.warning("429 em %s — aguardando %.0fs", url, espera)
                 ultimo_erro = requests.HTTPError("429 Too Many Requests")
                 if tentativa < tentativas:
@@ -252,7 +258,7 @@ def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
             if status is not None and 400 <= status < 500 and status != 429:
                 break
             if tentativa < tentativas:
-                espera = HTTP_BACKOFF_BASE ** tentativa
+                espera = max(HTTP_BACKOFF_BASE ** tentativa, espera_minima)
                 log.warning("Falha em %s (tentativa %d/%d): %s — nova tentativa em %ds",
                             url, tentativa, tentativas, exc, espera)
                 _dormir(espera)
