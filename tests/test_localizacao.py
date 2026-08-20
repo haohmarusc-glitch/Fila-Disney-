@@ -345,3 +345,38 @@ class TestUsoModeradoDaOverpass(BaseTeste):
 
     def test_parque_ausente_nao_e_pulado(self):
         self.assertFalse(self.coords.parque_completo("Epcot", self.config, {"rides": {}}))
+
+
+class TestCandidatosNoLog(BaseTeste):
+    """FALTA sem candidato obriga a garimpar o OSM na mão."""
+
+    def setUp(self):
+        super().setUp()
+        import importlib
+        self.coords = importlib.import_module("coords")
+        self.osm = {n: (0.0, 0.0) for n in [
+            "expedition everest legend of the forbidden mountain",
+            "kilimanjaro safaris", "dinosaur", "kali river rapids"]}
+
+    def test_mostra_o_nome_parecido(self):
+        candidatos = self.coords.candidatos_proximos("Expedition Everest", self.osm)
+        self.assertEqual(candidatos[0][0],
+                         "expedition everest legend of the forbidden mountain")
+
+    def test_ordena_do_mais_parecido(self):
+        candidatos = self.coords.candidatos_proximos("Kali River Rapids", self.osm)
+        self.assertEqual(candidatos[0][0], "kali river rapids")
+        self.assertEqual(candidatos[0][1], 1.0)
+
+    def test_ignora_o_corte_de_confianca(self):
+        """casar() rejeita abaixo de 0.6; o candidato aparece mesmo assim."""
+        self.assertIsNone(self.coords.casar("Space Mountain", self.osm))
+        self.assertTrue(self.coords.candidatos_proximos("Space Mountain", self.osm),
+                        "sem candidato o log não ajuda ninguém")
+
+    def test_sem_nada_parecido_devolve_vazio(self):
+        self.assertEqual(self.coords.candidatos_proximos("Zzz", {"abc": (0, 0)}), [])
+
+    def test_limita_a_quantidade_pedida(self):
+        muitos = {f"river ride {i}": (0.0, 0.0) for i in range(10)}
+        self.assertLessEqual(len(self.coords.candidatos_proximos("River Ride", muitos, 3)), 3)
