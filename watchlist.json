@@ -110,5 +110,10 @@
   "alert": {
     "cooldown_minutes": 45,
     "quiet_hours": { "start": "22:00", "end": "07:00" }
+  },
+  "daily_summary": {
+    "enabled": true,
+    "hour": "07:00",
+    "only_park_days": true
   }
 }

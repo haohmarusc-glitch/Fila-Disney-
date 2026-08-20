@@ -40,6 +40,8 @@ docker compose logs -f  # deve mostrar "Parques resolvidos: {...}"
 |---|---|
 | `/status` | Fila agora das atrações da watchlist do parque do dia |
 | `/status <parque>` | Fila de qualquer parque monitorado (`/status Epcot`, `/status IOA`) |
+| `/resumo` | Previsão do dia pelo histórico — o mesmo texto que chega às 7h |
+| `/resumo <parque>` | Previsão de um parque específico, em qualquer data |
 | `/parques` | Lista os parques que o monitor resolveu na API |
 | `/help` | Ajuda |
 
@@ -51,6 +53,25 @@ Filas de **single rider** e virtuais ficam fora do alerta e do `/status`: a API
 publica cada uma como atração separada, o nome casa por match parcial com a
 atração de verdade e o tempo vem 0 quando não há dado — o que viraria alerta
 falso de "0 min, vai agora". Elas continuam sendo gravadas no histórico.
+
+## Resumo diário das 7h
+
+Em dia de parque, às 7h no horário de Orlando, o bot manda sozinho a previsão do
+dia montada a partir do histórico já coletado: para cada atração da watchlist, a
+média na **abertura** (as duas primeiras horas, a janela do rope drop), o
+**pico** e a **melhor hora** do dia, ordenado pelo pico — as de cima são as de
+atacar cedo.
+
+Configurável em `watchlist.json`:
+
+```json
+"daily_summary": { "enabled": true, "hour": "07:00", "only_park_days": true }
+```
+
+Com `only_park_days: false` ele manda também nos dias sem parque, avisando que
+está em modo coleta. O padrão é `true` para não virar spam diário até outubro.
+Se o container subir depois das 7h, o resumo ainda sai — vale por 2 horas — e
+nunca é enviado duas vezes no mesmo dia.
 
 Só o `TELEGRAM_CHAT_ID` configurado é atendido; comando de qualquer outro chat
 é ignorado com warning no log. Comandos mandados enquanto o container estava
@@ -96,7 +117,7 @@ data/history.db   # SQLite (criado em runtime, fora do git)
 ## Roadmap (backlog para Claude Code)
 
 - [x] Comando `/status` no bot (fila atual da watchlist sob demanda)
-- [ ] Resumo diário automático às 7h com previsão do dia baseada no histórico
+- [x] Resumo diário automático às 7h com previsão do dia baseada no histórico
 - [ ] Dashboard web opcional em `disney.premercadosc.com` (React + endpoint FastAPI lendo o SQLite)
 - [ ] Detectar atração reaberta após "Down" (filas despencam nos primeiros minutos)
 - [ ] Exportar histórico pós-viagem como dataset para portfólio

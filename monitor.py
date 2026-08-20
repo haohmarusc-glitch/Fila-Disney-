@@ -86,6 +86,13 @@ def init_db() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_summary (
+            sent_on TEXT PRIMARY KEY          -- data no fuso do parque
+        )
+        """
+    )
     conn.commit()
     return conn
 
@@ -217,12 +224,163 @@ def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
     return None
 
 
+# ---------------------------------------------------------------- resumo diário
+
+JANELA_RESUMO_MINUTOS = 120  # se o container subiu tarde, o resumo ainda vale
+HORAS_PARQUE = range(8, 23)  # fora disso a média é ruído de parque fechado
+
+
+def hhmm_em_minutos(hhmm: str) -> int:
+    horas, minutos = hhmm.split(":")
+    return int(horas) * 60 + int(minutos)
+
+
+def park_utc_offset_horas(config: dict) -> int:
+    """Offset do fuso do parque agora: -4 no EDT, -5 no EST.
+
+    Calculado, não fixo: o histórico é lido em hora UTC e deslocado, e em
+    novembro Orlando volta para EST — offset fixo erraria a leitura em 1h.
+    """
+    delta = now_park(config).utcoffset()
+    return int(delta.total_seconds() // 3600) if delta else 0
+
+
+def resumo_enviado(conn: sqlite3.Connection, dia: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM daily_summary WHERE sent_on = ? LIMIT 1", (dia,)
+    ).fetchone() is not None
+
+
+def marcar_resumo_enviado(conn: sqlite3.Connection, dia: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO daily_summary (sent_on) VALUES (?)", (dia,))
+    conn.commit()
+
+
+def previsao_por_atracao(conn: sqlite3.Connection, config: dict, park_name: str) -> list[tuple]:
+    """Melhor e pior hora de cada atração da watchlist, pelo histórico coletado.
+
+    Devolve [(atração, (hora, média) abertura, (hora, média) melhor,
+    (hora, média) pico, leituras)] ordenado pelo pico: as de maior pico são as
+    que valem rope drop.
+
+    A média da abertura entra porque é a decisão das 7h. Só "melhor hora" tende
+    a apontar o fim da noite em toda atração, o que não ajuda a montar a manhã.
+    """
+    offset = park_utc_offset_horas(config)
+    park_cfg = config["parks"].get(park_name, {})
+    rows = conn.execute(
+        """
+        SELECT ride, CAST(strftime('%H', ts) AS INTEGER) AS h, AVG(wait_time), COUNT(*)
+        FROM wait_times
+        WHERE park = ? AND is_open = 1 AND wait_time IS NOT NULL
+        GROUP BY ride, h
+        """,
+        (park_name,),
+    ).fetchall()
+
+    por_atracao: dict[str, list[tuple[int, float, int]]] = {}
+    for ride, hora_utc, media, n in rows:
+        if get_threshold(park_cfg, ride) is None:  # fora da watchlist ou single rider
+            continue
+        hora = (hora_utc + offset) % 24
+        if hora not in HORAS_PARQUE:
+            continue
+        por_atracao.setdefault(ride, []).append((hora, media, n))
+
+    previsao = []
+    for ride, serie in por_atracao.items():
+        serie.sort()  # por hora
+        primeiras = serie[:2]  # duas primeiras horas com dado = janela do rope drop
+        leituras_abertura = sum(item[2] for item in primeiras)
+        abertura = (
+            primeiras[0][0],
+            sum(item[1] * item[2] for item in primeiras) / leituras_abertura,
+        )
+        melhor = min(serie, key=lambda item: item[1])
+        pico = max(serie, key=lambda item: item[1])
+        previsao.append(
+            (ride, abertura, melhor[:2], pico[:2], sum(item[2] for item in serie))
+        )
+    previsao.sort(key=lambda item: item[3][1], reverse=True)
+    return previsao
+
+
+def format_daily_summary(conn: sqlite3.Connection, config: dict, park_name: str) -> str:
+    """Resumo da manhã: o que esperar de cada atração hoje, pelo histórico."""
+    agora = now_park(config)
+    dias = conn.execute(
+        "SELECT COUNT(DISTINCT date(ts)) FROM wait_times WHERE park = ?", (park_name,)
+    ).fetchone()[0]
+
+    # "hoje é dia de X" só quando for verdade: /resumo aceita qualquer parque,
+    # em qualquer data, e afirmar isso num dia de coleta seria mentira.
+    if park_name in is_alert_day(config):
+        titulo = f"☀️ <b>Bom dia!</b> Hoje é dia de <b>{notifier.esc(park_name)}</b>"
+    else:
+        titulo = f"📊 <b>{notifier.esc(park_name)}</b> — previsão pelo histórico"
+    cabecalho = [
+        titulo,
+        f"📅 {agora.strftime('%d/%m')} · {dias} dia(s) de histórico coletado",
+        "",
+    ]
+    rodape = ["", "Mande /status para a fila de agora.", "Powered by Queue-Times.com"]
+
+    previsao = previsao_por_atracao(conn, config, park_name)
+    if not previsao:
+        return "\n".join(
+            cabecalho
+            + ["Ainda não tenho histórico deste parque para prever nada."]
+            + rodape
+        )
+
+    linhas = ["Ordenado pelo pico — as de cima são as de atacar no rope drop:", ""]
+    for ride, (h_ab, m_ab), (h_bom, m_bom), (h_pico, m_pico), leituras in previsao:
+        linhas.append(f"🎢 <b>{notifier.esc(ride)}</b>")
+        linhas.append(f"     abertura {h_ab:02d}h ~{m_ab:.0f} min · pico {h_pico:02d}h ~{m_pico:.0f} min")
+        linhas.append(f"     melhor do dia {h_bom:02d}h ~{m_bom:.0f} min · n={leituras}")
+    return "\n".join(cabecalho + linhas + rodape)
+
+
+def maybe_send_daily_summary(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> None:
+    """Manda o resumo uma vez por dia, na janela depois da hora configurada."""
+    cfg = config.get("daily_summary", {})
+    if not cfg.get("enabled", False):
+        return
+
+    agora = now_park(config)
+    dia = agora.date().isoformat()
+    if resumo_enviado(conn, dia):
+        return
+
+    alvo = hhmm_em_minutos(cfg.get("hour", "07:00"))
+    minutos_agora = agora.hour * 60 + agora.minute
+    if not alvo <= minutos_agora < alvo + JANELA_RESUMO_MINUTOS:
+        return
+
+    do_dia = [p for p in is_alert_day(config) if p in park_ids]
+    if not do_dia:
+        if cfg.get("only_park_days", True):
+            return  # sem parque hoje: resumo diário viraria spam até outubro
+        texto = (
+            f"☀️ <b>Bom dia!</b> Hoje não é dia de parque — só coletando histórico.\n"
+            f"Mande <code>/resumo &lt;parque&gt;</code> para a previsão de qualquer um."
+        )
+    else:
+        texto = format_daily_summary(conn, config, do_dia[0])
+
+    if notifier.send(texto):
+        marcar_resumo_enviado(conn, dia)
+        log.info("Resumo diário enviado (%s)", dia)
+
+
 # ---------------------------------------------------------------- comandos
 
 HELP = (
     "🎢 <b>Monitor de filas</b>\n\n"
     "/status — fila atual da watchlist do parque de hoje\n"
     "/status &lt;parque&gt; — fila de um parque específico (ex.: <code>/status Epcot</code>)\n"
+    "/resumo — previsão do dia pelo histórico (o mesmo das 7h)\n"
+    "/resumo &lt;parque&gt; — previsão de um parque específico\n"
     "/parques — parques monitorados\n"
     "/help — esta mensagem\n\n"
     "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
@@ -268,7 +426,7 @@ def format_status(park_name: str, payload: dict, config: dict) -> str:
     return "\n".join(linhas)
 
 
-def handle_command(text: str, config: dict, park_ids: dict[str, int]) -> str | None:
+def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> str | None:
     """Interpreta um comando do chat. Devolve a resposta ou None (ignorar)."""
     parts = text.strip().split(maxsplit=1)
     if not parts:
@@ -283,7 +441,7 @@ def handle_command(text: str, config: dict, park_ids: dict[str, int]) -> str | N
     if cmd == "/parques":
         nomes = "\n".join(f"• {notifier.esc(n)}" for n in park_ids)
         return f"🎢 <b>Parques monitorados</b>\n{nomes}"
-    if cmd != "/status":
+    if cmd not in ("/status", "/resumo"):
         return HELP
 
     if arg:
@@ -299,9 +457,12 @@ def handle_command(text: str, config: dict, park_ids: dict[str, int]) -> str | N
         if not do_dia:
             return (
                 "Hoje não é dia de parque — o monitor está só coletando histórico.\n"
-                "Use <code>/status &lt;parque&gt;</code> para ver qualquer um. Veja /parques."
+                f"Use <code>{cmd} &lt;parque&gt;</code> para ver qualquer um. Veja /parques."
             )
         park_name = do_dia[0]
+
+    if cmd == "/resumo":
+        return format_daily_summary(conn, config, park_name)
 
     try:
         payload = fetch_queue_times(park_ids[park_name])
@@ -311,7 +472,7 @@ def handle_command(text: str, config: dict, park_ids: dict[str, int]) -> str | N
     return format_status(park_name, payload, config)
 
 
-def serve_commands(offset: int | None, config: dict, park_ids: dict[str, int], timeout: int) -> int | None:
+def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict, park_ids: dict[str, int], timeout: int) -> int | None:
     """Consome os updates pendentes e responde. Devolve o novo offset."""
     for update in notifier.get_updates(offset, timeout=timeout):
         offset = update["update_id"] + 1
@@ -323,14 +484,14 @@ def serve_commands(offset: int | None, config: dict, park_ids: dict[str, int], t
         if not notifier.is_authorized(chat_id):
             log.warning("Comando ignorado de chat não autorizado: %s", chat_id)
             continue
-        resposta = handle_command(text, config, park_ids)
+        resposta = handle_command(text, conn, config, park_ids)
         if resposta:
             log.info("Comando atendido: %s", text.split()[0])
             notifier.send(resposta)
     return offset
 
 
-def wait_serving_commands(offset: int | None, config: dict, park_ids: dict[str, int], seconds: int) -> int | None:
+def wait_serving_commands(offset: int | None, conn: sqlite3.Connection, config: dict, park_ids: dict[str, int], seconds: int) -> int | None:
     """Espera até o próximo ciclo atendendo comandos. Nunca propaga exceção."""
     deadline = time.monotonic() + seconds
     while True:
@@ -345,7 +506,7 @@ def wait_serving_commands(offset: int | None, config: dict, park_ids: dict[str, 
             time.sleep(restante)
             return offset
         try:
-            offset = serve_commands(offset, config, park_ids, timeout=espera)
+            offset = serve_commands(offset, conn, config, park_ids, timeout=espera)
         except Exception:  # noqa: BLE001 — comando quebrado não derruba a coleta
             log.exception("Erro ao atender comandos do Telegram")
             time.sleep(min(restante, 5))
@@ -437,7 +598,11 @@ def main() -> None:
             run_cycle(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — loop nunca deve morrer
             log.exception("Erro no ciclo de coleta")
-        offset = wait_serving_commands(offset, config, park_ids, POLL_INTERVAL_SECONDS)
+        try:
+            maybe_send_daily_summary(conn, config, park_ids)
+        except Exception:  # noqa: BLE001 — resumo quebrado não pode parar a coleta
+            log.exception("Erro no resumo diário")
+        offset = wait_serving_commands(offset, conn, config, park_ids, POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
