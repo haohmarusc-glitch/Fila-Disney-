@@ -286,3 +286,49 @@ class TestHttpOverpass(BaseTeste):
         self.assertEqual(self.monitor.post_json("http://overpass", {"data": "q"}),
                          {"elements": []})
         self.assertEqual(len(self.requests.posts), 2)
+
+
+class TestUsoModeradoDaOverpass(BaseTeste):
+    """A primeira execução real levou 504, 429 e recusa de conexão."""
+
+    def setUp(self):
+        super().setUp()
+        import importlib
+        self.coords = importlib.import_module("coords")
+
+    def test_429_sem_retry_after_espera_o_minimo(self):
+        esperas = []
+        self.monitor._dormir = esperas.append
+        respostas = [Resposta(status=429), Resposta({"elements": []})]
+        self.requests.roteador_post = lambda url, payload: respostas.pop(0)
+        self.monitor.post_json("http://overpass", {"data": "q"}, espera_minima=45)
+        self.assertEqual(esperas, [45.0], "backoff curto demais é o que derruba a consulta")
+
+    def test_retry_after_maior_que_o_minimo_e_respeitado(self):
+        esperas = []
+        self.monitor._dormir = esperas.append
+        respostas = [Resposta(status=429, headers={"Retry-After": "90"}),
+                     Resposta({"elements": []})]
+        self.requests.roteador_post = lambda url, payload: respostas.pop(0)
+        self.monitor.post_json("http://overpass", {"data": "q"}, espera_minima=45)
+        self.assertEqual(esperas, [90.0])
+
+    def test_falha_de_rede_tambem_respeita_espera_minima(self):
+        esperas = []
+        self.monitor._dormir = esperas.append
+        self.requests.roteador_post = lambda url, payload: Resposta(status=504)
+        with self.assertRaises(self.requests.RequestException):
+            self.monitor.post_json("http://overpass", {"data": "q"},
+                                   tentativas=3, espera_minima=45)
+        self.assertEqual(esperas, [45.0, 45.0])
+
+    def test_parque_completo_e_pulado(self):
+        saida = {"rides": {"Epcot": {a: [1.0, 2.0] for a in self.config["parks"]["Epcot"]["attractions"]}}}
+        self.assertTrue(self.coords.parque_completo("Epcot", self.config, saida))
+
+    def test_parque_incompleto_nao_e_pulado(self):
+        saida = {"rides": {"Epcot": {"Test Track": [1.0, 2.0]}}}
+        self.assertFalse(self.coords.parque_completo("Epcot", self.config, saida))
+
+    def test_parque_ausente_nao_e_pulado(self):
+        self.assertFalse(self.coords.parque_completo("Epcot", self.config, {"rides": {}}))
