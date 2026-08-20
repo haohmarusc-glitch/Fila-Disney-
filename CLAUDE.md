@@ -21,9 +21,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     (`FILAS_IGNORADAS`): a API publica como atração separada, o match parcial
     casa com a atração real e o tempo vem 0 sem dado — alerta falso na certa.
 11. Toda chamada externa passa por `get_json` (retry, backoff, 429). Nunca chamar `requests.get` direto.
-12. Ausência de dado **nunca** vira 0 min: `wait_time` None fica None, no banco e na mensagem.
-13. Mudou comportamento? Teste em `tests/` junto. O CI barra o merge se quebrar.
-14. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
+12. Distância/tempo a pé só sai de coordenada real do `coords.json`. Atração sem coordenada aparece sem estimativa — nunca com número inventado.
+13. `last_updated` da API é levado a sério: leitura velha não alerta e não entra em ranking (`leitura_obsoleta`).
+14. Ausência de dado **nunca** vira 0 min: `wait_time` None fica None, no banco e na mensagem.
+15. Mudou comportamento? Teste em `tests/` junto. O CI barra o merge se quebrar.
+16. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
 
 ## Arquitetura
 
@@ -35,6 +37,8 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `analyze.py` — CLI de análise do histórico
 - `watchlist.json` — config declarativa (parques, atrações, thresholds, dias)
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
+- `coords.py` — script avulso (roda uma vez) que busca coordenadas no OpenStreetMap
+- `coords.json` — coordenadas por atração; opcional, só o `/perto` depende dele
 - `data/history.db` — SQLite, volume Docker, fora do git
 
 Tabelas: `wait_times(ts, park, land, ride, wait_time, is_open)`, `alerts_sent(park, ride, sent_at)` e `daily_summary(sent_on)` — esta última guarda a data (no fuso do parque) em que o resumo das 7h já saiu, para não repetir. `top_alert(id=1, sent_at)` guarda o último envio do alerta de menores filas.

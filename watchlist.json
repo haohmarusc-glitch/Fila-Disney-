@@ -109,6 +109,7 @@
   },
   "alert": {
     "cooldown_minutes": 45,
+    "max_staleness_minutes": 30,
     "quiet_hours": { "start": "22:00", "end": "07:00" }
   },
   "top_alert": {
