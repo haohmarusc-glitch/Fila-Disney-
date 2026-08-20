@@ -52,7 +52,7 @@ PAUSA_ENTRE_PARQUES_S = 20
 TENTATIVAS_OVERPASS = 5
 ESPERA_MINIMA_429_S = 45
 RAIO_METROS = 1600  # cobre um parque inteiro com folga
-COORDS_PATH = Path(__file__).parent / "coords.json"
+COORDS_PATH = monitor.COORDS_PATH  # data/, que é volume — sobrevive ao rebuild
 
 # A API devolve latitude/longitude do parque, mas o dado tem erro: em 20/08/2026
 # o Epic Universe veio com longitude +81.44 (sem o sinal), que cai no Nepal.
@@ -253,6 +253,7 @@ def parque_completo(nome: str, config: dict, saida: dict) -> bool:
 
 
 def gravar(saida: dict) -> None:
+    COORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
     COORDS_PATH.write_text(
         json.dumps(saida, ensure_ascii=False, indent=2), encoding="utf-8"
     )

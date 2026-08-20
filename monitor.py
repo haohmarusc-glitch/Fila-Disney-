@@ -34,7 +34,10 @@ log = logging.getLogger("monitor")
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "data" / "history.db"
 WATCHLIST_PATH = BASE_DIR / "watchlist.json"
-COORDS_PATH = BASE_DIR / "coords.json"
+# data/ é o único volume persistente: coords.json gravado em /app some no
+# próximo `docker compose up --build`, junto com o trabalho todo do coords.py.
+COORDS_PATH = BASE_DIR / "data" / "coords.json"
+COORDS_PATH_REPO = BASE_DIR / "coords.json"  # versionado no git, se houver
 
 PARKS_URL = "https://queue-times.com/parks.json"
 QUEUE_URL = "https://queue-times.com/parks/{park_id}/queue_times.json"

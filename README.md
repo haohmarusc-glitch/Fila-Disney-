@@ -157,6 +157,18 @@ nenhum, porque isso não é falha do sistema.
 Se preferir, dá para pular a Overpass inteira e preencher o `coords.json` à
 mão, no formato `"Nome da Atração": [lat, lon]`.
 
+O `coords.json` é gravado em `data/`, que é o volume — sobrevive ao
+`docker compose up --build`. Se quiser versionar no git (para não depender de
+rodar o script numa VPS nova), copie para a raiz do projeto e commite:
+
+```bash
+docker compose cp fila-disney:/app/data/coords.json ./coords.json
+git add -f coords.json && git commit -m "Coordenadas das atrações" && git push
+```
+
+O monitor lê `data/coords.json` primeiro e cai no `coords.json` versionado
+quando o volume está vazio — máquina nova já sobe com as coordenadas.
+
 A Overpass é serviço público e gratuito, com política de uso moderado: o script
 espaça as consultas em 20s e espera 45s no 429. Ainda assim ela pode recusar —
 nesse caso **rode de novo mais tarde**, que ele continua de onde parou: o

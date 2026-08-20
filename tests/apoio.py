@@ -94,6 +94,10 @@ class BaseTeste(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.monitor.DB_PATH = Path(self.tmp.name) / "history.db"
+        # sem redirecionar, o teste escreve coords.json dentro do repo e vaza
+        # estado para os testes seguintes
+        self.monitor.COORDS_PATH = Path(self.tmp.name) / "data" / "coords.json"
+        self.monitor.COORDS_PATH_REPO = Path(self.tmp.name) / "coords.json"
         self.monitor._dormir = lambda _s: None  # nenhum teste espera de verdade
         self.conn = self.monitor.init_db()
         self.addCleanup(self.conn.close)
