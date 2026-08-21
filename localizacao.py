@@ -34,6 +34,15 @@ _rota_cache = {}
 # resultado de backtest. Ficam em watchlist.json para poder mudar sem deploy, e
 # a intenção é recalibrá-los em setembro, quando houver semanas de histórico.
 PESOS_PADRAO = {"tempo": 0.5, "historico": 0.3, "tendencia": 0.2}
+USF = "Universal Studios At Universal Orlando"
+IOA = "Islands Of Adventure At Universal Orlando"
+PARK_TO_PARK_PADRAO = {
+    "enabled": True,
+    "parks": {USF: IOA, IOA: USF},
+    "min_savings_minutes": 15,
+    "train_ride_minutes": 4,
+    "boarding_buffer_minutes": 4,
+}
 
 
 def load_coords() -> dict:
@@ -302,10 +311,19 @@ def fila_hogwarts(payload: dict, limite_obsoleto: int) -> int | None:
     return None
 
 
+def config_park_to_park(config: dict) -> dict:
+    """Padrão seguro para USF↔Islands, com sobrescritas opcionais."""
+    informado = config.get("park_to_park", {})
+    saida = {**PARK_TO_PARK_PADRAO, **informado}
+    saida["parks"] = {**PARK_TO_PARK_PADRAO["parks"],
+                       **informado.get("parks", {})}
+    return saida
+
+
 def avaliar_troca_park_to_park(posicao, park_name, payload_atual, payload_outro,
                                config, coords, conn=None):
     """Compara a melhor atração local com trem + melhor atração do outro parque."""
-    cfg = config.get("park_to_park", {})
+    cfg = config_park_to_park(config)
     if not cfg.get("enabled"):
         return None
     outro_parque = cfg.get("parks", {}).get(park_name)
