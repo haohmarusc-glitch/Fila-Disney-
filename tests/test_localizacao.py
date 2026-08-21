@@ -85,6 +85,17 @@ class TestGeometria(BaseTeste):
         self.assertEqual(
             self.loc.parque_mais_proximo(PORTAO, COORDS), "Disney Hollywood Studios")
 
+    def test_decide_pela_atracao_mesmo_com_centros_enganosos(self):
+        coords = {
+            "parks": {"A": [28.4000, -81.5000], "B": [28.4001, -81.5001]},
+            "rides": {
+                "A": {"Atração A": [28.4100, -81.5100]},
+                "B": {"Atração B": [28.4200, -81.5200]},
+            },
+        }
+        perto_de_b = (28.4201, -81.5201)
+        self.assertEqual(self.loc.parque_mais_proximo(perto_de_b, coords), "B")
+
     def test_longe_de_tudo_nao_casa_parque(self):
         sao_paulo = (-23.55, -46.63)
         self.assertIsNone(self.loc.parque_mais_proximo(sao_paulo, COORDS))
