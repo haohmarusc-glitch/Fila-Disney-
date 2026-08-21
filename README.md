@@ -258,7 +258,7 @@ resposta atrasada de uma vez.
 
 - `trip`: período da viagem e timezone
 - `park_days`: qual parque em qual dia (modo alerta). Segue `docs/ROTEIRO.md`; dias sem parque ficam de fora e caem no modo coleta
-- `parks.<nome>.attractions`: atração → threshold em minutos. O nome faz match parcial case-insensitive com o nome da API, então "Frozen" casa com "Frozen Ever After"
+- `parks.<nome>.attractions`: atração com fila → threshold em minutos. O nome faz match parcial case-insensitive com o nome da API, então "Frozen" casa com "Frozen Ever After". Shows e atrações encerradas ficam fora dessa lista, pois não representam uma fila útil para alerta ou ranking.
 - `alert`: cooldown e quiet hours
 
 Os IDs dos parques **não são hardcoded**: o monitor resolve pelo nome consultando `https://queue-times.com/parks.json` na inicialização. Se um parque não resolver, aparece warning no log — ajuste o nome no JSON para bater com o da API.

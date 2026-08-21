@@ -12,6 +12,15 @@ class TestValidacaoDaConfig(BaseTeste):
     def test_config_do_repo_e_valida(self):
         self.assertEqual(self.monitor.validar_config(self.config), [])
 
+    def test_watchlist_nao_inclui_show_nem_atracao_encerrada(self):
+        nomes = {
+            atracao
+            for parque in self.config["parks"].values()
+            for atracao in parque.get("attractions", {})
+        }
+        self.assertNotIn("Hollywood Rip Ride Rockit", nomes)
+        self.assertNotIn("Le Cirque Arcanus", nomes)
+
     def test_park_days_apontando_para_parque_inexistente(self):
         cfg = dict(self.config, park_days={"2026-10-13": ["Parque Fantasma"]})
         problemas = self.monitor.validar_config(cfg)
