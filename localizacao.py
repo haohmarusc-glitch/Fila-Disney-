@@ -165,14 +165,21 @@ def desvio_da_media(conn, park: str, ride: str, fila_agora: int,
 
 
 def parque_mais_proximo(posicao: tuple[float, float], coords: dict) -> str | None:
+    """Identifica o parque pela atração mais próxima, não pelo centro.
+
+    Centros são ambíguos em complexos vizinhos como Universal Studios e
+    Islands of Adventure. O raio continua sendo apenas um porteiro genérico
+    para rejeitar posições completamente fora dos parques.
+    """
     candidatos = [
-        (distancia_metros(posicao, tuple(coord)), nome)
-        for nome, coord in coords.get("parks", {}).items()
+        (distancia_metros(posicao, tuple(coord)), parque)
+        for parque, atracoes in coords.get("rides", {}).items()
+        for coord in atracoes.values()
     ]
     if not candidatos:
         return None
-    distancia, nome = min(candidatos)
-    return nome if distancia <= RAIO_PARQUE_METROS else None
+    distancia, parque = min(candidatos)
+    return parque if distancia <= RAIO_PARQUE_METROS else None
 
 
 def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
