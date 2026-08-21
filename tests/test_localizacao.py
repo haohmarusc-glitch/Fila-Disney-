@@ -1,6 +1,8 @@
 """Obsolescência do dado, distância, e ranking por fila + caminhada."""
 import datetime as dt
+import json
 import unittest
+from pathlib import Path
 
 from tests.apoio import CHAT_FAKE, BaseTeste, Resposta
 
@@ -85,6 +87,17 @@ class TestGeometria(BaseTeste):
     def test_longe_de_tudo_nao_casa_parque(self):
         sao_paulo = (-23.55, -46.63)
         self.assertIsNone(self.loc.parque_mais_proximo(sao_paulo, COORDS))
+
+    def test_navi_usa_ancora_caminhavel_de_pandora(self):
+        """Evita o ponto isolado que o Google roteava por uma volta de 1 km."""
+        caminho = Path(__file__).parents[1] / "coords.json"
+        reais = json.loads(caminho.read_text(encoding="utf-8"))["rides"]
+        pandora = reais["Disney Animal Kingdom"]
+        distancia = self.loc.distancia_metros(
+            tuple(pandora["Avatar Flight of Passage"]),
+            tuple(pandora["Na'vi River Journey"]))
+        self.assertLessEqual(distancia, 25,
+                             "as duas atrações devem usar a mesma malha caminhável")
 
 
 class TestRankingPorTempoTotal(BaseTeste):
