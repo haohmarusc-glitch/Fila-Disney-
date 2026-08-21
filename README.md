@@ -66,6 +66,7 @@ Nas atualizações seguintes basta `git pull && docker compose up -d --build`.
 | `/parques` | Lista os parques que o monitor resolveu na API |
 | `/perto` (ou `/agora`) | Melhor atração agora por **fila + caminhada**, a partir da sua localização |
 | `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
+| `/teste_alertas <parque>` | Envia ao chat real os três formatos com prefixo **TESTE**, sem cooldown |
 | `/help` | Ajuda |
 
 O `/status` consulta a API na hora — não devolve o último ciclo gravado. A
@@ -73,6 +74,11 @@ resposta vem ordenada da menor fila para a maior, com ✅ nas atrações que já
 estão abaixo do threshold e 🔒 nas fechadas. A seta mostra a tendência dos
 últimos 35 minutos: `↓12` caiu 12 min, `↑8` subiu 8, `→` estável. Dentro do
 parque "31 min e subindo" e "31 min e caindo" são decisões opostas.
+
+O `/perto` identifica o parque pela **atração conhecida mais próxima** no
+`coords.json`. O centro do parque não decide, pois seria ambíguo entre Universal
+Studios e Islands of Adventure. A distância máxima funciona apenas como
+porteiro para rejeitar uma localização fora dos parques.
 
 Filas de **single rider** e virtuais ficam fora do alerta e do `/status`: a API
 publica cada uma como atração separada, o nome casa por match parcial com a
@@ -105,6 +111,40 @@ o ciclo de coleta já buscou.
 Diferença para o `/status`: o alerta e o `/status` olham só a **sua watchlist**,
 enquanto o `/menores` ranqueia o **parque inteiro** e marca com ⭐ o que está na
 watchlist — serve para achar fila curta em atração que você não listou.
+
+### Ensaio antes da viagem
+
+O comando explícito abaixo envia três mensagens reais ao chat configurado:
+
+```text
+/teste_alertas Hollywood
+```
+
+Ele exercita o formato do alerta de threshold, o Top-3 e o resumo das 7h. Todas
+as mensagens começam com `TESTE`. O ensaio não grava em `alerts_sent`,
+`top_alert` nem `daily_summary`, portanto pode ser repetido sem alterar cooldown
+ou bloquear disparos reais.
+
+## Uptime Kuma
+
+Crie no Uptime Kuma um monitor do tipo **Push**, com intervalo de 5 minutos e
+grace period de 12 minutos. Copie a URL completa para o `.env`:
+
+```env
+UPTIME_KUMA_PUSH_URL=https://SEU_UPTIME_KUMA/api/push/SEU_TOKEN
+```
+
+Use uma URL que seja alcançável de dentro do container `fila-disney`. Estar na
+mesma VPS não torna automaticamente o nome de outro container resolvível se os
+dois projetos não compartilharem uma rede Docker.
+
+O monitor faz o GET somente depois que todos os parques do ciclo foram
+consultados e persistidos. Ciclo parcial, erro no SQLite ou processo travado não
+renovam o heartbeat. URL ausente desativa o recurso; falha do próprio Kuma gera
+warning, mas nunca interrompe a coleta.
+
+Como o Kuma está na mesma VPS, esse monitor detecta falha do processo ou da
+coleta, mas não queda completa da máquina ou do provedor.
 
 ## Localização: `/perto`
 

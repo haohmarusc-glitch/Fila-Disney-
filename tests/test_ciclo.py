@@ -85,5 +85,29 @@ class TestRunCycle(BaseTeste):
         self.assertIn("Epcot", payloads)
 
 
+class TestHeartbeatUptimeKuma(BaseTeste):
+    def setUp(self):
+        super().setUp()
+        self.parques = {"Epcot": 5, "Magic Kingdom": 6}
+        self.monitor.UPTIME_KUMA_PUSH_URL = "http://uptime-kuma/api/push/token"
+
+    def test_envio_so_acontece_com_ciclo_completo(self):
+        self.monitor.enviar_heartbeat({"Epcot": {}, "Magic Kingdom": {}}, self.parques)
+        self.assertEqual(self.requests.gets, ["http://uptime-kuma/api/push/token"])
+
+    def test_ciclo_parcial_nao_mascara_falha(self):
+        self.monitor.enviar_heartbeat({"Epcot": {}}, self.parques)
+        self.assertEqual(self.requests.gets, [])
+
+    def test_url_ausente_desativa(self):
+        self.monitor.UPTIME_KUMA_PUSH_URL = ""
+        self.monitor.enviar_heartbeat({"Epcot": {}, "Magic Kingdom": {}}, self.parques)
+        self.assertEqual(self.requests.gets, [])
+
+    def test_falha_do_kuma_nunca_interrompe(self):
+        self.requests.roteador = lambda _url: Resposta(status=500)
+        self.monitor.enviar_heartbeat({"Epcot": {}, "Magic Kingdom": {}}, self.parques)
+
+
 if __name__ == "__main__":
     unittest.main()

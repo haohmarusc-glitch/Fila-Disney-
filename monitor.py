@@ -12,6 +12,7 @@ enquanto espera o próximo ciclo de coleta.
 """
 import json
 import logging
+import os
 import sqlite3
 import time
 import math
@@ -33,6 +34,7 @@ log = logging.getLogger("monitor")
 
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "data" / "history.db"
+UPTIME_KUMA_PUSH_URL = os.environ.get("UPTIME_KUMA_PUSH_URL", "").strip()
 WATCHLIST_PATH = BASE_DIR / "watchlist.json"
 # data/ é o único volume persistente: coords.json gravado em /app some no
 # próximo `docker compose up --build`, junto com o trabalho todo do coords.py.
@@ -680,6 +682,31 @@ def maybe_send_daily_summary(conn: sqlite3.Connection, config: dict, park_ids: d
         log.info("Resumo diário enviado (%s)", dia)
 
 
+def enviar_teste_alertas(conn: sqlite3.Connection, config: dict, park_name: str,
+                         payload: dict) -> None:
+    """Envia os três formatos reais sem registrar cooldown ou resumo enviado."""
+    ranking = menores_filas(payload, config, park_name, 3, apenas_watchlist=True)
+    if not ranking:
+        notifier.send(
+            f"🧪 <b>TESTE</b> — nenhuma atração aberta da watchlist em "
+            f"{notifier.esc(park_name)}"
+        )
+        return
+
+    wait, ride, threshold = ranking[0]
+    mensagens = (
+        "🧪 <b>TESTE — alerta de threshold</b>\n\n"
+        + notifier.format_alert(park_name, ride, wait, threshold or wait),
+        "🧪 <b>TESTE — Top-3 menores</b>\n\n"
+        + format_top_alert(park_name, ranking, config, conn),
+        "🧪 <b>TESTE — resumo das 7h</b>\n\n"
+        + format_daily_summary(conn, config, park_name),
+    )
+    for mensagem in mensagens:
+        notifier.send(mensagem)
+    log.info("Teste explícito dos três alertas executado (%s)", park_name)
+
+
 # ---------------------------------------------------------------- comandos
 
 HELP = (
@@ -693,6 +720,7 @@ HELP = (
     "/parques — parques monitorados\n"
     "/perto — melhor atração agora considerando fila + caminhada\n"
     "/health — estado do monitor (coleta, banco, parques)\n"
+    "/teste_alertas &lt;parque&gt; — envia os três alertas com prefixo de teste\n"
     "/help — esta mensagem\n\n"
     "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
     "Powered by Queue-Times.com"
@@ -830,8 +858,10 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     if cmd == "/parques":
         nomes = "\n".join(f"• {notifier.esc(n)}" for n in park_ids)
         return f"🎢 <b>Parques monitorados</b>\n{nomes}"
-    if cmd not in ("/status", "/resumo", "/menores"):
+    if cmd not in ("/status", "/resumo", "/menores", "/teste_alertas"):
         return HELP
+    if cmd == "/teste_alertas" and not arg:
+        return "Use <code>/teste_alertas &lt;parque&gt;</code>. Veja /parques."
 
     if arg:
         matches = match_parks(arg, park_ids)
@@ -862,6 +892,9 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     if cmd == "/menores":
         limite = config.get("top_alert", {}).get("list_size", 10)
         return format_menores(park_name, payload, config, limite)
+    if cmd == "/teste_alertas":
+        enviar_teste_alertas(conn, config, park_name, payload)
+        return None
     return format_status(park_name, payload, config, conn)
 
 
@@ -978,6 +1011,26 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
     return payloads
 
 
+def enviar_heartbeat(payloads: dict[str, dict], park_ids: dict[str, int]) -> None:
+    """Confirma ao Uptime Kuma somente um ciclo completo e persistido.
+
+    URL ausente desativa o recurso. Qualquer falha fica no log e nunca pode
+    interromper coleta, alertas ou comandos.
+    """
+    if not UPTIME_KUMA_PUSH_URL or len(payloads) != len(park_ids):
+        return
+    try:
+        resposta = requests.get(
+            UPTIME_KUMA_PUSH_URL,
+            params={"status": "up", "msg": f"ciclo completo: {len(payloads)} parques"},
+            timeout=10,
+        )
+        resposta.raise_for_status()
+    except Exception as exc:  # noqa: BLE001 — heartbeat nunca derruba o monitor
+        # Não inclua a exceção inteira: ela pode repetir a URL com o token Push.
+        log.warning("Falha ao enviar heartbeat ao Uptime Kuma (%s)", type(exc).__name__)
+
+
 def main() -> None:
     config = load_config()
     problemas = validar_config(config)
@@ -1037,6 +1090,7 @@ def main() -> None:
             payloads = run_cycle(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — loop nunca deve morrer
             log.exception("Erro no ciclo de coleta")
+        enviar_heartbeat(payloads, park_ids)
         try:
             maybe_send_top_alert(conn, config, park_ids, payloads)
         except Exception:  # noqa: BLE001 — alerta quebrado não pode parar a coleta

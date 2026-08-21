@@ -51,6 +51,9 @@ class TestRoteamento(BaseComando):
     def test_sufixo_do_bot_em_grupo(self):
         self.assertIn("Epcot", self.cmd("/status@FilaBot Epcot"))
 
+    def test_teste_alertas_exige_parque(self):
+        self.assertIn("teste_alertas", self.cmd("/teste_alertas"))
+
 
 class TestParque(BaseComando):
     def test_atalhos_que_resolvem(self):
@@ -107,6 +110,26 @@ class TestStatusEMenores(BaseComando):
         r = self.cmd("/health")
         self.assertIn("Monitor de filas", r)
         self.assertIn("nunca", r)
+
+    def test_teste_alertas_envia_tres_mensagens_sem_estado(self):
+        antes = {
+            "threshold": self.conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0],
+            "top": self.conn.execute("SELECT COUNT(*) FROM top_alert").fetchone()[0],
+            "resumo": self.conn.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0],
+        }
+        self.assertIsNone(self.cmd("/teste_alertas Hollywood"))
+        mensagens = self.enviadas()
+        self.assertEqual(len(mensagens), 3)
+        self.assertTrue(all("TESTE" in mensagem for mensagem in mensagens))
+        self.assertIn("threshold", mensagens[0])
+        self.assertIn("Top-3", mensagens[1])
+        self.assertIn("resumo das 7h", mensagens[2])
+        depois = {
+            "threshold": self.conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0],
+            "top": self.conn.execute("SELECT COUNT(*) FROM top_alert").fetchone()[0],
+            "resumo": self.conn.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0],
+        }
+        self.assertEqual(depois, antes)
 
 
 class TestAutorizacao(BaseComando):
