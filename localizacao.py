@@ -12,6 +12,8 @@ execução, só de geração.
 import json
 import logging
 import math
+import os
+import time
 
 import monitor
 import notifier
@@ -23,6 +25,11 @@ FATOR_CAMINHO = 1.3            # linha reta vira caminho real dentro do parque
 RAIO_PARQUE_METROS = 2500      # além disso você não está nesse parque
 MAPS_URL = ("https://www.google.com/maps/dir/?api=1"
             "&origin={o_lat},{o_lon}&destination={d_lat},{d_lon}&travelmode=walking")
+GOOGLE_ROUTES_URL = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+ROTA_CACHE_TTL = 300
+ROTA_CANDIDATOS = 5
+_rota_cache = {}
 
 # Pesos do score. NÃO SÃO CALIBRADOS: são um ponto de partida razoável, não o
 # resultado de backtest. Ficam em watchlist.json para poder mudar sem deploy, e
@@ -53,6 +60,67 @@ def distancia_metros(a: tuple[float, float], b: tuple[float, float]) -> float:
 def minutos_a_pe(metros: float) -> int:
     """Estimativa, não rota. Google Maps não mapeia caminho interno de parque."""
     return max(1, round(metros * FATOR_CAMINHO / VELOCIDADE_M_POR_MIN))
+
+
+def _chave_cache(posicao, destinos):
+    # ~55 m: reaproveita consultas feitas praticamente do mesmo lugar.
+    origem = (round(posicao[0], 3), round(posicao[1], 3))
+    return origem, tuple((nome, tuple(coord)) for nome, coord in destinos)
+
+
+def rotas_google(posicao, destinos):
+    """Retorna {nome: (minutos, metros)} ou {} se a API não estiver configurada.
+
+    Compute Route Matrix cobra por elemento. O chamador limita a cinco destinos.
+    Respostas parciais são aceitas; cada atração ausente conserva o fallback.
+    """
+    if not GOOGLE_MAPS_API_KEY or not destinos:
+        return {}
+    chave = _chave_cache(posicao, destinos)
+    agora = time.monotonic()
+    armazenado = _rota_cache.get(chave)
+    if armazenado and agora - armazenado[0] < ROTA_CACHE_TTL:
+        return armazenado[1]
+
+    corpo = {
+        "origins": [{"waypoint": {"location": {"latLng": {
+            "latitude": posicao[0], "longitude": posicao[1]}}}}],
+        "destinations": [{"waypoint": {"location": {"latLng": {
+            "latitude": coord[0], "longitude": coord[1]}}}}
+                         for _nome, coord in destinos],
+        "travelMode": "WALK",
+        "languageCode": "pt-BR",
+        "units": "METRIC",
+    }
+    headers = {
+        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+        "X-Goog-FieldMask": "originIndex,destinationIndex,duration,distanceMeters,status,condition",
+    }
+    try:
+        resposta = monitor.post_json_body(GOOGLE_ROUTES_URL, corpo,
+                                          cabecalhos=headers, tentativas=2)
+    except Exception as exc:  # localização nunca pode derrubar o bot
+        log.warning("Routes API indisponível; usando estimativa: %s", exc)
+        return {}
+    if not isinstance(resposta, list):
+        log.warning("Routes API devolveu formato inesperado: %s", type(resposta).__name__)
+        return {}
+    saida = {}
+    for elemento in resposta:
+        indice = elemento.get("destinationIndex")
+        if not isinstance(indice, int) or not (0 <= indice < len(destinos)):
+            continue
+        if elemento.get("condition") not in (None, "ROUTE_EXISTS"):
+            continue
+        segundos = str(elemento.get("duration", "")).removesuffix("s")
+        try:
+            minutos = max(1, math.ceil(float(segundos) / 60))
+            metros = int(elemento["distanceMeters"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        saida[destinos[indice][0]] = (minutos, metros)
+    _rota_cache[chave] = (agora, saida)
+    return saida
 
 
 def score_oportunidade(total: int, melhor_total: int, pior_total: int,
@@ -142,6 +210,21 @@ def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=No
         itens.append((fila + caminhada, fila, caminhada, metros, nome, tuple(coord)))
 
     com_coord = sorted([i for i in itens if i[0] is not None])
+    candidatos = com_coord[:ROTA_CANDIDATOS]
+    destinos = [(item[4], item[5]) for item in candidatos]
+    rotas = rotas_google(posicao, destinos)
+    if rotas:
+        atualizados = []
+        nomes_candidatos = {item[4] for item in candidatos}
+        for item in com_coord:
+            total, fila, caminhada, metros, nome, coord = item
+            if nome in rotas:
+                caminhada, metros = rotas[nome]
+                total = fila + caminhada
+            # Não misture no top 5 uma estimativa barata com rotas reais.
+            if nome in nomes_candidatos:
+                atualizados.append((total, fila, caminhada, metros, nome, coord))
+        com_coord = sorted(atualizados)
     sem_coord = sorted([i for i in itens if i[0] is None], key=lambda i: i[1])
     return com_coord + sem_coord
 
@@ -204,6 +287,9 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
         rota = MAPS_URL.format(o_lat=posicao[0], o_lon=posicao[1],
                                d_lat=melhor[5][0], d_lon=melhor[5][1])
         linhas += ["", f'🗺️ <a href="{rota}">Abrir rota até {notifier.esc(melhor[4])}</a>']
-    linhas += ["", "Caminhada é estimativa por distância, não rota.",
+    aviso = ("Caminhada calculada por rota a pé; confirme o caminho no mapa."
+             if GOOGLE_MAPS_API_KEY else
+             "Caminhada é estimativa por distância, não rota.")
+    linhas += ["", aviso,
                "Powered by Queue-Times.com"]
     return "\n".join(linhas)

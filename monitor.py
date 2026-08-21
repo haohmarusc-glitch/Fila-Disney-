@@ -224,7 +224,16 @@ def post_json(url: str, dados: dict, *, tentativas: int = HTTP_TENTATIVAS,
                            espera_minima=espera_minima)
 
 
+def post_json_body(url: str, dados: dict, *, cabecalhos: dict | None = None,
+                   tentativas: int = HTTP_TENTATIVAS) -> object:
+    """POST JSON para APIs modernas, preservando retry/backoff centralizados."""
+    return requisicao_json("POST_JSON", url, json_dados=dados,
+                           cabecalhos_extras=cabecalhos, tentativas=tentativas)
+
+
 def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
+                    json_dados: dict | None = None,
+                    cabecalhos_extras: dict | None = None,
                     tentativas: int = HTTP_TENTATIVAS,
                     espera_minima: float = 0) -> object:
     """Núcleo HTTP com retry e backoff.
@@ -235,10 +244,13 @@ def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
     python-requests.
     """
     ultimo_erro: Exception | None = None
-    cabecalhos = {"User-Agent": USER_AGENT}
+    cabecalhos = {"User-Agent": USER_AGENT, **(cabecalhos_extras or {})}
     for tentativa in range(1, tentativas + 1):
         try:
-            if metodo == "POST":
+            if metodo == "POST_JSON":
+                resp = requests.post(url, json=json_dados, headers=cabecalhos,
+                                     timeout=HTTP_TIMEOUT)
+            elif metodo == "POST":
                 resp = requests.post(url, data=dados, headers=cabecalhos, timeout=HTTP_TIMEOUT)
             else:
                 resp = requests.get(url, headers=cabecalhos, timeout=HTTP_TIMEOUT)
