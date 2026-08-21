@@ -207,6 +207,7 @@ def _ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=N
     park_cfg = config["parks"].get(park_name, {})
 
     itens = []
+    ancoras = {}
     for _land, ride in monitor.iter_rides(payload):
         nome = ride["name"]
         if monitor.fila_paralela(nome) or not ride.get("is_open"):
@@ -220,12 +221,15 @@ def _ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=N
         if coord is None:  # sem coordenada entra no fim, sem estimativa
             itens.append((None, fila, None, None, nome, None))
             continue
-        metros = distancia_metros(posicao, tuple(coord))
-        caminhada = minutos_a_pe(metros)
+        ancora, extra_minutos, extra_metros = ancora_rota(
+            coords, park_name, nome, coord)
+        ancoras[nome] = (ancora, extra_minutos, extra_metros)
+        metros = distancia_metros(posicao, ancora) + extra_metros
+        caminhada = minutos_a_pe(distancia_metros(posicao, ancora)) + extra_minutos
         itens.append((fila + caminhada, fila, caminhada, metros, nome, tuple(coord)))
 
     com_coord = sorted([i for i in itens if i[0] is not None])
-    destinos = [(item[4], item[5]) for item in com_coord]
+    destinos = [(item[4], ancoras[item[4]][0]) for item in com_coord]
     rotas = rotas_google(posicao, destinos)
     if rotas:
         atualizados = []
@@ -233,11 +237,32 @@ def _ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=N
             total, fila, caminhada, metros, nome, coord = item
             if nome in rotas:
                 caminhada, metros = rotas[nome]
+                _ancora, extra_minutos, extra_metros = ancoras[nome]
+                caminhada += extra_minutos
+                metros += extra_metros
                 total = fila + caminhada
             atualizados.append((total, fila, caminhada, metros, nome, coord))
         com_coord = sorted(atualizados)
     sem_coord = sorted([i for i in itens if i[0] is None], key=lambda i: i[1])
     return com_coord + sem_coord, len(rotas), len(destinos)
+
+
+def ancora_rota(coords: dict, park_name: str, nome: str, coord_padrao):
+    """Ponto caminhável e ajuste final separados da coordenada da atração."""
+    do_parque = coords.get("route_anchors", {}).get(park_name, {})
+    dados = do_parque.get(nome)
+    if dados is None:
+        nome_base = nome.split(" - ", 1)[0].strip()
+        dados = do_parque.get(nome_base) if nome_base != nome else None
+    if not isinstance(dados, dict):
+        return tuple(coord_padrao), 0, 0
+    coord = dados.get("coord", coord_padrao)
+    try:
+        extra_minutos = max(0, int(dados.get("extra_minutes", 0)))
+        extra_metros = max(0, int(dados.get("extra_meters", 0)))
+        return tuple(coord), extra_minutos, extra_metros
+    except (TypeError, ValueError):
+        return tuple(coord_padrao), 0, 0
 
 
 def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
@@ -303,9 +328,12 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
 
     melhor = ranking[0]
     if melhor[5] is not None:
+        ancora, extra_minutos, extra_metros = ancora_rota(
+            coords, park_name, melhor[4], melhor[5])
         rota = MAPS_URL.format(o_lat=posicao[0], o_lon=posicao[1],
-                               d_lat=melhor[5][0], d_lon=melhor[5][1])
-        linhas += ["", f'🗺️ <a href="{rota}">Abrir rota até {notifier.esc(melhor[4])}</a>']
+                               d_lat=ancora[0], d_lon=ancora[1])
+        aproximada = " aproximada" if extra_minutos or extra_metros else ""
+        linhas += ["", f'🗺️ <a href="{rota}">Abrir rota{aproximada} até {notifier.esc(melhor[4])}</a>']
     if destinos and rotas_usadas == destinos:
         aviso = "Caminhada calculada por rota a pé; confirme o caminho no mapa."
     elif rotas_usadas:
