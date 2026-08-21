@@ -136,6 +136,40 @@ class TestRankingPorTempoTotal(BaseTeste):
         self.assertEqual(nomes, ["Toy Story Mania!"])
 
 
+class TestRotasGoogle(BaseTeste):
+    def setUp(self):
+        super().setUp()
+        self.loc.GOOGLE_MAPS_API_KEY = "chave-de-teste"
+        self.loc._rota_cache.clear()
+
+    def test_rota_real_substitui_distancia_direta(self):
+        self.requests.roteador_post = lambda _url, _payload: Resposta([{
+            "originIndex": 0,
+            "destinationIndex": 0,
+            "condition": "ROUTE_EXISTS",
+            "duration": "600s",
+            "distanceMeters": 805,
+        }])
+        rotas = self.loc.rotas_google(PORTAO, [("Frozen", (28.3708, -81.5462))])
+        self.assertEqual(rotas["Frozen"], (10, 805))
+        self.assertEqual(self.requests.headers_enviados["X-Goog-Api-Key"],
+                         "chave-de-teste")
+
+    def test_cache_evitar_cobranca_repetida(self):
+        self.requests.roteador_post = lambda _url, _payload: Resposta([{
+            "destinationIndex": 0, "condition": "ROUTE_EXISTS",
+            "duration": "120s", "distanceMeters": 150,
+        }])
+        destinos = [("Toy Story Mania!", COORDS["rides"]["Disney Hollywood Studios"]["Toy Story Mania!"])]
+        self.loc.rotas_google(PORTAO, destinos)
+        self.loc.rotas_google(PORTAO, destinos)
+        self.assertEqual(len(self.requests.posts), 1)
+
+    def test_falha_da_api_degrada_para_estimativa(self):
+        self.requests.roteador_post = lambda _url, _payload: Resposta(status=500)
+        self.assertEqual(self.loc.rotas_google(PORTAO, [("X", (1.0, 2.0))]), {})
+
+
 class TestMensagemPerto(BaseTeste):
     def setUp(self):
         super().setUp()
