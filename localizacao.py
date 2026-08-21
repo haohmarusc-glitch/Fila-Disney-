@@ -181,6 +181,21 @@ def parque_mais_proximo(posicao: tuple[float, float], coords: dict) -> str | Non
     return nome if distancia <= RAIO_PARQUE_METROS else None
 
 
+def coordenada_atracao(do_parque: dict, nome: str):
+    """Resolve nome exato e o nome-base antes de um subtítulo separado por hífen.
+
+    Queue-Times às vezes expande o nome sem mudar a atração, como
+    ``Expedition Everest - Legend of the Forbidden Mountain``. O coords.json
+    conserva o nome curto do OSM. Só removemos subtítulo quando o nome curto
+    existe exatamente, evitando casamento parcial ambíguo.
+    """
+    coord = do_parque.get(nome)
+    if coord is not None:
+        return coord
+    nome_base = nome.split(" - ", 1)[0].strip()
+    return do_parque.get(nome_base) if nome_base != nome else None
+
+
 def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
     """(total, fila, caminhada, metros, atração, coord) ordenado por tempo total.
 
@@ -201,7 +216,7 @@ def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=No
         fila = ride.get("wait_time")
         if fila is None or monitor.get_threshold(park_cfg, nome) is None:
             continue
-        coord = do_parque.get(nome)
+        coord = coordenada_atracao(do_parque, nome)
         if coord is None:  # sem coordenada entra no fim, sem estimativa
             itens.append((None, fila, None, None, nome, None))
             continue
