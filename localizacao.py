@@ -28,7 +28,6 @@ MAPS_URL = ("https://www.google.com/maps/dir/?api=1"
 GOOGLE_ROUTES_URL = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
 ROTA_CACHE_TTL = 300
-ROTA_CANDIDATOS = 5
 _rota_cache = {}
 
 # Pesos do score. NÃO SÃO CALIBRADOS: são um ponto de partida razoável, não o
@@ -71,8 +70,9 @@ def _chave_cache(posicao, destinos):
 def rotas_google(posicao, destinos):
     """Retorna {nome: (minutos, metros)} ou {} se a API não estiver configurada.
 
-    Compute Route Matrix cobra por elemento. O chamador limita a cinco destinos.
-    Respostas parciais são aceitas; cada atração ausente conserva o fallback.
+    Compute Route Matrix cobra por elemento. Todas as atrações elegíveis são
+    enviadas para que a estimativa em linha reta não decida o ranking antes da
+    rota real. Respostas parciais conservam o fallback de cada atração ausente.
     """
     if not GOOGLE_MAPS_API_KEY or not destinos:
         return {}
@@ -196,7 +196,7 @@ def coordenada_atracao(do_parque: dict, nome: str):
     return do_parque.get(nome_base) if nome_base != nome else None
 
 
-def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
+def _ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
     """(total, fila, caminhada, metros, atração, coord) ordenado por tempo total.
 
     O critério é fila + caminhada, não menor fila: 19 min de fila a 7 min de
@@ -225,23 +225,26 @@ def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=No
         itens.append((fila + caminhada, fila, caminhada, metros, nome, tuple(coord)))
 
     com_coord = sorted([i for i in itens if i[0] is not None])
-    candidatos = com_coord[:ROTA_CANDIDATOS]
-    destinos = [(item[4], item[5]) for item in candidatos]
+    destinos = [(item[4], item[5]) for item in com_coord]
     rotas = rotas_google(posicao, destinos)
     if rotas:
         atualizados = []
-        nomes_candidatos = {item[4] for item in candidatos}
         for item in com_coord:
             total, fila, caminhada, metros, nome, coord = item
             if nome in rotas:
                 caminhada, metros = rotas[nome]
                 total = fila + caminhada
-            # Não misture no top 5 uma estimativa barata com rotas reais.
-            if nome in nomes_candidatos:
-                atualizados.append((total, fila, caminhada, metros, nome, coord))
+            atualizados.append((total, fila, caminhada, metros, nome, coord))
         com_coord = sorted(atualizados)
     sem_coord = sorted([i for i in itens if i[0] is None], key=lambda i: i[1])
-    return com_coord + sem_coord
+    return com_coord + sem_coord, len(rotas), len(destinos)
+
+
+def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
+    """Ranking público; detalhes da origem dos tempos ficam para a mensagem."""
+    ranking, _rotas, _destinos = _ranking_por_tempo_total(
+        posicao, park_name, payload, config, coords, conn)
+    return ranking
 
 
 def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
@@ -271,7 +274,8 @@ def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
 
 
 def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5) -> str:
-    ranking = ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn)
+    ranking, rotas_usadas, destinos = _ranking_por_tempo_total(
+        posicao, park_name, payload, config, coords, conn)
     if not ranking:
         return (f"📍 <b>{notifier.esc(park_name)}</b>\n\n"
                 "Nenhuma atração da watchlist aberta com dado agora.")
@@ -302,9 +306,13 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
         rota = MAPS_URL.format(o_lat=posicao[0], o_lon=posicao[1],
                                d_lat=melhor[5][0], d_lon=melhor[5][1])
         linhas += ["", f'🗺️ <a href="{rota}">Abrir rota até {notifier.esc(melhor[4])}</a>']
-    aviso = ("Caminhada calculada por rota a pé; confirme o caminho no mapa."
-             if GOOGLE_MAPS_API_KEY else
-             "Caminhada é estimativa por distância, não rota.")
+    if destinos and rotas_usadas == destinos:
+        aviso = "Caminhada calculada por rota a pé; confirme o caminho no mapa."
+    elif rotas_usadas:
+        aviso = (f"Rota a pé disponível para {rotas_usadas} de {destinos} atrações; "
+                 "as demais usam estimativa por distância.")
+    else:
+        aviso = "Caminhada é estimativa por distância, não rota."
     linhas += ["", aviso,
                "Powered by Queue-Times.com"]
     return "\n".join(linhas)
