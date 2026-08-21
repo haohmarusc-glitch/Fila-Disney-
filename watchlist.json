@@ -68,7 +68,6 @@
       "default_threshold": 30,
       "attractions": {
         "Harry Potter and the Escape from Gringotts": 45,
-        "Hollywood Rip Ride Rockit": 35,
         "Revenge of the Mummy": 30,
         "Transformers: The Ride 3D": 30,
         "MEN IN BLACK Alien Attack": 25,
@@ -102,7 +101,6 @@
         "Mario Kart: Bowser's Challenge": 50,
         "Hiccup's Wing Gliders": 45,
         "Curse of the Werewolf": 40,
-        "Le Cirque Arcanus": 40,
         "Constellation Carousel": 25
       }
     }
