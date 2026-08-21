@@ -8,7 +8,9 @@ funciona igual — só não ganha coordenada nova.
 Uso:
     docker compose exec fila-disney python coords.py --revisar   # só relatório
     docker compose exec fila-disney python coords.py             # grava coords.json
-    docker compose exec fila-disney python coords.py --forcar    # refaz tudo
+    docker compose exec fila-disney python coords.py --forcar    # consulta até parques completos
+    docker compose exec fila-disney python coords.py --sobrescrever  # substitui existentes
+    docker compose exec fila-disney python coords.py --listar    # lista nomes normalizados; não grava
 
 Parque já completo no coords.json é pulado, e o progresso é gravado a cada
 parque: se a Overpass recusar no meio, é só rodar de novo mais tarde que ele
@@ -270,7 +272,8 @@ def main() -> int:
     forcar_ipv4()
     apenas_revisar = "--revisar" in sys.argv
     forcar = "--forcar" in sys.argv  # refaz até os parques já completos
-    listar = "--listar" in sys.argv  # despeja os nomes crus do OSM e sai
+    listar = "--listar" in sys.argv  # lista nomes normalizados do OSM e sai sem gravar
+    sobrescrever = "--sobrescrever" in sys.argv
     config = monitor.load_config()
     nomes = list(config["parks"])
 
@@ -296,12 +299,19 @@ def main() -> int:
 
     pendentes = []
     for nome, coord in parques.items():
-        saida["parks"][nome] = list(coord)
-        if parque_completo(nome, config, saida) and not forcar:
+        existente = saida["parks"].get(nome)
+        if existente is not None and not sobrescrever:
+            coord_busca = tuple(existente)
+            print(f"=== {nome}: coordenada existente preservada ===")
+        else:
+            coord_busca = coord
+            if not listar:
+                saida["parks"][nome] = list(coord)
+        if parque_completo(nome, config, saida) and not (forcar or listar):
             print(f"=== {nome}: já completo no coords.json, pulando ===")
             total_ok += len(saida["rides"][nome])
             continue
-        pendentes.append((nome, coord))
+        pendentes.append((nome, coord_busca))
 
     for indice, (nome, (lat, lon)) in enumerate(pendentes):
         if indice:  # espaça as consultas: a Overpass pede uso moderado
@@ -316,13 +326,17 @@ def main() -> int:
             falhas_overpass += 1
             continue
         print(f"  {len(osm)} atrações mapeadas no OSM")
-        if listar:  # conferir o que existe de fato, em vez de supor
+        if listar:  # conferir o que existe de fato, sem tocar no coords.json
             for osm_nome in sorted(osm):
                 print(f"       {osm_nome}")
             continue
 
         saida["rides"].setdefault(nome, {})
         for atracao in config["parks"][nome].get("attractions", {}):
+            if atracao in saida["rides"][nome] and not sobrescrever:
+                print(f"  [ MANTIDA] {atracao}  (preservada do coords.json)")
+                total_ok += 1
+                continue
             apelido = saida.get("aliases", {}).get(atracao)
             if apelido and normalizar(apelido) in osm:
                 saida["rides"][nome][atracao] = list(osm[normalizar(apelido)])
@@ -350,6 +364,9 @@ def main() -> int:
             gravar(saida)
 
     print(f"\n{'=' * 60}\n{total_ok} com coordenada · {total_falta} sem")
+    if listar:
+        print("--listar: nomes normalizados exibidos; coords.json não foi alterado.")
+        return 0
     if apenas_revisar:
         print("--revisar: nada gravado.")
         return 0
