@@ -1,6 +1,9 @@
 """Obsolescência do dado, distância, e ranking por fila + caminhada."""
+import copy
 import datetime as dt
+import sys
 import unittest
+from unittest.mock import patch
 
 from tests.apoio import CHAT_FAKE, BaseTeste, Resposta
 
@@ -345,6 +348,59 @@ class TestUsoModeradoDaOverpass(BaseTeste):
 
     def test_parque_ausente_nao_e_pulado(self):
         self.assertFalse(self.coords.parque_completo("Epcot", self.config, {"rides": {}}))
+
+
+class TestModosDoCoords(BaseTeste):
+    def setUp(self):
+        super().setUp()
+        import importlib
+        self.coords = importlib.import_module("coords")
+        self.config_minima = {"parks": {"Epcot": {"attractions": {"Test Track": {}}}}}
+        self.existente = {
+            "parks": {"Epcot": [1.0, 2.0]},
+            "rides": {"Epcot": {"Test Track": [3.0, 4.0]}},
+            "aliases": {},
+        }
+
+    def executar(self, argumentos, osm=None):
+        gravados = []
+        buscas = []
+
+        def buscar(lat, lon):
+            buscas.append((lat, lon))
+            return osm or {"test track": (30.0, 40.0)}
+
+        with patch.object(self.coords.monitor, "load_config", return_value=self.config_minima), \
+             patch.object(self.coords, "coordenadas_dos_parques",
+                          return_value={"Epcot": (10.0, 20.0)}), \
+             patch.object(self.coords.localizacao, "load_coords",
+                          return_value=copy.deepcopy(self.existente)), \
+             patch.object(self.coords, "buscar_osm", side_effect=buscar), \
+             patch.object(self.coords, "gravar",
+                          side_effect=lambda saida: gravados.append(copy.deepcopy(saida))), \
+             patch.object(sys, "argv", ["coords.py", *argumentos]):
+            retorno = self.coords.main()
+        return retorno, buscas, gravados
+
+    def test_listar_inclui_parque_completo_e_nunca_grava(self):
+        retorno, buscas, gravados = self.executar(["--listar"])
+        self.assertEqual(retorno, 0)
+        self.assertEqual(buscas, [(1.0, 2.0)], "coordenada existente deve ser a fonte da busca")
+        self.assertEqual(gravados, [])
+
+    def test_preserva_parque_e_atracao_existentes_por_padrao(self):
+        retorno, _buscas, gravados = self.executar(["--forcar"])
+        self.assertEqual(retorno, 0)
+        self.assertTrue(gravados)
+        self.assertEqual(gravados[-1]["parks"]["Epcot"], [1.0, 2.0])
+        self.assertEqual(gravados[-1]["rides"]["Epcot"]["Test Track"], [3.0, 4.0])
+
+    def test_sobrescrever_exige_opcao_explicita(self):
+        retorno, buscas, gravados = self.executar(["--forcar", "--sobrescrever"])
+        self.assertEqual(retorno, 0)
+        self.assertEqual(buscas, [(10.0, 20.0)])
+        self.assertEqual(gravados[-1]["parks"]["Epcot"], [10.0, 20.0])
+        self.assertEqual(gravados[-1]["rides"]["Epcot"]["Test Track"], [30.0, 40.0])
 
 
 class TestCandidatosNoLog(BaseTeste):
