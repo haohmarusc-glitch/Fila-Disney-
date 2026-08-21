@@ -273,5 +273,17 @@
         "extra_meters": 150
       }
     }
+  },
+  "park_to_park": {
+    "stations": {
+      "Universal Studios At Universal Orlando": [
+        28.4794,
+        -81.4703
+      ],
+      "Islands Of Adventure At Universal Orlando": [
+        28.4734544,
+        -81.4724556
+      ]
+    }
   }
 }
