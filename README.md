@@ -200,6 +200,24 @@ inventada**.
 
 Sem `coords.json` o monitor roda igual; só o `/perto` fica indisponível.
 
+### Fila pequena ou grande para este horário
+
+Quando há pelo menos 12 observações da mesma atração, hora local e dia da
+semana, o `/perto` compara a fila atual com P25, mediana, P75 e P90 desse grupo:
+
+```text
+≤ P25       🟢 pequena para este horário
+P25–P50     🟡 abaixo do normal
+P50–P75     🟠 acima do normal
+P75–P90     🔴 grande para este horário
+≥ P90       🔥 excepcionalmente grande
+```
+
+O componente histórico do Opportunity Score usa a mesma faixa, em vez da
+média global da atração. Com poucas amostras ele fica neutro e não inventa uma
+classificação. Os timestamps do SQLite são convertidos para o fuso de Orlando,
+incluindo mudanças entre EST e EDT.
+
 ## Dado desatualizado
 
 A API traz `last_updated` por atração. Leitura parada há mais de

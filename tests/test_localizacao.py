@@ -139,6 +139,44 @@ class TestRankingPorTempoTotal(BaseTeste):
         self.assertEqual(nomes, ["Toy Story Mania!"])
 
 
+class TestPercentisPorHorario(BaseTeste):
+    def setUp(self):
+        super().setUp()
+        self.monitor.now_park = lambda _c: dt.datetime(2026, 10, 13, 14, 20, tzinfo=EDT)
+
+    def serie(self, valores, inicio=dt.datetime(2026, 7, 21, 18, 0)):
+        """21/07/2026 é terça; 18h UTC corresponde a 14h em Orlando."""
+        for i, valor in enumerate(valores):
+            instante = inicio + dt.timedelta(weeks=i, minutes=i % 12 * 5)
+            self.gravar("Epcot", "Test Track", valor, instante)
+
+    def test_calcula_percentis_da_mesma_hora_e_dia_da_semana(self):
+        valores = [20, 32, 38, 41, 45, 47, 52, 58, 63, 70, 82, 90]
+        self.serie(valores)
+        perfil = self.loc.perfil_historico(
+            self.conn, self.config, "Epcot", "Test Track", 31)
+        self.assertEqual(perfil["n"], 12)
+        self.assertAlmostEqual(perfil["mediana"], 49.5)
+        self.assertEqual(self.loc.classificar_fila(31, perfil),
+                         "🟢 pequena para este horário")
+
+    def test_ignora_outro_dia_da_semana_e_outra_hora(self):
+        self.serie([40] * 12)
+        self.serie([120] * 12, dt.datetime(2026, 7, 22, 18, 0))
+        self.serie([5] * 12, dt.datetime(2026, 7, 21, 14, 0))
+        perfil = self.loc.perfil_historico(
+            self.conn, self.config, "Epcot", "Test Track", 30)
+        self.assertEqual(perfil["n"], 12)
+        self.assertEqual(perfil["mediana"], 40)
+
+    def test_poucas_amostras_nao_inventam_classificacao(self):
+        self.serie([20] * 11)
+        perfil = self.loc.perfil_historico(
+            self.conn, self.config, "Epcot", "Test Track", 20)
+        self.assertIsNone(perfil)
+        self.assertIsNone(self.loc.classificar_fila(20, perfil))
+
+
 class TestMensagemPerto(BaseTeste):
     def setUp(self):
         super().setUp()

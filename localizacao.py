@@ -9,9 +9,11 @@ Nenhuma chamada a serviço externo acontece aqui. As coordenadas vêm do
 coords.json, gerado uma vez pelo coords.py; a Overpass não é dependência de
 execução, só de geração.
 """
+import datetime as dt
 import json
 import logging
 import math
+from zoneinfo import ZoneInfo
 
 import monitor
 import notifier
@@ -28,6 +30,7 @@ MAPS_URL = ("https://www.google.com/maps/dir/?api=1"
 # resultado de backtest. Ficam em watchlist.json para poder mudar sem deploy, e
 # a intenção é recalibrá-los em setembro, quando houver semanas de histórico.
 PESOS_PADRAO = {"tempo": 0.5, "historico": 0.3, "tendencia": 0.2}
+MIN_AMOSTRAS_FAIXA = 12
 
 
 def load_coords() -> dict:
@@ -83,23 +86,82 @@ def score_oportunidade(total: int, melhor_total: int, pior_total: int,
     return round(bruto * 100)
 
 
-def desvio_da_media(conn, park: str, ride: str, fila_agora: int) -> float | None:
-    """Quanto a fila de agora está abaixo da média histórica, de -1 a 1.
+def percentil(valores: list[int], proporcao: float) -> float:
+    """Percentil linear, sem dependência externa; `valores` pode vir desordenado."""
+    ordenados = sorted(valores)
+    posicao = (len(ordenados) - 1) * proporcao
+    inferior = math.floor(posicao)
+    superior = math.ceil(posicao)
+    if inferior == superior:
+        return float(ordenados[inferior])
+    peso = posicao - inferior
+    return ordenados[inferior] * (1 - peso) + ordenados[superior] * peso
 
-    Positivo quer dizer melhor que o normal. None quando não há histórico
-    suficiente — melhor não opinar do que opinar com duas leituras.
+
+def perfil_historico(conn, config: dict, park: str, ride: str,
+                     fila_agora: int, agora=None) -> dict | None:
+    """Percentis da mesma atração, hora local e dia da semana.
+
+    O SQLite guarda UTC sem offset. Cada timestamp é convertido para o fuso do
+    parque antes do filtro, inclusive através de mudanças entre EST e EDT.
+    Retorna None com menos de uma hora de amostras (12 ciclos de cinco minutos).
     """
     if conn is None:
         return None
-    linha = conn.execute(
-        "SELECT AVG(wait_time), COUNT(*) FROM wait_times "
+    momento = agora or monitor.now_park(config)
+    fuso = ZoneInfo(config.get("trip", {}).get("timezone", "America/New_York"))
+    valores = []
+    rows = conn.execute(
+        "SELECT ts, wait_time FROM wait_times "
         "WHERE park = ? AND ride = ? AND is_open = 1 AND wait_time IS NOT NULL",
         (park, ride),
-    ).fetchone()
-    if not linha or not linha[0] or linha[1] < 12:  # ~1h de coleta
+    ).fetchall()
+    for timestamp, espera in rows:
+        try:
+            instante = dt.datetime.fromisoformat(timestamp)
+            if instante.tzinfo is None:
+                instante = instante.replace(tzinfo=dt.timezone.utc)
+            local = instante.astimezone(fuso)
+        except (TypeError, ValueError):
+            continue
+        if local.weekday() == momento.weekday() and local.hour == momento.hour:
+            valores.append(int(espera))
+    if len(valores) < MIN_AMOSTRAS_FAIXA:
         return None
-    media = linha[0]
-    return max(min((media - fila_agora) / media, 1.0), -1.0)
+
+    abaixo_ou_igual = sum(valor <= fila_agora for valor in valores)
+    posicao = abaixo_ou_igual / len(valores)
+    oportunidade = max(min(1 - 2 * posicao, 1.0), -1.0)
+    return {
+        "p25": percentil(valores, 0.25),
+        "mediana": percentil(valores, 0.50),
+        "p75": percentil(valores, 0.75),
+        "p90": percentil(valores, 0.90),
+        "n": len(valores),
+        "oportunidade": oportunidade,
+    }
+
+
+def classificar_fila(fila: int, perfil: dict | None) -> str | None:
+    if perfil is None:
+        return None
+    if fila <= perfil["p25"]:
+        return "🟢 pequena para este horário"
+    if fila <= perfil["mediana"]:
+        return "🟡 abaixo do normal"
+    if fila < perfil["p75"]:
+        return "🟠 acima do normal"
+    if fila < perfil["p90"]:
+        return "🔴 grande para este horário"
+    return "🔥 excepcionalmente grande"
+
+
+def desvio_da_media(conn, park: str, ride: str, fila_agora: int,
+                    config: dict | None = None) -> float | None:
+    """Compatibilidade: agora mede posição nos percentis da faixa horária."""
+    config = config or monitor.load_config()
+    perfil = perfil_historico(conn, config, park, ride, fila_agora)
+    return perfil["oportunidade"] if perfil else None
 
 
 def parque_mais_proximo(posicao: tuple[float, float], coords: dict) -> str | None:
@@ -165,7 +227,7 @@ def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
         if total is None:
             saida.append((item, None))
             continue
-        desvio = desvio_da_media(conn, park_name, nome, fila)
+        desvio = desvio_da_media(conn, park_name, nome, fila, config)
         resultado = monitor.tendencia(conn, park_name, nome) if conn is not None else None
         seta = resultado[0] if resultado else None
         saida.append((item, score_oportunidade(total, melhor, pior, desvio, seta, pesos)))
@@ -197,7 +259,10 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
             continue
         estrela = f" · ⭐ {score}" if score is not None else ""
         linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — <b>{total} min</b> no total{estrela}")
-        linhas.append(f"     fila {fila} min{seta} · 🚶 {caminhada} min ({metros:.0f} m)")
+        perfil = perfil_historico(conn, config, park_name, nome, fila)
+        classe = classificar_fila(fila, perfil)
+        contexto = f" · {classe}" if classe else ""
+        linhas.append(f"     fila {fila} min{seta}{contexto} · 🚶 {caminhada} min ({metros:.0f} m)")
 
     melhor = ranking[0]
     if melhor[5] is not None:
