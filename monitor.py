@@ -772,8 +772,9 @@ def responder_localizacao(latitude: float, longitude: float, conn: sqlite3.Conne
         log.error("Falha ao buscar %s para localização: %s", park_name, exc)
         return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
     troca = None
-    outro_parque = config.get("park_to_park", {}).get("parks", {}).get(park_name)
-    if config.get("park_to_park", {}).get("enabled") and outro_parque in park_ids:
+    park_to_park = localizacao.config_park_to_park(config)
+    outro_parque = park_to_park.get("parks", {}).get(park_name)
+    if park_to_park.get("enabled") and outro_parque in park_ids:
         try:
             payload_outro = fetch_queue_times(park_ids[outro_parque])
             troca = localizacao.avaliar_troca_park_to_park(
