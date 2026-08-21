@@ -189,6 +189,41 @@ class TestRotasGoogle(BaseTeste):
         self.requests.roteador_post = lambda _url, _payload: Resposta(status=500)
         self.assertEqual(self.loc.rotas_google(PORTAO, [("X", (1.0, 2.0))]), {})
 
+    def test_ranking_roteia_todas_e_preserva_resposta_parcial(self):
+        nomes = [f"Atração {i}" for i in range(8)]
+        coords = {"rides": {"Disney Hollywood Studios": {
+            nome: [PORTAO[0] + i / 10000, PORTAO[1]]
+            for i, nome in enumerate(nomes, 1)
+        }}}
+        config = {**self.config, "parks": {**self.config["parks"],
+                  "Disney Hollywood Studios": {"attractions": {
+                      nome: {"threshold": 60} for nome in nomes}}}}
+        payload = {"lands": [{"name": "L", "rides": [
+            ride(nome, 20 + i) for i, nome in enumerate(nomes)
+        ]}]}
+        self.requests.roteador_post = lambda _url, _payload: Resposta([{
+            "destinationIndex": 0, "condition": "ROUTE_EXISTS",
+            "duration": "60s", "distanceMeters": 50,
+        }])
+
+        ranking = self.loc.ranking_por_tempo_total(
+            PORTAO, "Disney Hollywood Studios", payload, config, coords)
+
+        self.assertEqual(len(self.requests.posts[0]["destinations"]), 8,
+                         "a estimativa não pode excluir candidatos antes da rota")
+        self.assertEqual(len(ranking), 8,
+                         "resposta parcial da API não pode encolher a watchlist")
+
+    def test_rodape_nao_afirma_rota_quando_api_falha(self):
+        self.requests.roteador_post = lambda _url, _payload: Resposta(status=500)
+        payload = {"lands": [{"name": "L", "rides": [
+            ride("Toy Story Mania!", 25),
+        ]}]}
+        texto = self.loc.format_perto(
+            PORTAO, "Disney Hollywood Studios", payload, self.config, COORDS)
+        self.assertIn("estimativa por distância", texto)
+        self.assertNotIn("calculada por rota a pé", texto)
+
 
 class TestMensagemPerto(BaseTeste):
     def setUp(self):
