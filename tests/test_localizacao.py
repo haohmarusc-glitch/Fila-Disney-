@@ -242,6 +242,72 @@ class TestRotasGoogle(BaseTeste):
         self.assertNotIn("calculada por rota a pé", texto)
 
 
+class TestUniversalParkToPark(BaseTeste):
+    USF = "Universal Studios At Universal Orlando"
+    IOA = "Islands Of Adventure At Universal Orlando"
+
+    def setUp(self):
+        super().setUp()
+        self.config = {
+            "alert": {"max_staleness_minutes": 30},
+            "parks": {
+                self.USF: {"attractions": {"Atração atual": 60}},
+                self.IOA: {"attractions": {"Atração do outro parque": 60}},
+            },
+            "park_to_park": {
+                "enabled": True,
+                "parks": {self.USF: self.IOA, self.IOA: self.USF},
+                "min_savings_minutes": 15,
+                "train_ride_minutes": 4,
+                "boarding_buffer_minutes": 4,
+            },
+        }
+        self.coords = {
+            "rides": {
+                self.USF: {"Atração atual": [28.4800, -81.4700]},
+                self.IOA: {"Atração do outro parque": [28.4730, -81.4730]},
+            },
+            "park_to_park": {"stations": {
+                self.USF: [28.4794, -81.4703],
+                self.IOA: [28.4734544, -81.4724556],
+            }},
+        }
+        self.atual = {"lands": [{"name": "L", "rides": [
+            ride("Atração atual", 80),
+            ride("Hogwarts Express - King's Cross Station", 10),
+        ]}]}
+        self.outro = {"lands": [{"name": "L", "rides": [
+            ride("Atração do outro parque", 10),
+        ]}]}
+        self.loc.rotas_google = lambda _pos, destinos: {
+            nome: ((5, 300) if nome == "__hogwarts_station__" else (3, 200))
+            for nome, _coord in destinos
+        }
+
+    def avaliar(self):
+        return self.loc.avaliar_troca_park_to_park(
+            (28.4801, -81.4699), self.USF, self.atual, self.outro,
+            self.config, self.coords)
+
+    def test_recomenda_trem_quando_economia_supera_margem(self):
+        troca = self.avaliar()
+        self.assertEqual(troca["ride"], "Atração do outro parque")
+        self.assertEqual(troca["total"], 36)
+        self.assertEqual(troca["savings"], 47)
+        self.assertEqual(troca["train_wait"], 10)
+
+    def test_nao_recomenda_troca_por_vantagem_pequena(self):
+        self.atual["lands"][0]["rides"][0]["wait_time"] = 40
+        self.assertIsNone(self.avaliar())
+
+    def test_trem_fechado_desativa_troca(self):
+        self.atual["lands"][0]["rides"][1]["is_open"] = False
+        self.assertIsNone(self.avaliar())
+
+    def test_fila_hogwarts_aceita_nome_da_estacao(self):
+        self.assertEqual(self.loc.fila_hogwarts(self.atual, 30), 10)
+
+
 class TestMensagemPerto(BaseTeste):
     def setUp(self):
         super().setUp()
@@ -259,6 +325,21 @@ class TestMensagemPerto(BaseTeste):
         self.assertIn("no total", texto)
         self.assertIn("🚶", texto)
         self.assertIn("google.com/maps/dir", texto)
+
+    def test_mensagem_mostra_recomendacao_park_to_park(self):
+        troca = {
+            "park": "Islands Of Adventure At Universal Orlando",
+            "ride": "Hagrid's Magical Creatures Motorbike Adventure",
+            "total": 52, "ride_wait": 25, "walk_to_station": 5,
+            "walk_to_ride": 8, "station_meters": 300,
+            "train_wait": 10, "train_ride": 4,
+            "boarding_buffer": 4, "savings": 18,
+        }
+        texto = self.loc.format_perto(
+            PORTAO, "Disney Hollywood Studios", self.payload,
+            self.config, COORDS, troca=troca)
+        self.assertIn("Vale trocar para Islands", texto)
+        self.assertIn("economia estimada: <b>18 min</b>", texto)
 
     def test_sem_coords_json_orienta_rodar_o_script(self):
         r = self.monitor.responder_localizacao(
@@ -514,6 +595,20 @@ class TestPersistenciaDoCoords(BaseTeste):
             _json.dumps({"parks": {"DoRepo": [3, 4]}, "rides": {}}), encoding="utf-8")
         loc = importlib.import_module("localizacao")
         self.assertEqual(loc.load_coords()["parks"], {"DoRepo": [3, 4]})
+
+    def test_volume_antigo_nao_esconde_secao_nova_do_versionado(self):
+        import json as _json, importlib
+        self.monitor.COORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self.monitor.COORDS_PATH_REPO.write_text(_json.dumps({
+            "parks": {"X": [1, 2]}, "rides": {},
+            "park_to_park": {"stations": {"X": [3, 4]}},
+        }), encoding="utf-8")
+        self.monitor.COORDS_PATH.write_text(_json.dumps({
+            "parks": {"X": [9, 9]}, "rides": {},
+        }), encoding="utf-8")
+        dados = importlib.import_module("localizacao").load_coords()
+        self.assertEqual(dados["parks"]["X"], [9, 9], "volume continua vencendo")
+        self.assertEqual(dados["park_to_park"]["stations"]["X"], [3, 4])
 
     def test_sem_nenhum_dos_dois_nao_estoura(self):
         import importlib
