@@ -135,6 +135,26 @@ class TestRankingPorTempoTotal(BaseTeste):
         nomes = [i[4] for i in self.ranking(payload)]
         self.assertEqual(nomes, ["Toy Story Mania!"])
 
+    def test_nome_com_subtitulo_usa_coordenada_do_nome_base(self):
+        coords = {"rides": {"Disney Animal Kingdom": {
+            "Expedition Everest": [28.3585, -81.5863],
+        }}}
+        config = {**self.config, "parks": {**self.config["parks"],
+                  "Disney Animal Kingdom": {"attractions": {
+                      "Expedition Everest": {"threshold": 60}}}}}
+        payload = {"lands": [{"name": "Asia", "rides": [
+            ride("Expedition Everest - Legend of the Forbidden Mountain", 30),
+        ]}]}
+        ranking = self.loc.ranking_por_tempo_total(
+            (28.358, -81.586), "Disney Animal Kingdom", payload, config, coords)
+        self.assertIsNotNone(ranking[0][0])
+        self.assertIsNotNone(ranking[0][5])
+
+    def test_subtitulo_nao_faz_casamento_parcial_ambiguo(self):
+        self.assertIsNone(self.loc.coordenada_atracao(
+            {"Expedition": [1, 2]},
+            "Expedition Everest - Legend of the Forbidden Mountain"))
+
 
 class TestRotasGoogle(BaseTeste):
     def setUp(self):
