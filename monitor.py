@@ -378,15 +378,21 @@ def fila_paralela(ride_name: str) -> bool:
     return any(termo in ride_name.lower() for termo in FILAS_IGNORADAS)
 
 
-def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
-    """Threshold da atração; None se não estiver na watchlist do parque."""
+def nome_watchlist(park_cfg: dict, ride_name: str) -> str | None:
+    """Nome canônico da watchlist correspondente ao nome devolvido pela API."""
     if fila_paralela(ride_name):
         return None
     attractions = park_cfg.get("attractions", {})
-    for watched, threshold in attractions.items():
+    for watched in attractions:
         if watched.lower() in ride_name.lower() or ride_name.lower() in watched.lower():
-            return threshold
+            return watched
     return None
+
+
+def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
+    """Threshold da atração; None se não estiver na watchlist do parque."""
+    nome = nome_watchlist(park_cfg, ride_name)
+    return park_cfg.get("attractions", {}).get(nome) if nome else None
 
 
 # ---------------------------------------------------------------- tendência

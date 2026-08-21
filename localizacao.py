@@ -241,14 +241,15 @@ def _ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=N
         if monitor.leitura_obsoleta(ride, limite_obsoleto):
             continue
         fila = ride.get("wait_time")
-        if fila is None or monitor.get_threshold(park_cfg, nome) is None:
+        nome_configurado = monitor.nome_watchlist(park_cfg, nome)
+        if fila is None or nome_configurado is None:
             continue
-        coord = coordenada_atracao(do_parque, nome)
+        coord = coordenada_atracao(do_parque, nome_configurado)
         if coord is None:  # sem coordenada entra no fim, sem estimativa
             itens.append((None, fila, None, None, nome, None))
             continue
         ancora, extra_minutos, extra_metros = ancora_rota(
-            coords, park_name, nome, coord)
+            coords, park_name, nome_configurado, coord)
         ancoras[nome] = (ancora, extra_minutos, extra_metros)
         metros = distancia_metros(posicao, ancora) + extra_metros
         caminhada = minutos_a_pe(distancia_metros(posicao, ancora)) + extra_minutos

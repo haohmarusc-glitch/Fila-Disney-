@@ -172,6 +172,30 @@ class TestRankingPorTempoTotal(BaseTeste):
             {"Expedition": [1, 2]},
             "Expedition Everest - Legend of the Forbidden Mountain"))
 
+    def test_nome_da_api_usa_coordenada_do_nome_da_watchlist(self):
+        parque = "Universal Studios At Universal Orlando"
+        nomes = {
+            "Revenge of the Mummy™": "Revenge of the Mummy",
+            "The Simpsons Ride™": "The Simpsons Ride",
+            "Harry Potter and the Escape from Gringotts™":
+                "Harry Potter and the Escape from Gringotts",
+            "Illumination's Villain-Con Minion Blast": "Villain-Con Minion Blast",
+        }
+        config = {**self.config, "parks": {**self.config["parks"], parque: {
+            "attractions": {canonico: 60 for canonico in nomes.values()}}}}
+        coords = {"rides": {parque: {
+            canonico: [28.48 + i / 1000, -81.47]
+            for i, canonico in enumerate(nomes.values())}}}
+        payload = {"lands": [{"name": "L", "rides": [
+            ride(nome_api, 20) for nome_api in nomes
+        ]}]}
+
+        ranking = self.loc.ranking_por_tempo_total(
+            (28.48, -81.47), parque, payload, config, coords)
+
+        self.assertEqual(len(ranking), 4)
+        self.assertTrue(all(item[5] is not None for item in ranking))
+
 
 class TestRotasGoogle(BaseTeste):
     def setUp(self):
