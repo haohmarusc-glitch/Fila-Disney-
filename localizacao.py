@@ -34,17 +34,43 @@ _rota_cache = {}
 # resultado de backtest. Ficam em watchlist.json para poder mudar sem deploy, e
 # a intenção é recalibrá-los em setembro, quando houver semanas de histórico.
 PESOS_PADRAO = {"tempo": 0.5, "historico": 0.3, "tendencia": 0.2}
+USF = "Universal Studios At Universal Orlando"
+IOA = "Islands Of Adventure At Universal Orlando"
+PARK_TO_PARK_PADRAO = {
+    "enabled": True,
+    "parks": {USF: IOA, IOA: USF},
+    "min_savings_minutes": 15,
+    "train_ride_minutes": 4,
+    "boarding_buffer_minutes": 4,
+}
 
 
 def load_coords() -> dict:
-    """coords.json é opcional: sem ele o bot roda igual, só sem /perto."""
-    try:
-        caminho = (monitor.COORDS_PATH if monitor.COORDS_PATH.exists()
-                   else monitor.COORDS_PATH_REPO)
-        with open(caminho, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {"parks": {}, "rides": {}}
+    """Combina o arquivo versionado com coordenadas persistidas no volume."""
+    saida = {"parks": {}, "rides": {}}
+    for caminho in (monitor.COORDS_PATH_REPO, monitor.COORDS_PATH):
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                dados = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        for chave, valor in dados.items():
+            if isinstance(valor, dict) and isinstance(saida.get(chave), dict):
+                saida[chave] = _mesclar_dict(saida[chave], valor)
+            else:
+                saida[chave] = valor
+    return saida
+
+
+def _mesclar_dict(base: dict, sobrepor: dict) -> dict:
+    """Merge recursivo: o volume vence, sem esconder seções novas do git."""
+    saida = dict(base)
+    for chave, valor in sobrepor.items():
+        if isinstance(valor, dict) and isinstance(saida.get(chave), dict):
+            saida[chave] = _mesclar_dict(saida[chave], valor)
+        else:
+            saida[chave] = valor
+    return saida
 
 
 def distancia_metros(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -272,6 +298,88 @@ def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=No
     return ranking
 
 
+def fila_hogwarts(payload: dict, limite_obsoleto: int) -> int | None:
+    """Fila do trem no parque de partida; None significa conexão indisponível."""
+    for _land, ride in monitor.iter_rides(payload):
+        if "hogwarts express" not in ride.get("name", "").lower():
+            continue
+        if not ride.get("is_open") or monitor.leitura_obsoleta(ride, limite_obsoleto):
+            continue
+        fila = ride.get("wait_time")
+        if isinstance(fila, int) and fila >= 0:
+            return fila
+    return None
+
+
+def config_park_to_park(config: dict) -> dict:
+    """Padrão seguro para USF↔Islands, com sobrescritas opcionais."""
+    informado = config.get("park_to_park", {})
+    saida = {**PARK_TO_PARK_PADRAO, **informado}
+    saida["parks"] = {**PARK_TO_PARK_PADRAO["parks"],
+                       **informado.get("parks", {})}
+    return saida
+
+
+def avaliar_troca_park_to_park(posicao, park_name, payload_atual, payload_outro,
+                               config, coords, conn=None):
+    """Compara a melhor atração local com trem + melhor atração do outro parque."""
+    cfg = config_park_to_park(config)
+    if not cfg.get("enabled"):
+        return None
+    outro_parque = cfg.get("parks", {}).get(park_name)
+    if not outro_parque:
+        return None
+    estacoes = coords.get("park_to_park", {}).get("stations", {})
+    partida, chegada = estacoes.get(park_name), estacoes.get(outro_parque)
+    if not partida or not chegada:
+        return None
+
+    limite = config.get("alert", {}).get(
+        "max_staleness_minutes", monitor.OBSOLETO_MINUTOS_PADRAO)
+    fila_trem = fila_hogwarts(payload_atual, limite)
+    if fila_trem is None:
+        return None
+
+    ranking_atual = ranking_por_tempo_total(
+        posicao, park_name, payload_atual, config, coords, conn)
+    ranking_outro = ranking_por_tempo_total(
+        tuple(chegada), outro_parque, payload_outro, config, coords, conn)
+    atual = next((item for item in ranking_atual if item[0] is not None), None)
+    outro = next((item for item in ranking_outro if item[0] is not None), None)
+    if atual is None or outro is None:
+        return None
+
+    nome_estacao = "__hogwarts_station__"
+    rota_estacao = rotas_google(posicao, [(nome_estacao, tuple(partida))])
+    if nome_estacao in rota_estacao:
+        caminhada_estacao, metros_estacao = rota_estacao[nome_estacao]
+    else:
+        metros_estacao = distancia_metros(posicao, tuple(partida))
+        caminhada_estacao = minutos_a_pe(metros_estacao)
+
+    viagem = max(0, int(cfg.get("train_ride_minutes", 4)))
+    embarque = max(0, int(cfg.get("boarding_buffer_minutes", 4)))
+    transferencia = caminhada_estacao + fila_trem + viagem + embarque
+    total_outro = transferencia + outro[0]
+    economia = atual[0] - total_outro
+    margem = max(0, int(cfg.get("min_savings_minutes", 15)))
+    if economia < margem:
+        return None
+    return {
+        "park": outro_parque,
+        "ride": outro[4],
+        "total": total_outro,
+        "ride_wait": outro[1],
+        "walk_to_station": caminhada_estacao,
+        "walk_to_ride": outro[2],
+        "station_meters": metros_estacao,
+        "train_wait": fila_trem,
+        "train_ride": viagem,
+        "boarding_buffer": embarque,
+        "savings": economia,
+    }
+
+
 def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
     """Anexa o score a cada item do ranking, mantendo a ordem por tempo total.
 
@@ -298,7 +406,8 @@ def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
     return saida
 
 
-def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5) -> str:
+def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5,
+                 troca=None) -> str:
     ranking, rotas_usadas, destinos = _ranking_por_tempo_total(
         posicao, park_name, payload, config, coords, conn)
     if not ranking:
@@ -334,6 +443,16 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
                                d_lat=ancora[0], d_lon=ancora[1])
         aproximada = " aproximada" if extra_minutos or extra_metros else ""
         linhas += ["", f'🗺️ <a href="{rota}">Abrir rota{aproximada} até {notifier.esc(melhor[4])}</a>']
+    if troca:
+        linhas += [
+            "",
+            f"🚂 <b>Vale trocar para {notifier.esc(troca['park'])}</b>",
+            f"<b>{notifier.esc(troca['ride'])}</b> — <b>{troca['total']} min</b> no total",
+            (f"     estação {troca['walk_to_station']} min · trem: fila "
+             f"{troca['train_wait']} + viagem {troca['train_ride']} min · "
+             f"atração: caminhada {troca['walk_to_ride']} + fila {troca['ride_wait']} min"),
+            f"     economia estimada: <b>{troca['savings']} min</b>",
+        ]
     if destinos and rotas_usadas == destinos:
         aviso = "Caminhada calculada por rota a pé; confirme o caminho no mapa."
     elif rotas_usadas:

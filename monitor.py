@@ -771,7 +771,18 @@ def responder_localizacao(latitude: float, longitude: float, conn: sqlite3.Conne
     except requests.RequestException as exc:
         log.error("Falha ao buscar %s para localização: %s", park_name, exc)
         return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
-    return localizacao.format_perto(posicao, park_name, payload, config, coords, conn)
+    troca = None
+    park_to_park = localizacao.config_park_to_park(config)
+    outro_parque = park_to_park.get("parks", {}).get(park_name)
+    if park_to_park.get("enabled") and outro_parque in park_ids:
+        try:
+            payload_outro = fetch_queue_times(park_ids[outro_parque])
+            troca = localizacao.avaliar_troca_park_to_park(
+                posicao, park_name, payload, payload_outro, config, coords, conn)
+        except requests.RequestException as exc:
+            log.warning("Park-to-Park indisponível para %s: %s", outro_parque, exc)
+    return localizacao.format_perto(
+        posicao, park_name, payload, config, coords, conn, troca=troca)
 
 
 def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:

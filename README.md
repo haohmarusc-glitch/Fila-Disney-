@@ -128,6 +128,24 @@ O critério é o tempo total, não a menor fila: 25 min de fila do lado ganha de
 
 O bot **não** consegue puxar sua posição sozinho — você compartilha quando quer.
 
+### Universal Park-to-Park
+
+Dentro do Universal Studios Florida ou Islands of Adventure, o `/perto` também
+avalia a melhor atração do outro parque. A troca só aparece quando economiza
+pelo menos 15 minutos e o Hogwarts Express está aberto com fila atual:
+
+```text
+🚂 Vale trocar para Islands Of Adventure At Universal Orlando
+Hagrid's Magical Creatures Motorbike Adventure — 52 min no total
+     estação 5 min · trem: fila 10 + viagem 4 min
+     atração: caminhada 8 + fila 25 min
+     economia estimada: 18 min
+```
+
+O cálculo soma caminhada até a estação, fila do trem, viagem, margem de
+embarque, caminhada após o desembarque e fila da atração. Epic Universe não
+entra nesse modo porque não é ligado pelo Hogwarts Express.
+
 ### Coordenadas: rode uma vez
 
 O Queue-Times não devolve lat/lon das atrações (só `id`, `name`, `is_open`,
@@ -252,6 +270,7 @@ resposta atrasada de uma vez.
 - `trip`: período da viagem e timezone
 - `park_days`: qual parque em qual dia (modo alerta). Segue `docs/ROTEIRO.md`; dias sem parque ficam de fora e caem no modo coleta
 - `parks.<nome>.attractions`: atração → threshold em minutos. O nome faz match parcial case-insensitive com o nome da API, então "Frozen" casa com "Frozen Ever After"
+- `park_to_park`: conexão entre USF e Islands, margem mínima e tempos fixos do trem
 - `alert`: cooldown e quiet hours
 
 Os IDs dos parques **não são hardcoded**: o monitor resolve pelo nome consultando `https://queue-times.com/parks.json` na inicialização. Se um parque não resolver, aparece warning no log — ajuste o nome no JSON para bater com o da API.
