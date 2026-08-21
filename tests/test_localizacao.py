@@ -88,16 +88,20 @@ class TestGeometria(BaseTeste):
         sao_paulo = (-23.55, -46.63)
         self.assertIsNone(self.loc.parque_mais_proximo(sao_paulo, COORDS))
 
-    def test_navi_usa_ancora_caminhavel_de_pandora(self):
-        """Evita o ponto isolado que o Google roteava por uma volta de 1 km."""
+    def test_navi_separa_local_real_da_ancora_caminhavel(self):
+        """A rota usa Pandora, sem apagar a coordenada real da atração."""
         caminho = Path(__file__).parents[1] / "coords.json"
-        reais = json.loads(caminho.read_text(encoding="utf-8"))["rides"]
-        pandora = reais["Disney Animal Kingdom"]
-        distancia = self.loc.distancia_metros(
-            tuple(pandora["Avatar Flight of Passage"]),
-            tuple(pandora["Na'vi River Journey"]))
-        self.assertLessEqual(distancia, 25,
-                             "as duas atrações devem usar a mesma malha caminhável")
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        real = dados["rides"]["Disney Animal Kingdom"]["Na'vi River Journey"]
+        ancora = dados["route_anchors"]["Disney Animal Kingdom"]["Na'vi River Journey"]
+        self.assertNotEqual(real, ancora["coord"])
+        self.assertEqual(ancora["coord"], [28.354861, -81.592826])
+        self.assertGreater(ancora["extra_minutes"], 0)
+        self.assertGreater(ancora["extra_meters"], 0)
+        coord, minutos, metros = self.loc.ancora_rota(
+            dados, "Disney Animal Kingdom", "Na'vi River Journey", real)
+        self.assertEqual(coord, tuple(ancora["coord"]))
+        self.assertEqual((minutos, metros), (2, 150))
 
 
 class TestRankingPorTempoTotal(BaseTeste):

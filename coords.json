@@ -138,8 +138,8 @@
         -81.592826
       ],
       "Na'vi River Journey": [
-        28.354861,
-        -81.592826
+        28.3550988,
+        -81.5924427
       ],
       "Kilimanjaro Safaris": [
         28.359727,
@@ -261,5 +261,17 @@
       ]
     }
   },
-  "aliases": {}
+  "aliases": {},
+  "route_anchors": {
+    "Disney Animal Kingdom": {
+      "Na'vi River Journey": {
+        "coord": [
+          28.354861,
+          -81.592826
+        ],
+        "extra_minutes": 2,
+        "extra_meters": 150
+      }
+    }
+  }
 }
