@@ -182,12 +182,31 @@ class TestAutorizacao(BaseComando):
         ]})
         offset = self.monitor.serve_commands(None, self.conn, self.config, self.parques, 0)
         self.assertEqual(offset, 12, "offset avança mesmo para update recusado")
-        self.assertEqual(len(self.enviadas()), 1, "só o chat autorizado recebe resposta")
+        self.assertEqual(len(self.enviadas()), 2)
+        self.assertIn("Acesso restrito", self.enviadas()[1])
 
     def test_is_authorized_compara_como_texto(self):
         self.assertTrue(self.notifier.is_authorized(int(CHAT_FAKE)))
         self.assertTrue(self.notifier.is_authorized(CHAT_FAKE))
         self.assertFalse(self.notifier.is_authorized(999999))
+
+    def test_senha_familiar_libera_chat_e_responde_ao_destinatario(self):
+        self.monitor.FAMILY_ACCESS_PASSWORD = "senha-longa-de-teste"
+        self.requests.roteador = lambda url: Resposta({"result": [
+            self._update(999999, "/entrar senha-longa-de-teste", 20),
+            self._update(999999, "/parques", 21),
+        ]})
+        self.monitor.serve_commands(None, self.conn, self.config, self.parques, 0)
+        self.assertTrue(self.monitor.chat_autorizado(self.conn, 999999))
+        self.assertIn("Acesso familiar liberado", self.enviadas()[0])
+        self.assertIn("Parques monitorados", self.enviadas()[1])
+        self.assertTrue(all(str(p["chat_id"]) == "999999" for p in self.requests.posts))
+
+    def test_senha_errada_nao_libera_chat(self):
+        self.monitor.FAMILY_ACCESS_PASSWORD = "senha-longa-de-teste"
+        resposta = self.monitor.autenticar_familiar(self.conn, 999999, "errada")
+        self.assertIn("incorreta", resposta)
+        self.assertFalse(self.monitor.chat_autorizado(self.conn, 999999))
 
     def test_update_sem_texto_e_ignorado(self):
         self.requests.roteador = lambda url: Resposta({"result": [

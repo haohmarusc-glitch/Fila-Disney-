@@ -120,6 +120,12 @@ class TestPrecisaoAuxiliar(BaseTeste):
         self.monitor.utc_now = lambda: dt.datetime(2026, 10, 13, 22)
         self.assertIsNone(self.monitor.ultima_localizacao(self.conn))
 
+    def test_localizacao_fica_isolada_por_familiar(self):
+        self.monitor.guardar_localizacao(self.conn, 1, 2, chat_id=101)
+        self.monitor.guardar_localizacao(self.conn, 3, 4, chat_id=202)
+        self.assertEqual(self.monitor.ultima_localizacao(self.conn, chat_id=101), (1, 2))
+        self.assertEqual(self.monitor.ultima_localizacao(self.conn, chat_id=202), (3, 4))
+
     def test_park_to_park_padrao_seguro_e_configuracao_da_viagem_ativa(self):
         self.assertFalse(self.loc.config_park_to_park({})["enabled"])
         self.assertTrue(self.loc.config_park_to_park(self.config)["enabled"])

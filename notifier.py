@@ -35,13 +35,13 @@ BOTAO_LOCALIZACAO = {
 }
 
 
-def send(text: str, reply_markup: dict | None = None) -> bool:
+def send(text: str, reply_markup: dict | None = None, chat_id=None) -> bool:
     """Envia mensagem ao Telegram. Retorna True em caso de sucesso."""
     if not configured():
         log.warning("Telegram não configurado (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID). Msg: %s", text)
         return False
     corpo = {
-        "chat_id": CHAT_ID,
+        "chat_id": CHAT_ID if chat_id is None else chat_id,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,  # link de rota não vira card gigante
