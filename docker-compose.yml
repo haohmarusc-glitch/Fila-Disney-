@@ -15,3 +15,29 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  fila-disney-api:
+    build:
+      context: .
+      args:
+        APP_GIT_SHA: ${APP_GIT_SHA:-unknown}
+    container_name: fila-disney-api
+    command: ["python", "-u", "api_server.py"]
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./watchlist.json:/app/watchlist.json:ro
+    networks:
+      - default
+      - premercado
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  premercado:
+    external: true
+    name: premercado_default
