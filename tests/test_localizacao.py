@@ -188,6 +188,80 @@ class TestPercentisPorHorario(BaseTeste):
         self.assertIsNone(self.loc.classificar_fila(20, perfil))
 
 
+class TestRotasGoogleSeguras(BaseTeste):
+    PARK = "Islands Of Adventure At Universal Orlando"
+
+    def setUp(self):
+        super().setUp()
+        self.loc.GOOGLE_MAPS_API_KEY = "chave-de-teste"
+        self.loc._rota_cache.clear()
+
+    @staticmethod
+    def destino_a(metros):
+        return (PORTAO[0] + metros / 111_111, PORTAO[1])
+
+    def resposta(self, metros_diretos, metros_rota, segundos):
+        destino = self.destino_a(metros_diretos)
+        self.requests.roteador_post = lambda _url, _payload: Resposta([{
+            "destinationIndex": 0,
+            "condition": "ROUTE_EXISTS",
+            "duration": f"{segundos}s",
+            "distanceMeters": metros_rota,
+        }])
+        return self.loc.rotas_google(PORTAO, self.PARK, [("Atração", destino)])
+
+    def test_descarta_contorno_externo_da_pr_32(self):
+        self.assertEqual(self.resposta(300, 1081, 1980), {})
+
+    def test_descarta_duracao_absurda_com_distancia_plausivel(self):
+        self.assertEqual(self.resposta(500, 600, 2700), {})
+
+    def test_teto_especifico_do_ioa_prevalece(self):
+        self.assertEqual(self.resposta(1000, 1500, 1200), {})
+
+    def test_preserva_contorno_interno_plausivel(self):
+        self.assertEqual(self.resposta(233, 689, 600)["Atração"], (10, 689))
+
+    def test_ranking_ioa_cai_no_fallback_sem_inversao(self):
+        nomes = {
+            "Harry Potter and the Forbidden Journey": (167, 2428, 1980, 10),
+            "Doctor Doom's Fearfall": (319, 2010, 1620, 8),
+            "The Incredible Hulk Coaster": (366, 1898, 1560, 5),
+            "The Amazing Adventures of Spider-Man": (300, 1081, 900, 20),
+            "Skull Island: Reign of Kong": (233, 689, 600, 30),
+        }
+        coords = {"parks": {self.PARK: list(PORTAO)}, "rides": {self.PARK: {
+            nome: list(self.destino_a(dados[0])) for nome, dados in nomes.items()
+        }}}
+        payload = {"lands": [{"name": "L", "rides": [
+            ride(nome, dados[3]) for nome, dados in nomes.items()
+        ]}]}
+
+        def responder(_url, corpo):
+            elementos = []
+            for indice, destino in enumerate(corpo["destinations"]):
+                latitude = destino["waypoint"]["location"]["latLng"]["latitude"]
+                direto = round((latitude - PORTAO[0]) * 111_111)
+                dados = min(nomes.values(), key=lambda item: abs(item[0] - direto))
+                elementos.append({
+                    "destinationIndex": indice,
+                    "condition": "ROUTE_EXISTS",
+                    "duration": f"{dados[2]}s",
+                    "distanceMeters": dados[1],
+                })
+            return Resposta(elementos)
+
+        self.requests.roteador_post = responder
+        ranking = self.loc.ranking_por_tempo_total(
+            PORTAO, self.PARK, payload, self.config, coords)
+        por_nome = {item[4]: item for item in ranking}
+
+        self.assertLess(por_nome["Harry Potter and the Forbidden Journey"][2], 5)
+        self.assertLess(por_nome["The Incredible Hulk Coaster"][2], 10)
+        self.assertEqual(por_nome["Skull Island: Reign of Kong"][2], 10)
+        self.assertNotEqual(ranking[-1][4], "Harry Potter and the Forbidden Journey")
+
+
 class TestMensagemPerto(BaseTeste):
     def setUp(self):
         super().setUp()

@@ -35,6 +35,7 @@ log = logging.getLogger("monitor")
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "data" / "history.db"
 UPTIME_KUMA_PUSH_URL = os.environ.get("UPTIME_KUMA_PUSH_URL", "").strip()
+APP_GIT_SHA = os.environ.get("APP_GIT_SHA", "unknown").strip() or "unknown"
 WATCHLIST_PATH = BASE_DIR / "watchlist.json"
 # data/ é o único volume persistente: coords.json gravado em /app some no
 # próximo `docker compose up --build`, junto com o trabalho todo do coords.py.
@@ -226,7 +227,16 @@ def post_json(url: str, dados: dict, *, tentativas: int = HTTP_TENTATIVAS,
                            espera_minima=espera_minima)
 
 
+def post_json_body(url: str, dados: dict, *, cabecalhos: dict | None = None,
+                   tentativas: int = HTTP_TENTATIVAS) -> object:
+    """POST JSON preservando retry, timeout e tratamento de status centralizados."""
+    return requisicao_json("POST_JSON", url, json_dados=dados,
+                           cabecalhos_extras=cabecalhos, tentativas=tentativas)
+
+
 def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
+                    json_dados: dict | None = None,
+                    cabecalhos_extras: dict | None = None,
                     tentativas: int = HTTP_TENTATIVAS,
                     espera_minima: float = 0) -> object:
     """Núcleo HTTP com retry e backoff.
@@ -237,10 +247,13 @@ def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
     python-requests.
     """
     ultimo_erro: Exception | None = None
-    cabecalhos = {"User-Agent": USER_AGENT}
+    cabecalhos = {"User-Agent": USER_AGENT, **(cabecalhos_extras or {})}
     for tentativa in range(1, tentativas + 1):
         try:
-            if metodo == "POST":
+            if metodo == "POST_JSON":
+                resp = requests.post(url, json=json_dados, headers=cabecalhos,
+                                     timeout=HTTP_TIMEOUT)
+            elif metodo == "POST":
                 resp = requests.post(url, data=dados, headers=cabecalhos, timeout=HTTP_TIMEOUT)
             else:
                 resp = requests.get(url, headers=cabecalhos, timeout=HTTP_TIMEOUT)
@@ -753,6 +766,7 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
         f"Parques resolvidos: {len(park_ids)}/{esperados}",
         f"Histórico: {total:,} leituras em {dias} dia(s) · {tamanho_mb:.1f} MB".replace(",", "."),
         f"Alertas já enviados: {alertas}",
+        f"Versão: <code>{notifier.esc(APP_GIT_SHA)}</code>",
         f"Hoje: {notifier.esc(do_dia[0]) if do_dia else 'sem parque (modo coleta)'}",
         "",
         f"Ciclo a cada {POLL_INTERVAL_SECONDS // 60} min · {now_park(config).strftime('%Hh%M')} no parque",
