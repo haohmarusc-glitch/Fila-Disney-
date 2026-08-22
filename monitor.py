@@ -147,6 +147,14 @@ def init_db() -> sqlite3.Connection:
         """
     )
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS top_alert_park ("
+        "park TEXT PRIMARY KEY, sent_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS daily_summary_park ("
+        "sent_on TEXT NOT NULL, park TEXT NOT NULL, PRIMARY KEY (sent_on, park))"
+    )
+    conn.execute(
         """
         CREATE TABLE IF NOT EXISTS route_rejections (
             ts              TEXT NOT NULL,
@@ -158,6 +166,43 @@ def init_db() -> sqlite3.Connection:
             reason          TEXT NOT NULL
         )
         """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ride_watches (
+            park       TEXT NOT NULL,
+            ride       TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (park, ride)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reopen_alerts (
+            park    TEXT NOT NULL,
+            ride    TEXT NOT NULL,
+            sent_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_location (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            latitude   REAL NOT NULL,
+            longitude  REAL NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reopen_park_ride_ts "
+        "ON reopen_alerts (park, ride, sent_at)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS database_maintenance ("
+        "ran_on TEXT PRIMARY KEY, deleted_rows INTEGER NOT NULL)"
     )
     conn.commit()
     return conn
@@ -373,6 +418,7 @@ FILAS_IGNORADAS = ("single rider", "virtual line", "virtual queue")
 # velho: alertar "20 min" com dado de 3h atrás manda o grupo para uma fila que
 # não existe mais. Só afeta alerta e ranking — o histórico continua gravando tudo.
 OBSOLETO_MINUTOS_PADRAO = 30
+FRACAO_PARQUE_OPERANDO = 0.25
 
 
 def leitura_obsoleta(ride: dict, limite_min: int = OBSOLETO_MINUTOS_PADRAO) -> bool:
@@ -387,6 +433,34 @@ def leitura_obsoleta(ride: dict, limite_min: int = OBSOLETO_MINUTOS_PADRAO) -> b
     if marca.tzinfo is not None:
         marca = marca.astimezone(timezone.utc).replace(tzinfo=None)
     return utc_now() - marca > timedelta(minutes=limite_min)
+
+
+def estado_parque_payload(payload: dict, limite_min: int = OBSOLETO_MINUTOS_PADRAO) -> str:
+    """`operando`, `fechado` ou `desconhecido` sem depender de horários externos.
+
+    O feed noturno costuma deixar todas as atrações fechadas. A fração aberta
+    separa isso de uma quebra individual; leituras majoritariamente obsoletas
+    indicam feed parado e nunca podem produzir alertas de fechamento/reabertura.
+    """
+    rides = [r for _land, r in iter_rides(payload) if not fila_paralela(r["name"])]
+    if not rides:
+        return "desconhecido"
+    recentes = [r for r in rides if not leitura_obsoleta(r, limite_min)]
+    if len(recentes) < len(rides) * 0.5:
+        return "desconhecido"
+    fracao = sum(bool(r.get("is_open")) for r in recentes) / len(recentes)
+    return "operando" if fracao >= FRACAO_PARQUE_OPERANDO else "fechado"
+
+
+def parque_operava_no_ultimo_ciclo(conn: sqlite3.Connection, park: str) -> bool:
+    row = conn.execute("SELECT MAX(ts) FROM wait_times WHERE park = ?", (park,)).fetchone()
+    if not row or not row[0]:
+        return False
+    abertas, total = conn.execute(
+        "SELECT SUM(is_open), COUNT(*) FROM wait_times WHERE park = ? AND ts = ?",
+        (park, row[0]),
+    ).fetchone()
+    return bool(total and abertas / total >= FRACAO_PARQUE_OPERANDO)
 
 
 def fila_paralela(ride_name: str) -> bool:
@@ -584,6 +658,363 @@ def format_ranking_historico(conn: sqlite3.Connection, config: dict, dias: int) 
     return "\n".join(linhas)
 
 
+# A classificacao e deliberadamente conservadora: so entra no /chuva o que tem
+# experiencia principal interna. Ausencia na lista significa "nao confirmado",
+# nunca uma suposicao de que a atracao seja coberta.
+ATRACOES_SEGURAS_CHUVA = {
+    "Space Mountain", "Peter Pan's Flight", "Haunted Mansion",
+    "Pirates of the Caribbean", "Buzz Lightyear's Space Ranger Spin",
+    "Guardians of the Galaxy: Cosmic Rewind", "Frozen Ever After",
+    "Remy's Ratatouille Adventure", "Soarin' Around the World", "Mission: SPACE",
+    "Star Wars: Rise of the Resistance", "Millennium Falcon: Smugglers Run",
+    "Mickey & Minnie's Runaway Railway", "Tower of Terror",
+    "Rock 'n' Roller Coaster", "Toy Story Mania!", "Avatar Flight of Passage",
+    "Na'vi River Journey", "Harry Potter and the Escape from Gringotts",
+    "Revenge of the Mummy", "Transformers: The Ride 3D",
+    "MEN IN BLACK Alien Attack", "The Simpsons Ride", "E.T. Adventure",
+    "Villain-Con Minion Blast", "Harry Potter and the Forbidden Journey",
+    "The Amazing Adventures of Spider-Man", "Skull Island: Reign of Kong",
+    "Harry Potter and the Battle at the Ministry",
+    "Monsters Unchained: The Frankenstein Experiment",
+    "Mario Kart: Bowser's Challenge",
+}
+
+
+def resolver_atracao(config: dict, query: str) -> list[tuple[str, str]]:
+    """Resolve trecho do nome apenas na watchlist, sem escolher ambiguidades."""
+    q = query.strip().lower()
+    if not q:
+        return []
+    return [
+        (park, ride)
+        for park, park_cfg in config.get("parks", {}).items()
+        for ride in park_cfg.get("attractions", {})
+        if q in ride.lower()
+    ]
+
+
+def _format_opcoes_atracao(matches: list[tuple[str, str]]) -> str:
+    return "\n".join(
+        f"• {notifier.esc(ride)} — {notifier.esc(park)}" for park, ride in matches[:12]
+    )
+
+
+def guardar_localizacao(conn: sqlite3.Connection, latitude: float, longitude: float) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO user_location (id, latitude, longitude, updated_at) "
+        "VALUES (1, ?, ?, ?)",
+        (latitude, longitude, utc_now().isoformat()),
+    )
+    conn.commit()
+
+
+def ultima_localizacao(conn: sqlite3.Connection, max_minutos: int = 180) -> tuple[float, float] | None:
+    row = conn.execute(
+        "SELECT latitude, longitude, updated_at FROM user_location WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        idade = utc_now() - datetime.fromisoformat(row[2])
+    except (TypeError, ValueError):
+        return None
+    return (row[0], row[1]) if idade <= timedelta(minutes=max_minutos) else None
+
+
+def vigiar_atracao(conn: sqlite3.Connection, park: str, ride: str) -> str:
+    conn.execute(
+        "INSERT OR REPLACE INTO ride_watches (park, ride, created_at) VALUES (?, ?, ?)",
+        (park, ride, utc_now().isoformat()),
+    )
+    conn.commit()
+    return (
+        f"👀 Vou vigiar <b>{notifier.esc(ride)}</b> — {notifier.esc(park)}.\n"
+        "Avisarei uma vez quando houver transição confirmada de fechada para aberta."
+    )
+
+
+def cancelar_vigia(conn: sqlite3.Connection, park: str, ride: str) -> str:
+    removidas = conn.execute(
+        "DELETE FROM ride_watches WHERE park = ? AND ride = ?", (park, ride)
+    ).rowcount
+    conn.commit()
+    return (f"✅ Vigilância removida: {notifier.esc(ride)}."
+            if removidas else f"Não havia vigilância ativa para {notifier.esc(ride)}.")
+
+
+def format_vigias(conn: sqlite3.Connection) -> str:
+    rows = conn.execute("SELECT park, ride FROM ride_watches ORDER BY park, ride").fetchall()
+    if not rows:
+        return ("👀 Nenhuma atração sendo vigiada.\n"
+                "Use <code>/vigiar &lt;atração&gt;</code>.")
+    linhas = ["👀 <b>Alertas de reabertura ativos</b>", ""]
+    linhas += [f"• {notifier.esc(ride)} — {notifier.esc(park)}" for park, ride in rows]
+    linhas += ["", "Para remover: <code>/vigiar cancelar &lt;atração&gt;</code>"]
+    return "\n".join(linhas)
+
+
+def estado_anterior(conn: sqlite3.Connection, park: str, ride: str) -> int | None:
+    row = conn.execute(
+        "SELECT is_open FROM wait_times WHERE park = ? AND ride = ? ORDER BY ts DESC LIMIT 1",
+        (park, ride),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def reabertura_em_cooldown(conn: sqlite3.Connection, park: str, ride: str,
+                           minutos: int) -> bool:
+    corte = (utc_now() - timedelta(minutes=minutos)).isoformat()
+    return conn.execute(
+        "SELECT 1 FROM reopen_alerts WHERE park = ? AND ride = ? AND sent_at >= ? LIMIT 1",
+        (park, ride, corte),
+    ).fetchone() is not None
+
+
+def maybe_alertar_reabertura(conn: sqlite3.Connection, config: dict, park: str,
+                             ride: dict, anterior: int | None,
+                             parque_operava: bool, estado_atual: str) -> None:
+    """Alerta apenas em transição observada 0→1; reinício sem histórico não dispara."""
+    if (not parque_operava or estado_atual != "operando" or anterior != 0
+            or not ride.get("is_open") or leitura_obsoleta(ride)):
+        return
+    nome = ride["name"]
+    park_cfg = config.get("parks", {}).get(park, {})
+    canonico = nome_watchlist(park_cfg, nome)
+    vigia = None
+    if canonico:
+        vigia = conn.execute(
+            "SELECT 1 FROM ride_watches WHERE park = ? AND ride = ?", (park, canonico)
+        ).fetchone()
+    cfg = config.get("reopen_alert", {})
+    automatico = (cfg.get("enabled", True) and park in is_alert_day(config)
+                  and canonico is not None and not in_quiet_hours(config))
+    if not vigia and not automatico:
+        return
+    cooldown = int(cfg.get("cooldown_minutes", 90))
+    if reabertura_em_cooldown(conn, park, nome, cooldown):
+        return
+    wait = ride.get("wait_time")
+    fila = f"Fila publicada: <b>{wait} min</b>." if wait is not None else "Fila ainda sem estimativa."
+    texto = (f"🚨 <b>REABRIU</b>\n\n<b>{notifier.esc(nome)}</b>\n"
+             f"{notifier.esc(park)}\n{fila}\n\n"
+             "Transição confirmada pelo Queue-Times; confira a entrada antes de caminhar.")
+    if notifier.send(texto):
+        conn.execute(
+            "INSERT INTO reopen_alerts (park, ride, sent_at) VALUES (?, ?, ?)",
+            (park, nome, utc_now().isoformat()),
+        )
+        if vigia:
+            conn.execute("DELETE FROM ride_watches WHERE park = ? AND ride = ?", (park, canonico))
+        conn.commit()
+
+
+def historico_estado_hoje(conn: sqlite3.Connection, config: dict, park: str,
+                          ride: str) -> tuple[int, int | None]:
+    """(quantidade de fechamentos, minutos da interrupcao atual)."""
+    inicio, _fim = periodo_ranking(config, 1)
+    todos = conn.execute(
+        "SELECT ts, ride, is_open FROM wait_times WHERE park = ? AND ts >= ? ORDER BY ts",
+        (park, inicio),
+    ).fetchall()
+    por_ciclo = {}
+    for ts, nome, aberto in todos:
+        ciclo = por_ciclo.setdefault(ts, {"abertas": 0, "total": 0, "ride": None})
+        ciclo["abertas"] += bool(aberto)
+        ciclo["total"] += 1
+        if nome == ride:
+            ciclo["ride"] = bool(aberto)
+    rows = [(ts, dados["ride"]) for ts, dados in por_ciclo.items()
+            if dados["ride"] is not None
+            and dados["abertas"] / dados["total"] >= FRACAO_PARQUE_OPERANDO]
+    fechamentos = sum(1 for i, (_ts, aberto) in enumerate(rows)
+                      if not aberto and i > 0 and rows[i - 1][1])
+    inicio_fechado = None
+    for ts, aberto in reversed(rows):
+        if aberto:
+            break
+        inicio_fechado = ts
+    minutos = None
+    if inicio_fechado:
+        minutos = max(0, round((utc_now() - datetime.fromisoformat(inicio_fechado)).total_seconds() / 60))
+    return fechamentos, minutos
+
+
+def format_fechadas(conn: sqlite3.Connection, config: dict, park: str, payload: dict) -> str:
+    limite = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
+    estado = estado_parque_payload(payload, limite)
+    if estado == "fechado":
+        return (f"🌙 <b>{notifier.esc(park)}</b> parece estar fechado ou ainda abrindo.\n\n"
+                "Não vou tratar o fechamento geral como quebra de atrações.")
+    if estado == "desconhecido":
+        return (f"⚠️ <b>{notifier.esc(park)}</b> com feed insuficiente ou desatualizado.\n\n"
+                "Estado desconhecido: nenhuma quebra será afirmada agora.")
+    fechadas = []
+    obsoletas = 0
+    for _land, ride in iter_rides(payload):
+        if fila_paralela(ride["name"]) or ride.get("is_open"):
+            continue
+        if leitura_obsoleta(ride, limite):
+            obsoletas += 1
+            continue
+        fechamentos, minutos = historico_estado_hoje(conn, config, park, ride["name"])
+        fechadas.append((minutos if minutos is not None else -1, fechamentos, ride["name"]))
+    if not fechadas:
+        return f"🟢 <b>{notifier.esc(park)}</b>\n\nNenhuma atração aparece como fechada agora."
+    fechadas.sort(key=lambda item: (-item[0], item[2]))
+    linhas = [f"🔧 <b>Atrações fechadas — {notifier.esc(park)}</b>", ""]
+    for minutos, vezes, ride in fechadas:
+        duracao = f"há ~{minutos} min" if minutos >= 0 else "detectada agora"
+        linhas.append(f"🔴 <b>{notifier.esc(ride)}</b> — {duracao} · {vezes} fechamento(s) hoje")
+    linhas += ["", "Use <code>/vigiar &lt;atração&gt;</code> para receber a reabertura.",
+               "Estado atualizado a cada ~5 min · Powered by Queue-Times.com"]
+    if obsoletas:
+        linhas.insert(-2, f"⚠️ {obsoletas} estado(s) antigo(s) omitido(s).")
+    return "\n".join(linhas)
+
+
+def _ride_atual(payload: dict, park_cfg: dict, canonico: str) -> dict | None:
+    for _land, ride in iter_rides(payload):
+        if nome_watchlist(park_cfg, ride["name"]) == canonico:
+            return ride
+    return None
+
+
+def format_confianca(conn: sqlite3.Connection, config: dict, park: str,
+                     canonico: str, payload: dict) -> str:
+    ride = _ride_atual(payload, config["parks"][park], canonico)
+    if not ride:
+        return "A atração não apareceu na resposta atual da API."
+    if not ride.get("is_open") or ride.get("wait_time") is None:
+        return f"🔒 <b>{notifier.esc(ride['name'])}</b> está fechada ou sem fila publicada."
+    perfil = localizacao.perfil_historico(
+        conn, config, park, ride["name"], int(ride["wait_time"])
+    )
+    titulo = (f"🎯 <b>Confiança da fila</b>\n\n<b>{notifier.esc(ride['name'])}</b> — "
+              f"{ride['wait_time']} min\n{notifier.esc(park)}")
+    if not perfil:
+        return titulo + "\n\nAinda não há 12 leituras comparáveis neste dia da semana e horário."
+    classe = localizacao.classificar_fila(int(ride["wait_time"]), perfil)
+    amplitude = perfil["p75"] - perfil["p25"]
+    confianca = "alta" if amplitude <= 15 else "média" if amplitude <= 30 else "baixa"
+    return (titulo + f"\n\n{classe}\nConfiança histórica: <b>{confianca}</b>\n"
+            f"Faixa comum: {perfil['p25']:.0f}–{perfil['p75']:.0f} min · "
+            f"mediana {perfil['mediana']:.0f} · n={perfil['n']}\n\n"
+            "Compara o valor publicado com o mesmo dia da semana e horário; não mede a espera real.")
+
+
+def format_lotacao(conn: sqlite3.Connection, config: dict, park: str, payload: dict) -> str:
+    atuais = [int(r["wait_time"]) for _l, r in iter_rides(payload)
+              if r.get("is_open") and r.get("wait_time") is not None
+              and not fila_paralela(r["name"]) and not leitura_obsoleta(r)]
+    fechadas = sum(1 for _l, r in iter_rides(payload)
+                   if not r.get("is_open") and not fila_paralela(r["name"]))
+    if not atuais:
+        return f"⚠️ <b>{notifier.esc(park)}</b> sem filas atuais suficientes para estimar lotação."
+    momento = now_park(config)
+    fuso = ZoneInfo(config["trip"]["timezone"])
+    def selecionar_historico(rows):
+        selecionado = []
+        for ts, wait in rows:
+            try:
+                d = datetime.fromisoformat(ts)
+                if d.tzinfo is None:
+                    d = d.replace(tzinfo=timezone.utc)
+                d = d.astimezone(fuso)
+            except (TypeError, ValueError):
+                continue
+            if d.weekday() == momento.weekday() and d.hour == momento.hour:
+                selecionado.append(int(wait))
+        return selecionado
+
+    corte = (momento.astimezone(timezone.utc).replace(tzinfo=None)
+             - timedelta(days=56)).isoformat()
+    base_sql = ("SELECT ts, wait_time FROM wait_times WHERE park = ? AND is_open = 1 "
+                "AND wait_time IS NOT NULL")
+    historico = selecionar_historico(
+        conn.execute(base_sql + " AND ts >= ?", (park, corte)).fetchall()
+    )
+    if len(historico) < 12:
+        historico = selecionar_historico(conn.execute(base_sql, (park,)).fetchall())
+    media = sum(atuais) / len(atuais)
+    if len(historico) < 12:
+        nivel = "dados históricos insuficientes"
+        detalhe = f"Média publicada agora: {media:.0f} min"
+    else:
+        p25 = localizacao.percentil(historico, .25)
+        mediana = localizacao.percentil(historico, .5)
+        p75 = localizacao.percentil(historico, .75)
+        nivel = ("🟢 leve" if media <= p25 else "🟡 normal" if media <= mediana
+                 else "🟠 cheia" if media <= p75 else "🔴 excepcionalmente cheia")
+        detalhe = f"Agora {media:.0f} min · faixa comum {p25:.0f}–{p75:.0f} min · n={len(historico)}"
+    instavel = "⚠️ operação instável" if fechadas >= 3 else "operação estável"
+    return (f"👥 <b>Lotação estimada — {notifier.esc(park)}</b>\n\n"
+            f"Nível: <b>{nivel}</b>\n{detalhe}\n"
+            f"Atrações fechadas: {fechadas} · {instavel}\n\n"
+            "Estimativa pela distribuição das filas; não é contagem de pessoas.")
+
+
+def _format_itens_proximos(titulo: str, itens: list, park: str, limite: int = 3) -> str:
+    if not itens:
+        return f"{titulo}\n\nNenhuma opção elegível com dado atual."
+    linhas = [titulo, f"📍 {notifier.esc(park)}", ""]
+    medalhas = ("🥇", "🥈", "🥉")
+    for i, item in enumerate(itens[:limite]):
+        total, fila, caminhada, metros, nome = item[:5]
+        if total is None:
+            linhas.append(f"{medalhas[i]} {notifier.esc(nome)} — fila {fila} min · sem rota")
+        else:
+            linhas.append(f"{medalhas[i]} <b>{notifier.esc(nome)}</b> — {total} min total\n"
+                          f"     fila {fila} + caminhada {caminhada} min ({metros:.0f} m)")
+    return "\n".join(linhas)
+
+
+def format_chuva(conn: sqlite3.Connection, config: dict, park: str, payload: dict,
+                  coords: dict) -> str:
+    posicao = ultima_localizacao(conn)
+    if posicao and coords:
+        itens = localizacao._ranking_detalhado(posicao, park, payload, config, coords, conn)
+        seguros = [i for i in itens if nome_watchlist(config["parks"][park], i[4])
+                   in ATRACOES_SEGURAS_CHUVA]
+        return (_format_itens_proximos("☔ <b>Melhores opções internas na chuva</b>", seguros, park)
+                + "\n\nLista conservadora: atrações externas ou não confirmadas ficam de fora.")
+    seguros = []
+    for _land, ride in iter_rides(payload):
+        canonico = nome_watchlist(config["parks"][park], ride["name"])
+        if (canonico in ATRACOES_SEGURAS_CHUVA and ride.get("is_open")
+                and ride.get("wait_time") is not None and not leitura_obsoleta(ride)):
+            seguros.append((ride["wait_time"], ride["name"]))
+    seguros.sort()
+    linhas = [f"☔ <b>Opções internas — {notifier.esc(park)}</b>", ""]
+    linhas += [f"• {notifier.esc(nome)} — {wait} min" for wait, nome in seguros[:8]]
+    linhas += ["", "Envie sua localização para incluir caminhada."]
+    return "\n".join(linhas)
+
+
+def format_plano(conn: sqlite3.Connection, config: dict, park: str, payload: dict,
+                 coords: dict) -> str:
+    posicao = ultima_localizacao(conn)
+    if not posicao:
+        return ("📍 Preciso de uma localização recente para montar o plano. "
+                "Envie sua localização e depois use /plano.")
+    if not coords.get("rides", {}).get(park):
+        return "Não há coordenadas suficientes deste parque para montar o plano."
+    escolhidos, usados = [], set()
+    atual = posicao
+    for _ in range(3):
+        itens = localizacao._ranking_detalhado(atual, park, payload, config, coords, conn)
+        elegiveis = [i for i in itens if i[4] not in usados]
+        if not elegiveis:
+            break
+        item = elegiveis[0]
+        escolhidos.append(item)
+        usados.add(item[4])
+        if item[5] is not None:
+            atual = item[5]
+    return (_format_itens_proximos("🗺️ <b>Plano dinâmico — próximas 3 atrações</b>",
+                                  escolhidos, park)
+            + "\n\nRecalculado etapa a etapa com as filas atuais; confirme novamente após cada atração.")
+
+
 def format_top_alert(park_name: str, ranking: list, config: dict,
                      conn: sqlite3.Connection | None = None) -> str:
     """Mensagem curta do alerta recorrente — chega a cada N min, tem que ser enxuta."""
@@ -598,18 +1029,25 @@ def format_top_alert(park_name: str, ranking: list, config: dict,
     return "\n".join(linhas)
 
 
-def top_alert_atrasado(conn: sqlite3.Connection, intervalo_min: int) -> bool:
+def top_alert_atrasado(conn: sqlite3.Connection, intervalo_min: int,
+                       park: str | None = None) -> bool:
     """True se já passou o intervalo desde o último envio (ou se nunca houve)."""
-    row = conn.execute("SELECT sent_at FROM top_alert WHERE id = 1").fetchone()
+    row = (conn.execute("SELECT sent_at FROM top_alert_park WHERE park = ?", (park,)).fetchone()
+           if park else conn.execute("SELECT sent_at FROM top_alert WHERE id = 1").fetchone())
     if not row:
         return True
     return datetime.fromisoformat(row[0]) <= utc_now() - timedelta(minutes=intervalo_min)
 
 
-def marcar_top_alert(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        "INSERT OR REPLACE INTO top_alert (id, sent_at) VALUES (1, ?)", (utc_now().isoformat(),)
-    )
+def marcar_top_alert(conn: sqlite3.Connection, park: str | None = None) -> None:
+    if park:
+        conn.execute("INSERT OR REPLACE INTO top_alert_park (park, sent_at) VALUES (?, ?)",
+                     (park, utc_now().isoformat()))
+    else:
+        conn.execute(
+            "INSERT OR REPLACE INTO top_alert (id, sent_at) VALUES (1, ?)",
+            (utc_now().isoformat(),),
+        )
     conn.commit()
 
 
@@ -625,22 +1063,21 @@ def maybe_send_top_alert(conn: sqlite3.Connection, config: dict, park_ids: dict[
     do_dia = [p for p in is_alert_day(config) if p in park_ids]
     if not do_dia and cfg.get("only_park_days", True):
         return
-    park_name = (do_dia or list(park_ids))[0]
-
-    payload = payloads.get(park_name)
-    if payload is None:  # o fetch deste parque falhou neste ciclo
-        return
-    if not top_alert_atrasado(conn, cfg.get("every_minutes", 10)):
-        return
-
-    ranking = menores_filas(
-        payload, config, park_name, cfg.get("count", 3), apenas_watchlist=True
-    )
-    if not ranking:
-        return
-    if notifier.send(format_top_alert(park_name, ranking, config, conn)):
-        marcar_top_alert(conn)
-        log.info("Top-%d de menores filas enviado (%s)", len(ranking), park_name)
+    parques_alvo = do_dia or list(park_ids)
+    por_parque = len(parques_alvo) > 1
+    for park_name in parques_alvo:
+        payload = payloads.get(park_name)
+        if payload is None or not top_alert_atrasado(
+                conn, cfg.get("every_minutes", 10), park_name if por_parque else None):
+            continue
+        ranking = menores_filas(
+            payload, config, park_name, cfg.get("count", 3), apenas_watchlist=True
+        )
+        if ranking and notifier.send(format_top_alert(park_name, ranking, config, conn)):
+            if por_parque:
+                marcar_top_alert(conn, park_name)
+            marcar_top_alert(conn)  # compatibilidade/telemetria global
+            log.info("Top-%d de menores filas enviado (%s)", len(ranking), park_name)
 
 
 # ---------------------------------------------------------------- resumo diário
@@ -664,14 +1101,22 @@ def park_utc_offset_horas(config: dict) -> int:
     return int(delta.total_seconds() // 3600) if delta else 0
 
 
-def resumo_enviado(conn: sqlite3.Connection, dia: str) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM daily_summary WHERE sent_on = ? LIMIT 1", (dia,)
-    ).fetchone() is not None
+def resumo_enviado(conn: sqlite3.Connection, dia: str, park: str | None = None) -> bool:
+    if park:
+        return conn.execute(
+            "SELECT 1 FROM daily_summary_park WHERE sent_on = ? AND park = ? LIMIT 1",
+            (dia, park),
+        ).fetchone() is not None
+    return conn.execute("SELECT 1 FROM daily_summary WHERE sent_on = ? LIMIT 1",
+                        (dia,)).fetchone() is not None
 
 
-def marcar_resumo_enviado(conn: sqlite3.Connection, dia: str) -> None:
-    conn.execute("INSERT OR IGNORE INTO daily_summary (sent_on) VALUES (?)", (dia,))
+def marcar_resumo_enviado(conn: sqlite3.Connection, dia: str, park: str | None = None) -> None:
+    if park:
+        conn.execute("INSERT OR IGNORE INTO daily_summary_park (sent_on, park) VALUES (?, ?)",
+                     (dia, park))
+    else:
+        conn.execute("INSERT OR IGNORE INTO daily_summary (sent_on) VALUES (?)", (dia,))
     conn.commit()
 
 
@@ -768,8 +1213,6 @@ def maybe_send_daily_summary(conn: sqlite3.Connection, config: dict, park_ids: d
 
     agora = now_park(config)
     dia = agora.date().isoformat()
-    if resumo_enviado(conn, dia):
-        return
 
     alvo = hhmm_em_minutos(cfg.get("hour", "07:00"))
     minutos_agora = agora.hour * 60 + agora.minute
@@ -780,16 +1223,25 @@ def maybe_send_daily_summary(conn: sqlite3.Connection, config: dict, park_ids: d
     if not do_dia:
         if cfg.get("only_park_days", True):
             return  # sem parque hoje: resumo diário viraria spam até outubro
+        if resumo_enviado(conn, dia):
+            return
         texto = (
             f"☀️ <b>Bom dia!</b> Hoje não é dia de parque — só coletando histórico.\n"
             f"Mande <code>/resumo &lt;parque&gt;</code> para a previsão de qualquer um."
         )
-    else:
-        texto = format_daily_summary(conn, config, do_dia[0])
+        if notifier.send(texto):
+            marcar_resumo_enviado(conn, dia)
+            log.info("Resumo diário enviado (%s)", dia)
+        return
 
-    if notifier.send(texto):
-        marcar_resumo_enviado(conn, dia)
-        log.info("Resumo diário enviado (%s)", dia)
+    for park in do_dia:
+        if resumo_enviado(conn, dia, park):
+            continue
+        texto = format_daily_summary(conn, config, park)
+        if notifier.send(texto):
+            marcar_resumo_enviado(conn, dia, park)
+            marcar_resumo_enviado(conn, dia)  # compatibilidade/telemetria global
+            log.info("Resumo diário enviado (%s / %s)", dia, park)
 
 
 def enviar_teste_alertas(conn: sqlite3.Connection, config: dict, park_name: str,
@@ -829,6 +1281,12 @@ HELP = (
     "/ranking &lt;parque&gt; — maiores filas agora em um parque\n"
     "/ranking hoje — atrações mais concorridas hoje pelo histórico\n"
     "/ranking semana — atrações mais concorridas nos últimos 7 dias\n"
+    "/fechadas &lt;parque&gt; — quebras atuais, duração e instabilidade\n"
+    "/vigiar &lt;atração&gt; — avisa uma vez quando a atração reabrir\n"
+    "/confianca &lt;atração&gt; — compara a fila com o histórico equivalente\n"
+    "/lotacao &lt;parque&gt; — pressão estimada pelas filas e fechamentos\n"
+    "/plano — próximas três atrações por fila + caminhada\n"
+    "/chuva — opções internas por fila + caminhada\n"
     "/resumo — previsão do dia pelo histórico (o mesmo das 7h)\n"
     "/resumo &lt;parque&gt; — previsão de um parque específico\n"
     "/parques — parques monitorados\n"
@@ -871,7 +1329,7 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
         f"Alertas já enviados: {alertas}",
         f"Rotas implausíveis descartadas: {rotas_rejeitadas}",
         f"Versão: <code>{notifier.esc(APP_GIT_SHA)}</code>",
-        f"Hoje: {notifier.esc(do_dia[0]) if do_dia else 'sem parque (modo coleta)'}",
+        f"Hoje: {', '.join(notifier.esc(p) for p in do_dia) if do_dia else 'sem parque (modo coleta)'}",
         "",
         f"Ciclo a cada {POLL_INTERVAL_SECONDS // 60} min · {now_park(config).strftime('%Hh%M')} no parque",
     ])
@@ -888,7 +1346,7 @@ PEDIR_LOCALIZACAO = (
 def responder_localizacao(latitude: float, longitude: float, conn: sqlite3.Connection,
                           config: dict, park_ids: dict[str, int], coords: dict) -> str:
     """Resposta ao envio de localização: melhor atração por tempo total."""
-    if not coords.get("parks"):
+    if not coords.get("rides"):
         return ("Ainda não tenho as coordenadas das atrações. "
                 "Rode <code>python coords.py</code> uma vez no servidor.")
 
@@ -905,7 +1363,18 @@ def responder_localizacao(latitude: float, longitude: float, conn: sqlite3.Conne
     except requests.RequestException as exc:
         log.error("Falha ao buscar %s para localização: %s", park_name, exc)
         return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
-    return localizacao.format_perto(posicao, park_name, payload, config, coords, conn)
+    troca = None
+    cfg_p2p = localizacao.config_park_to_park(config)
+    outro = cfg_p2p.get("parks", {}).get(park_name) if cfg_p2p.get("enabled") else None
+    if outro in park_ids:
+        try:
+            payload_outro = fetch_queue_times(park_ids[outro])
+            troca = localizacao.avaliar_troca_park_to_park(
+                posicao, park_name, payload, payload_outro, config, coords, conn)
+        except requests.RequestException as exc:
+            log.warning("Park-to-Park indisponível para %s: %s", outro, exc)
+    return localizacao.format_perto(
+        posicao, park_name, payload, config, coords, conn, troca=troca)
 
 
 def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:
@@ -954,7 +1423,8 @@ def format_status(park_name: str, payload: dict, config: dict,
     return "\n".join(linhas)
 
 
-def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> str | None:
+def handle_command(text: str, conn: sqlite3.Connection, config: dict,
+                   park_ids: dict[str, int], coords: dict | None = None) -> str | None:
     """Interpreta um comando do chat. Devolve a resposta ou None (ignorar)."""
     # só a primeira linha: no Telegram dá para mandar vários comandos numa
     # mensagem só, e sem isso o resto vira argumento do primeiro.
@@ -976,7 +1446,39 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     if cmd == "/parques":
         nomes = "\n".join(f"• {notifier.esc(n)}" for n in park_ids)
         return f"🎢 <b>Parques monitorados</b>\n{nomes}"
-    if cmd not in ("/status", "/resumo", "/menores", "/ranking", "/teste_alertas"):
+    if cmd == "/vigiar":
+        if not arg:
+            return format_vigias(conn)
+        cancelar = arg.lower().startswith("cancelar ")
+        busca = arg.split(maxsplit=1)[1] if cancelar else arg
+        matches = resolver_atracao(config, busca)
+        if not matches:
+            return f"Não achei atração com “{notifier.esc(busca)}”."
+        if len(matches) > 1:
+            return (f"“{notifier.esc(busca)}” é ambíguo:\n"
+                    + _format_opcoes_atracao(matches))
+        park, ride = matches[0]
+        return cancelar_vigia(conn, park, ride) if cancelar else vigiar_atracao(conn, park, ride)
+
+    if cmd == "/confianca":
+        if not arg:
+            return "Use <code>/confianca &lt;atração&gt;</code>."
+        matches = resolver_atracao(config, arg)
+        if not matches:
+            return f"Não achei atração com “{notifier.esc(arg)}”."
+        if len(matches) > 1:
+            return f"“{notifier.esc(arg)}” é ambíguo:\n" + _format_opcoes_atracao(matches)
+        park, ride = matches[0]
+        try:
+            payload = fetch_queue_times(park_ids[park])
+        except requests.RequestException as exc:
+            log.error("Falha ao buscar %s para /confianca: %s", park, exc)
+            return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
+        return format_confianca(conn, config, park, ride, payload)
+
+    comandos_parque = ("/status", "/resumo", "/menores", "/ranking", "/teste_alertas",
+                       "/fechadas", "/lotacao", "/plano", "/chuva")
+    if cmd not in comandos_parque:
         return HELP
     if cmd == "/teste_alertas" and not arg:
         return "Use <code>/teste_alertas &lt;parque&gt;</code>. Veja /parques."
@@ -1001,6 +1503,13 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
             return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
         return format_ranking_atual(ranking[:10], config)
 
+    # Plano/chuva usam o parque realmente detectado quando há GPS recente.
+    if cmd in ("/plano", "/chuva") and not arg and coords:
+        posicao = ultima_localizacao(conn)
+        detectado = localizacao.parque_mais_proximo(posicao, coords) if posicao else None
+        if detectado in park_ids:
+            arg = detectado
+
     if arg:
         matches = match_parks(arg, park_ids)
         if not matches:
@@ -1016,6 +1525,10 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
                 "Hoje não é dia de parque — o monitor está só coletando histórico.\n"
                 f"Use <code>{cmd} &lt;parque&gt;</code> para ver qualquer um. Veja /parques."
             )
+        if len(do_dia) > 1:
+            opcoes = "\n".join(f"• {notifier.esc(p)}" for p in do_dia)
+            return ("Há mais de um parque programado hoje. Especifique no comando:\n"
+                    + opcoes)
         park_name = do_dia[0]
 
     if cmd == "/resumo":
@@ -1037,6 +1550,14 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
         ranking = [(wait, ride, park_name)
                    for wait, ride in maiores_filas(payload, config, 10)]
         return format_ranking_atual(ranking, config)
+    if cmd == "/fechadas":
+        return format_fechadas(conn, config, park_name, payload)
+    if cmd == "/lotacao":
+        return format_lotacao(conn, config, park_name, payload)
+    if cmd == "/plano":
+        return format_plano(conn, config, park_name, payload, coords or {})
+    if cmd == "/chuva":
+        return format_chuva(conn, config, park_name, payload, coords or {})
     return format_status(park_name, payload, config, conn)
 
 
@@ -1049,22 +1570,23 @@ def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
         offset = update["update_id"] + 1
         message = update.get("message") or update.get("edited_message") or {}
         chat_id = message.get("chat", {}).get("id")
-        localizacao = message.get("location")
+        location_data = message.get("location")
         text = message.get("text", "")
-        if not text and not localizacao:
+        if not text and not location_data:
             continue
         if not notifier.is_authorized(chat_id):
             log.warning("Comando ignorado de chat não autorizado: %s", chat_id)
             continue
 
-        if localizacao:
+        if location_data:
             log.info("Localização recebida")
+            guardar_localizacao(conn, location_data["latitude"], location_data["longitude"])
             notifier.send(responder_localizacao(
-                localizacao["latitude"], localizacao["longitude"],
+                location_data["latitude"], location_data["longitude"],
                 conn, config, park_ids, coords))
             continue
 
-        resposta = handle_command(text, conn, config, park_ids)
+        resposta = handle_command(text, conn, config, park_ids, coords)
         if resposta:
             log.info("Comando atendido: %s", text.split()[0])
             # /perto só é útil com o botão de localização junto
@@ -1117,9 +1639,22 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
         payloads[park_name] = payload
 
         rows = []
+        parque_operava = parque_operava_no_ultimo_ciclo(conn, park_name)
+        estado_atual = estado_parque_payload(payload, obsoleto_min)
+        ultimo_ts = conn.execute(
+            "SELECT MAX(ts) FROM wait_times WHERE park = ?", (park_name,)
+        ).fetchone()[0]
+        estados_anteriores = dict(conn.execute(
+            "SELECT ride, is_open FROM wait_times WHERE park = ? AND ts = ?",
+            (park_name, ultimo_ts),
+        ).fetchall()) if ultimo_ts else {}
         for land, ride in iter_rides(payload):
+            anterior = estados_anteriores.get(ride["name"])
             rows.append(
                 (ts, park_name, land, ride["name"], ride.get("wait_time"), int(ride.get("is_open", False)))
+            )
+            maybe_alertar_reabertura(
+                conn, config, park_name, ride, anterior, parque_operava, estado_atual
             )
 
             # alerta somente no parque do dia, fora do quiet hours
@@ -1171,6 +1706,32 @@ def enviar_heartbeat(payloads: dict[str, dict], park_ids: dict[str, int]) -> Non
     except Exception as exc:  # noqa: BLE001 — heartbeat nunca derruba o monitor
         # Não inclua a exceção inteira: ela pode repetir a URL com o token Push.
         log.warning("Falha ao enviar heartbeat ao Uptime Kuma (%s)", type(exc).__name__)
+
+
+def maybe_maintain_db(conn: sqlite3.Connection, config: dict) -> None:
+    """Manutenção diária curta; histórico bruto só expira depois da viagem."""
+    hoje = utc_now().date().isoformat()
+    if conn.execute("SELECT 1 FROM database_maintenance WHERE ran_on = ?", (hoje,)).fetchone():
+        return
+    apagadas = 0
+    corte_logs = (utc_now() - timedelta(days=90)).isoformat()
+    for tabela, coluna in (("reopen_alerts", "sent_at"), ("route_rejections", "ts"),
+                           ("alerts_sent", "sent_at")):
+        apagadas += conn.execute(
+            f"DELETE FROM {tabela} WHERE {coluna} < ?", (corte_logs,)
+        ).rowcount
+    retencao = max(30, int(config.get("database", {}).get("raw_retention_days", 180)))
+    try:
+        fim_viagem = date.fromisoformat(config["trip"]["end"])
+    except (KeyError, ValueError):
+        fim_viagem = date.max
+    if utc_now().date() > fim_viagem + timedelta(days=30):
+        corte_raw = (utc_now() - timedelta(days=retencao)).isoformat()
+        apagadas += conn.execute("DELETE FROM wait_times WHERE ts < ?", (corte_raw,)).rowcount
+    conn.execute("INSERT INTO database_maintenance (ran_on, deleted_rows) VALUES (?, ?)",
+                 (hoje, apagadas))
+    conn.execute("PRAGMA optimize")
+    conn.commit()
 
 
 def main() -> None:
@@ -1241,6 +1802,10 @@ def main() -> None:
             maybe_send_daily_summary(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — resumo quebrado não pode parar a coleta
             log.exception("Erro no resumo diário")
+        try:
+            maybe_maintain_db(conn, config)
+        except Exception:  # noqa: BLE001 — manutenção nunca derruba o monitor
+            log.exception("Erro na manutenção do SQLite")
         offset = wait_serving_commands(offset, conn, config, park_ids,
                                        POLL_INTERVAL_SECONDS, coords)
 

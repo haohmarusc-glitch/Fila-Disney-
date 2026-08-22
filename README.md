@@ -78,6 +78,12 @@ local por distância.
 | `/ranking <parque>` | Maiores filas agora em um parque específico |
 | `/ranking hoje` | Atrações mais concorridas hoje, pela média do histórico |
 | `/ranking semana` | Atrações mais concorridas nos últimos 7 dias |
+| `/fechadas <parque>` | Quebras atuais, duração observada e instabilidade |
+| `/vigiar <atração>` | Alerta de uso único quando a atração reabrir |
+| `/confianca <atração>` | Compara a fila publicada com percentis equivalentes |
+| `/lotacao <parque>` | Pressão estimada pelas filas e atrações fechadas |
+| `/plano` | Próximas três atrações por fila + caminhada; requer GPS recente |
+| `/chuva` | Opções internas confirmadas por fila + caminhada |
 | `/parques` | Lista os parques que o monitor resolveu na API |
 | `/perto` (ou `/agora`) | Melhor atração agora por **fila + caminhada**, a partir da sua localização |
 | `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
@@ -90,15 +96,43 @@ estão abaixo do threshold e 🔒 nas fechadas. A seta mostra a tendência dos
 últimos 35 minutos: `↓12` caiu 12 min, `↑8` subiu 8, `→` estável. Dentro do
 parque "31 min e subindo" e "31 min e caindo" são decisões opostas.
 
-O `/perto` identifica o parque pela **atração conhecida mais próxima** no
-`coords.json`. O centro do parque não decide, pois seria ambíguo entre Universal
-Studios e Islands of Adventure. A distância máxima funciona apenas como
-porteiro para rejeitar uma localização fora dos parques.
+O `/perto` identifica o parque pelo **contorno formado pelas atrações** no
+`coords.json`, com margem curta para GPS e entradas. Isso evita que Yacht Club,
+Pop Century e parques aquáticos sejam confundidos com um parque temático.
 
 Filas de **single rider** e virtuais ficam fora do alerta e do `/status`: a API
 publica cada uma como atração separada, o nome casa por match parcial com a
 atração de verdade e o tempo vem 0 quando não há dado — o que viraria alerta
 falso de "0 min, vai agora". Elas continuam sendo gravadas no histórico.
+
+## Inteligência operacional
+
+`/fechadas` não confunde madrugada ou pré-abertura com atrações quebradas. O
+bot só analisa interrupções quando ao menos 25% das atrações estavam abertas e
+omite estados majoritariamente obsoletos. `/vigiar` alerta somente depois de uma
+transição observada `fechada → aberta`; reiniciar o container não dispara
+reaberturas falsas. A watchlist do parque do dia também recebe reabertura
+automática, com cooldown de 90 minutos.
+
+`/confianca` usa P25, mediana, P75 e P90 do mesmo dia da semana e hora local,
+com mínimo de 12 amostras. O resultado é contexto histórico, não “fila real”.
+`/lotacao` compara a distribuição atual com o próprio parque e informa quando
+fechamentos simultâneos tornam a operação instável; não é contagem de pessoas.
+
+`/plano` guarda a localização compartilhada por até três horas e recalcula três
+etapas com a fotografia atual de fila + caminhada. Não promete prever duas
+horas: deve ser executado novamente depois de cada atração. `/chuva` usa uma
+lista conservadora de experiências internas; ausência de metadado nunca vira
+uma suposição de proteção.
+
+O Park-to-Park USF ↔ IOA está ativo porque o ingresso da viagem permite a troca.
+O cálculo inclui fila atual do Hogwarts Express, caminhada até a estação,
+embarque, viagem, caminhada no outro parque e fila da atração. A troca só é
+recomendada com economia estimada de pelo menos 15 minutos.
+
+O SQLite executa `PRAGMA optimize` diariamente, limpa logs operacionais antigos
+e preserva todo o histórico bruto durante a viagem. A retenção de 180 dias só
+passa a valer 30 dias depois do término configurado da viagem.
 
 ## Alerta das menores filas
 

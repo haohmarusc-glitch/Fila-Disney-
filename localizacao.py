@@ -27,6 +27,7 @@ log = logging.getLogger("localizacao")
 VELOCIDADE_M_POR_MIN = 84      # 5 km/h
 FATOR_CAMINHO = 1.3            # linha reta vira caminho real dentro do parque
 RAIO_PARQUE_METROS = 2500      # além disso você não está nesse parque
+MARGEM_CONTORNO_PARQUE_METROS = 250
 MAPS_URL = ("https://www.google.com/maps/dir/?api=1"
             "&origin={o_lat},{o_lon}&destination={d_lat},{d_lon}&travelmode=walking")
 GOOGLE_ROUTES_URL = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
@@ -54,6 +55,16 @@ _rota_cache = {}
 # fila+caminhada, mas nao pode mudar a nota da mesma fila e tendencia.
 PESOS_QUALIDADE_FILA = {"historico": 0.6, "tendencia": 0.4}
 MIN_AMOSTRAS_FAIXA = 12
+PERFIL_LOOKBACK_DIAS = 56
+USF = "Universal Studios At Universal Orlando"
+IOA = "Islands Of Adventure At Universal Orlando"
+PARK_TO_PARK_PADRAO = {
+    "enabled": False,
+    "parks": {USF: IOA, IOA: USF},
+    "min_savings_minutes": 15,
+    "train_ride_minutes": 4,
+    "boarding_buffer_minutes": 4,
+}
 
 
 def load_coords() -> dict:
@@ -249,22 +260,32 @@ def perfil_historico(conn, config: dict, park: str, ride: str,
         return None
     momento = agora or monitor.now_park(config)
     fuso = ZoneInfo(config.get("trip", {}).get("timezone", "America/New_York"))
-    valores = []
-    rows = conn.execute(
+    corte = (momento.astimezone(dt.timezone.utc).replace(tzinfo=None)
+             - dt.timedelta(days=PERFIL_LOOKBACK_DIAS)).isoformat()
+    def filtrar(rows):
+        valores = []
+        for timestamp, espera in rows:
+            try:
+                instante = dt.datetime.fromisoformat(timestamp)
+                if instante.tzinfo is None:
+                    instante = instante.replace(tzinfo=dt.timezone.utc)
+                local = instante.astimezone(fuso)
+            except (TypeError, ValueError):
+                continue
+            if local.weekday() == momento.weekday() and local.hour == momento.hour:
+                valores.append(int(espera))
+        return valores
+
+    base_sql = (
         "SELECT ts, wait_time FROM wait_times "
-        "WHERE park = ? AND ride = ? AND is_open = 1 AND wait_time IS NOT NULL",
-        (park, ride),
-    ).fetchall()
-    for timestamp, espera in rows:
-        try:
-            instante = dt.datetime.fromisoformat(timestamp)
-            if instante.tzinfo is None:
-                instante = instante.replace(tzinfo=dt.timezone.utc)
-            local = instante.astimezone(fuso)
-        except (TypeError, ValueError):
-            continue
-        if local.weekday() == momento.weekday() and local.hour == momento.hour:
-            valores.append(int(espera))
+        "WHERE park = ? AND ride = ? AND is_open = 1 AND wait_time IS NOT NULL"
+    )
+    rows = conn.execute(base_sql + " AND ts >= ?", (park, ride, corte)).fetchall()
+    valores = filtrar(rows)
+    # Prefere uma janela recente para acompanhar a sazonalidade, mas não joga
+    # fora uma base madura quando ainda faltam 12 amostras recentes no balde.
+    if len(valores) < MIN_AMOSTRAS_FAIXA:
+        valores = filtrar(conn.execute(base_sql, (park, ride)).fetchall())
     if len(valores) < MIN_AMOSTRAS_FAIXA:
         return None
 
@@ -288,9 +309,9 @@ def classificar_fila(fila: int, perfil: dict | None) -> str | None:
         return "🟢 pequena para este horário"
     if fila <= perfil["mediana"]:
         return "🟡 abaixo do normal"
-    if fila < perfil["p75"]:
+    if fila <= perfil["p75"]:
         return "🟠 acima do normal"
-    if fila < perfil["p90"]:
+    if fila <= perfil["p90"]:
         return "🔴 grande para este horário"
     return "🔥 excepcionalmente grande"
 
@@ -304,21 +325,85 @@ def desvio_da_media(conn, park: str, ride: str, fila_agora: int,
 
 
 def parque_mais_proximo(posicao: tuple[float, float], coords: dict) -> str | None:
-    """Identifica o parque pela atração mais próxima, não pelo centro.
+    """Identifica parque por contorno das atrações, com margem curta de GPS.
 
-    Centros são ambíguos em complexos vizinhos como Universal Studios e
-    Islands of Adventure. O raio continua sendo apenas um porteiro genérico
-    para rejeitar posições completamente fora dos parques.
+    Um raio de 2,5 km aceitava Yacht Club, Pop Century e parques aquáticos.
+    O casco convexo mantém a separação entre USF/IOA e a margem cobre entradas
+    e bordas não representadas pelas atrações da watchlist.
     """
-    candidatos = [
-        (distancia_metros(posicao, tuple(coord)), parque)
-        for parque, atracoes in coords.get("rides", {}).items()
-        for coord in atracoes.values()
-    ]
-    if not candidatos:
-        return None
-    distancia, parque = min(candidatos)
-    return parque if distancia <= RAIO_PARQUE_METROS else None
+    candidatos = []
+    for parque, atracoes in coords.get("rides", {}).items():
+        pontos = [tuple(coord) for coord in atracoes.values()]
+        if not pontos:
+            continue
+        casco = _casco_convexo(pontos)
+        distancia = _distancia_ao_poligono(posicao, casco)
+        if distancia <= MARGEM_CONTORNO_PARQUE_METROS:
+            candidatos.append((distancia, parque))
+    return min(candidatos)[1] if candidatos else None
+
+
+def _casco_convexo(pontos):
+    """Casco convexo monotônico; coordenadas são pequenas o bastante para ordenar em graus."""
+    unicos = sorted({(p[1], p[0]) for p in pontos})  # x=lon, y=lat
+    if len(unicos) <= 2:
+        return [(y, x) for x, y in unicos]
+
+    def cruz(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    baixo = []
+    for p in unicos:
+        while len(baixo) >= 2 and cruz(baixo[-2], baixo[-1], p) <= 0:
+            baixo.pop()
+        baixo.append(p)
+    alto = []
+    for p in reversed(unicos):
+        while len(alto) >= 2 and cruz(alto[-2], alto[-1], p) <= 0:
+            alto.pop()
+        alto.append(p)
+    return [(y, x) for x, y in baixo[:-1] + alto[:-1]]
+
+
+def _dentro_poligono(ponto, poligono):
+    if len(poligono) < 3:
+        return False
+    lat, lon = ponto
+    dentro = False
+    j = len(poligono) - 1
+    for i, (lat_i, lon_i) in enumerate(poligono):
+        lat_j, lon_j = poligono[j]
+        cruza = ((lat_i > lat) != (lat_j > lat)) and (
+            lon < (lon_j - lon_i) * (lat - lat_i) / (lat_j - lat_i) + lon_i
+        )
+        if cruza:
+            dentro = not dentro
+        j = i
+    return dentro
+
+
+def _distancia_segmento_metros(ponto, a, b):
+    """Projeção local equiretangular suficiente para segmentos dentro de parque."""
+    lat0 = math.radians(ponto[0])
+    escala_x = 111_320 * math.cos(lat0)
+    escala_y = 110_540
+    ax, ay = (a[1] - ponto[1]) * escala_x, (a[0] - ponto[0]) * escala_y
+    bx, by = (b[1] - ponto[1]) * escala_x, (b[0] - ponto[0]) * escala_y
+    dx, dy = bx - ax, by - ay
+    if dx == dy == 0:
+        return math.hypot(ax, ay)
+    t = max(0, min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy)))
+    return math.hypot(ax + t * dx, ay + t * dy)
+
+
+def _distancia_ao_poligono(ponto, poligono):
+    if _dentro_poligono(ponto, poligono):
+        return 0.0
+    if len(poligono) == 1:
+        return distancia_metros(ponto, poligono[0])
+    return min(_distancia_segmento_metros(ponto, poligono[i],
+                                          poligono[(i + 1) % len(poligono)])
+               for i in range(len(poligono)))
 
 
 def coordenada_atracao(do_parque: dict, nome: str):
@@ -407,6 +492,68 @@ def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=No
         posicao, park_name, payload, config, coords, conn)]
 
 
+def fila_hogwarts(payload: dict, limite_obsoleto: int) -> int | None:
+    for _land, ride in monitor.iter_rides(payload):
+        nome = ride.get("name", "").lower().replace("™", "").replace("®", "")
+        if "hogwarts express" not in nome or "station" not in nome:
+            continue
+        if not ride.get("is_open") or monitor.leitura_obsoleta(ride, limite_obsoleto):
+            continue
+        fila = ride.get("wait_time")
+        if isinstance(fila, int) and fila >= 0:
+            return fila
+    return None
+
+
+def config_park_to_park(config: dict) -> dict:
+    informado = config.get("park_to_park", {})
+    saida = {**PARK_TO_PARK_PADRAO, **informado}
+    saida["parks"] = {**PARK_TO_PARK_PADRAO["parks"], **informado.get("parks", {})}
+    return saida
+
+
+def avaliar_troca_park_to_park(posicao, park_name, payload_atual, payload_outro,
+                               config, coords, conn=None):
+    """Sugere o outro parque somente com ingresso habilitado e economia verificável."""
+    cfg = config_park_to_park(config)
+    outro_parque = cfg.get("parks", {}).get(park_name) if cfg.get("enabled") else None
+    if not outro_parque:
+        return None
+    estacoes = coords.get("park_to_park", {}).get("stations", {})
+    partida, chegada = estacoes.get(park_name), estacoes.get(outro_parque)
+    if not partida or not chegada:
+        return None
+    limite = config.get("alert", {}).get(
+        "max_staleness_minutes", monitor.OBSOLETO_MINUTOS_PADRAO)
+    fila_trem = fila_hogwarts(payload_atual, limite)
+    if fila_trem is None:
+        return None
+    atual = next((i for i in ranking_por_tempo_total(
+        posicao, park_name, payload_atual, config, coords, conn) if i[0] is not None), None)
+    outro = next((i for i in ranking_por_tempo_total(
+        tuple(chegada), outro_parque, payload_outro, config, coords, conn) if i[0] is not None), None)
+    if atual is None or outro is None:
+        return None
+    chave = "__hogwarts_station__"
+    rota = rotas_google(posicao, park_name, [(chave, tuple(partida))], conn)
+    if chave in rota:
+        caminhada_estacao, metros_estacao = rota[chave]
+    else:
+        metros_estacao = distancia_metros(posicao, tuple(partida))
+        caminhada_estacao = minutos_a_pe(metros_estacao)
+    viagem = max(0, int(cfg.get("train_ride_minutes", 4)))
+    embarque = max(0, int(cfg.get("boarding_buffer_minutes", 4)))
+    total_outro = caminhada_estacao + fila_trem + viagem + embarque + outro[0]
+    economia = atual[0] - total_outro
+    if economia < max(0, int(cfg.get("min_savings_minutes", 15))):
+        return None
+    return {"park": outro_parque, "ride": outro[4], "total": total_outro,
+            "ride_wait": outro[1], "walk_to_station": caminhada_estacao,
+            "walk_to_ride": outro[2], "station_meters": metros_estacao,
+            "train_wait": fila_trem, "train_ride": viagem,
+            "boarding_buffer": embarque, "savings": economia}
+
+
 def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
     """Anexa o score a cada item do ranking, mantendo a ordem por tempo total.
 
@@ -432,7 +579,8 @@ def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
     return saida
 
 
-def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5) -> str:
+def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5,
+                 troca=None) -> str:
     ranking_detalhado = _ranking_detalhado(
         posicao, park_name, payload, config, coords, conn)
     ranking = [item[:6] for item in ranking_detalhado]
@@ -475,6 +623,13 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
         rota = MAPS_URL.format(o_lat=posicao[0], o_lon=posicao[1],
                                d_lat=destino_rota[0], d_lon=destino_rota[1])
         linhas += ["", f'🗺️ <a href="{rota}">Abrir rota até {notifier.esc(melhor[4])}</a>']
+    if troca:
+        linhas += ["", f"🚂 <b>Vale trocar para {notifier.esc(troca['park'])}</b>",
+                   f"<b>{notifier.esc(troca['ride'])}</b> — <b>{troca['total']} min</b> total",
+                   (f"     estação {troca['walk_to_station']} min · trem: fila "
+                    f"{troca['train_wait']} + viagem {troca['train_ride']} min · "
+                    f"atração: caminhada {troca['walk_to_ride']} + fila {troca['ride_wait']} min"),
+                   f"     economia estimada: <b>{troca['savings']} min</b>"]
     usadas = sum(item[6] == "google" for item in ranking_detalhado[:limite])
     estimadas = sum(item[6] == "estimativa" for item in ranking_detalhado[:limite])
     aviso = f"Caminhada: {usadas} rota(s) Google · {estimadas} estimativa(s) interna(s)."
