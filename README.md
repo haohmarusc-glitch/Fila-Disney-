@@ -373,10 +373,15 @@ caso o bot lista as opções em vez de escolher. O Universal Studios precisa do
 Cada mensagem vale por um comando: se você mandar várias linhas de uma vez, só
 a primeira é executada.
 
-Só o `TELEGRAM_CHAT_ID` configurado é atendido; comando de qualquer outro chat
-é ignorado com warning no log. Comandos mandados enquanto o container estava
-fora do ar são descartados na subida, para o bot não despejar um monte de
-resposta atrasada de uma vez.
+O `TELEGRAM_CHAT_ID` configurado continua autorizado automaticamente. Para
+liberar familiares sem cadastrar IDs manualmente, defina uma senha longa e
+exclusiva em `FAMILY_ACCESS_PASSWORD` no `.env`. Cada pessoa envia
+`/entrar <senha>` uma vez no chat privado com o bot; o chat fica autorizado no
+SQLite persistente. Localizações e vigias ficam separadas por chat, e respostas
+e testes voltam para quem executou o comando. Sem essa variável, o acesso
+continua restrito ao chat principal. Comandos mandados enquanto o container
+estava fora do ar são descartados na subida, para o bot não despejar respostas
+atrasadas de uma vez.
 
 ## Configuração (`watchlist.json`)
 
