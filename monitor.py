@@ -146,6 +146,19 @@ def init_db() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS route_rejections (
+            ts              TEXT NOT NULL,
+            park            TEXT NOT NULL,
+            ride            TEXT NOT NULL,
+            direct_meters   REAL NOT NULL,
+            route_meters    INTEGER NOT NULL,
+            route_minutes   INTEGER NOT NULL,
+            reason          TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     return conn
 
@@ -758,6 +771,8 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
         saude, coleta = "🔴", "nunca"
 
     alertas = conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0]
+    rotas_rejeitadas = conn.execute(
+        "SELECT COUNT(*) FROM route_rejections").fetchone()[0]
     do_dia = [p for p in is_alert_day(config) if p in park_ids]
     return "\n".join([
         f"{saude} <b>Monitor de filas</b>",
@@ -766,6 +781,7 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
         f"Parques resolvidos: {len(park_ids)}/{esperados}",
         f"Histórico: {total:,} leituras em {dias} dia(s) · {tamanho_mb:.1f} MB".replace(",", "."),
         f"Alertas já enviados: {alertas}",
+        f"Rotas implausíveis descartadas: {rotas_rejeitadas}",
         f"Versão: <code>{notifier.esc(APP_GIT_SHA)}</code>",
         f"Hoje: {notifier.esc(do_dia[0]) if do_dia else 'sem parque (modo coleta)'}",
         "",

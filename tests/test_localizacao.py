@@ -208,7 +208,8 @@ class TestRotasGoogleSeguras(BaseTeste):
             "duration": f"{segundos}s",
             "distanceMeters": metros_rota,
         }])
-        return self.loc.rotas_google(PORTAO, self.PARK, [("Atração", destino)])
+        return self.loc.rotas_google(
+            PORTAO, self.PARK, [("Atração", destino)], self.conn)
 
     def test_descarta_contorno_externo_da_pr_32(self):
         self.assertEqual(self.resposta(300, 1081, 1980), {})
@@ -219,8 +220,30 @@ class TestRotasGoogleSeguras(BaseTeste):
     def test_teto_especifico_do_ioa_prevalece(self):
         self.assertEqual(self.resposta(1000, 1500, 1200), {})
 
+    def test_folga_reduzida_do_ioa_rejeita_contorno_curto(self):
+        self.assertEqual(self.resposta(200, 650, 600), {})
+
     def test_preserva_contorno_interno_plausivel(self):
         self.assertEqual(self.resposta(233, 689, 600)["Atração"], (10, 689))
+
+    def test_registra_motivo_da_rejeicao(self):
+        self.resposta(300, 1081, 1980)
+        linha = self.conn.execute(
+            "SELECT park, ride, route_meters, reason FROM route_rejections"
+        ).fetchone()
+        self.assertEqual(linha, (self.PARK, "Atração", 1081,
+                                 "distancia_implausivel"))
+
+    def test_qualidade_da_fila_nao_depende_da_posicao(self):
+        self.loc.desvio_da_media = lambda *_args: 0.4
+        self.monitor.tendencia = lambda *_args: ("↓", -10)
+        base = (10, 5, 5, 300, "Hulk", (1, 1))
+        longe = (100, 5, 95, 6000, "Hulk", (1, 1))
+        score_perto = self.loc.com_score(
+            [base], self.PARK, self.config, self.conn)[0][1]
+        score_longe = self.loc.com_score(
+            [longe], self.PARK, self.config, self.conn)[0][1]
+        self.assertEqual(score_perto, score_longe)
 
     def test_ranking_ioa_cai_no_fallback_sem_inversao(self):
         nomes = {
@@ -253,7 +276,7 @@ class TestRotasGoogleSeguras(BaseTeste):
 
         self.requests.roteador_post = responder
         ranking = self.loc.ranking_por_tempo_total(
-            PORTAO, self.PARK, payload, self.config, coords)
+            PORTAO, self.PARK, payload, self.config, coords, self.conn)
         por_nome = {item[4]: item for item in ranking}
 
         self.assertLess(por_nome["Harry Potter and the Forbidden Journey"][2], 5)
@@ -279,6 +302,21 @@ class TestMensagemPerto(BaseTeste):
         self.assertIn("no total", texto)
         self.assertIn("🚶", texto)
         self.assertIn("google.com/maps/dir", texto)
+        self.assertIn("estimativa interna", texto)
+
+    def test_mensagem_identifica_rota_google(self):
+        self.loc.GOOGLE_MAPS_API_KEY = "chave-de-teste"
+        self.loc._rota_cache.clear()
+        self.requests.roteador_post = lambda _url, corpo: Resposta([
+            {"destinationIndex": indice, "condition": "ROUTE_EXISTS",
+             "duration": "120s", "distanceMeters": 150}
+            for indice, _destino in enumerate(corpo["destinations"])
+        ])
+        texto = self.loc.format_perto(
+            PORTAO, "Disney Hollywood Studios", self.payload,
+            self.config, COORDS, self.conn)
+        self.assertIn("rota Google", texto)
+        self.assertIn("qualidade da fila", texto)
 
     def test_sem_coords_json_orienta_rodar_o_script(self):
         r = self.monitor.responder_localizacao(

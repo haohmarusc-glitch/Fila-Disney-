@@ -166,16 +166,27 @@ watchlist ordenada por **fila + caminhada**, com link de rota:
 ```
 📍 Você está em Disney Hollywood Studios
 
-🥇 Toy Story Mania! — 27 min no total
-     fila 25 min ↓8 · 🚶 2 min (100 m)
-🥈 Slinky Dog Dash — 31 min no total
-     fila 20 min · 🚶 11 min (1000 m)
+🥇 Toy Story Mania! — 27 min no total · qualidade da fila ⭐ 82
+     fila 25 min ↓8 · 🚶 2 min (100 m, rota Google)
+🥈 Slinky Dog Dash — 31 min no total · qualidade da fila ⭐ 64
+     fila 20 min · 🚶 11 min (1000 m, estimativa interna)
 
 🗺️ Abrir rota até Toy Story Mania!
 ```
 
 O critério é o tempo total, não a menor fila: 25 min de fila do lado ganha de
 20 min do outro lado do parque.
+
+A medalha considera **fila + caminhada**. O ⭐ mede apenas a qualidade da fila
+para a mesma hora e dia da semana, combinada com a tendência; por isso não muda
+quando você muda de posição mantendo fila e tendência iguais. Cada caminhada
+identifica se veio de `rota Google` ou de `estimativa interna`.
+
+Rotas incompatíveis com a distância direta, duração ou tamanho do parque são
+descartadas individualmente. O IOA usa folga curta de 250 m; os demais parques
+mantêm tolerância maior por causa de lagos, entradas deslocadas e caminhos
+sinuosos. Cada descarte é gravado em `route_rejections` e o total aparece em
+`/health`, permitindo recalibrar os limites com dados reais.
 
 O bot **não** consegue puxar sua posição sozinho — você compartilha quando quer.
 
