@@ -26,6 +26,7 @@ import requests
 
 import localizacao  # noqa: E402 — ciclo resolvido: uso só dentro de funções
 import notifier
+import personagens
 
 logging.basicConfig(
     level=logging.INFO,
@@ -219,6 +220,25 @@ def init_db() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS ride_watch_subscriptions ("
         "chat_id TEXT NOT NULL, park TEXT NOT NULL, ride TEXT NOT NULL, "
         "created_at TEXT NOT NULL, PRIMARY KEY (chat_id, park, ride))"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS character_alert_preferences ("
+        "chat_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, "
+        "radius_meters INTEGER NOT NULL DEFAULT 500, updated_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS character_alerts ("
+        "chat_id TEXT NOT NULL, park TEXT NOT NULL, character_name TEXT NOT NULL, "
+        "sent_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_character_alerts_recent "
+        "ON character_alerts (chat_id, park, character_name, sent_at)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS character_last_checks ("
+        "chat_id TEXT PRIMARY KEY, latitude REAL NOT NULL, longitude REAL NOT NULL, "
+        "checked_at TEXT NOT NULL)"
     )
     if notifier.CHAT_ID:
         principal = str(notifier.CHAT_ID)
@@ -1372,6 +1392,8 @@ HELP = (
     "/resumo &lt;parque&gt; — previsão de um parque específico\n"
     "/parques — parques monitorados\n"
     "/perto — melhor atração agora considerando fila + caminhada\n"
+    "/personagens_perto — encontros abertos perto da sua localização\n"
+    "/alerta_personagens on|off — liga ou desliga avisos por proximidade\n"
     "/health — estado do monitor (coleta, banco, parques)\n"
     "/teste_alertas &lt;parque&gt; — envia os três alertas com prefixo de teste\n"
     "/teste_park_to_park — simula no Telegram uma recomendação entre parques\n"
@@ -1460,6 +1482,125 @@ def responder_localizacao(latitude: float, longitude: float, conn: sqlite3.Conne
         posicao, park_name, payload, config, coords, conn, troca=troca)
 
 
+def configurar_alerta_personagens(conn: sqlite3.Connection, chat_id, enabled: bool,
+                                  raio: int = personagens.RAIO_PADRAO_METROS) -> str:
+    raio = max(200, min(1000, int(raio)))
+    conn.execute(
+        "INSERT OR REPLACE INTO character_alert_preferences "
+        "(chat_id, enabled, radius_meters, updated_at) VALUES (?, ?, ?, ?)",
+        (str(chat_id), int(enabled), raio, utc_now().isoformat()),
+    )
+    conn.commit()
+    if enabled:
+        return (f"✅ Alertas de personagens ativados em um raio aproximado de {raio} m. "
+                "Envie sua localização normal ou ao vivo.")
+    return "🔕 Alertas automáticos de personagens desativados."
+
+
+def preferencia_alerta_personagens(conn: sqlite3.Connection, chat_id) -> tuple[bool, int]:
+    row = conn.execute(
+        "SELECT enabled, radius_meters FROM character_alert_preferences WHERE chat_id = ?",
+        (str(chat_id),),
+    ).fetchone()
+    return (bool(row[0]), int(row[1])) if row else (True, personagens.RAIO_PADRAO_METROS)
+
+
+def buscar_personagens_proximos(latitude: float, longitude: float, conn: sqlite3.Connection,
+                                park_ids: dict[str, int], coords: dict,
+                                raio: int = personagens.RAIO_PADRAO_METROS) -> tuple[str | None, list[dict]]:
+    position = (latitude, longitude)
+    park = localizacao.parque_mais_proximo(position, coords)
+    if park is None or park not in park_ids:
+        return park, []
+    payload = fetch_queue_times(park_ids[park])
+    return park, personagens.proximos(position, park, payload, coords, raio)
+
+
+def format_personagens_proximos(park: str | None, items: list[dict], raio: int) -> str:
+    if park is None:
+        return "📍 Não achei um parque monitorado perto da sua última localização."
+    if not items:
+        return (f"🧑‍🎤 Nenhum encontro aberto e mapeado em até {raio} m agora.\n"
+                "Os pontos são aproximados; confirme horários no aplicativo oficial.")
+    lines = [f"🧑‍🎤 <b>Personagens perto de você</b> — {notifier.esc(park)}", ""]
+    for item in items[:8]:
+        wait = f" · fila {item['wait']} min" if item["wait"] is not None else ""
+        url = personagens.maps_url(item["name"], park)
+        lines.append(
+            f"• <b>{notifier.esc(item['name'])}</b> — ~{item['meters']} m "
+            f"(~{item['walk']} min){wait}\n  <a href=\"{url}\">Abrir no Google Maps</a>"
+        )
+    lines += ["", "Local do encontro aproximado; disponibilidade pela Queue-Times.com."]
+    return "\n".join(lines)
+
+
+def _alerta_personagem_recente(conn: sqlite3.Connection, chat_id, park: str,
+                               name: str) -> bool:
+    since = (utc_now() - timedelta(minutes=personagens.COOLDOWN_MINUTOS)).isoformat()
+    return conn.execute(
+        "SELECT 1 FROM character_alerts WHERE chat_id = ? AND park = ? "
+        "AND character_name = ? AND sent_at >= ? LIMIT 1",
+        (str(chat_id), park, name, since),
+    ).fetchone() is not None
+
+
+def enviar_alertas_personagens(latitude: float, longitude: float, conn: sqlite3.Connection,
+                               park_ids: dict[str, int], coords: dict, chat_id) -> int:
+    enabled, raio = preferencia_alerta_personagens(conn, chat_id)
+    if not enabled:
+        return 0
+    previous = conn.execute(
+        "SELECT latitude, longitude, checked_at FROM character_last_checks WHERE chat_id = ?",
+        (str(chat_id),),
+    ).fetchone()
+    if previous:
+        try:
+            age = utc_now() - datetime.fromisoformat(previous[2])
+        except (TypeError, ValueError):
+            age = timedelta.max
+        moved = personagens.distancia_metros((previous[0], previous[1]), (latitude, longitude))
+        if moved < 75 and age < timedelta(minutes=2):
+            return 0
+    conn.execute(
+        "INSERT OR REPLACE INTO character_last_checks "
+        "(chat_id, latitude, longitude, checked_at) VALUES (?, ?, ?, ?)",
+        (str(chat_id), latitude, longitude, utc_now().isoformat()),
+    )
+    conn.commit()
+    try:
+        park, items = buscar_personagens_proximos(
+            latitude, longitude, conn, park_ids, coords, raio)
+    except requests.RequestException as exc:
+        log.warning("Busca de personagens indisponível: %s", exc)
+        return 0
+    if not park:
+        return 0
+    sent = 0
+    for item in items[:3]:
+        if _alerta_personagem_recente(conn, chat_id, park, item["name"]):
+            continue
+        wait = f"\n⏱ Fila informada: <b>{item['wait']} min</b>" if item["wait"] is not None else ""
+        text = (
+            f"📍 <b>Personagem próximo</b>\n"
+            f"🧑‍🎤 <b>{notifier.esc(item['name'])}</b>\n"
+            f"🚶 Aproximadamente {item['meters']} m · {item['walk']} min{wait}\n"
+            "Ponto oficial aproximado; confirme a disponibilidade no app do parque."
+        )
+        markup = {"inline_keyboard": [[
+            {"text": "🗺 Google Maps", "url": personagens.maps_url(item["name"], park)}
+        ]]}
+        if notifier.send(text, markup, chat_id=chat_id):
+            conn.execute(
+                "INSERT INTO character_alerts (chat_id, park, character_name, sent_at) "
+                "VALUES (?, ?, ?, ?)",
+                (str(chat_id), park, item["name"], utc_now().isoformat()),
+            )
+            sent += 1
+    if sent:
+        conn.commit()
+    return sent
+
+
 def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:
     """Parques cujo nome contém a busca (mesmo espírito do match da watchlist)."""
     q = query.strip().lower()
@@ -1525,6 +1666,27 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         return HELP
     if cmd in ("/perto", "/agora"):
         return PEDIR_LOCALIZACAO
+    if cmd == "/alerta_personagens":
+        option = arg.lower()
+        if option in ("on", "ligar", "ativar"):
+            return configurar_alerta_personagens(conn, chat_id, True)
+        if option in ("off", "desligar", "desativar"):
+            return configurar_alerta_personagens(conn, chat_id, False)
+        enabled, raio = preferencia_alerta_personagens(conn, chat_id)
+        state = "ativados" if enabled else "desativados"
+        return f"Alertas de personagens: <b>{state}</b> · raio aproximado {raio} m."
+    if cmd == "/personagens_perto":
+        position = ultima_localizacao(conn, chat_id=chat_id)
+        if position is None:
+            return ("📍 Envie sua localização primeiro pelo botão do Telegram e tente "
+                    "<code>/personagens_perto</code> novamente.")
+        _enabled, raio = preferencia_alerta_personagens(conn, chat_id)
+        try:
+            park, items = buscar_personagens_proximos(
+                position[0], position[1], conn, park_ids, coords or {}, raio)
+        except requests.RequestException:
+            return "Não consegui consultar os personagens agora. Tente novamente em 1 min."
+        return format_personagens_proximos(park, items, raio)
     if cmd == "/health":
         return format_health(conn, config, park_ids)
     if cmd == "/teste_park_to_park":
@@ -1672,6 +1834,7 @@ def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
     coords = coords if coords is not None else {"parks": {}, "rides": {}}
     for update in notifier.get_updates(offset, timeout=timeout):
         offset = update["update_id"] + 1
+        edited_location = "edited_message" in update
         message = update.get("message") or update.get("edited_message") or {}
         chat_id = message.get("chat", {}).get("id")
         location_data = message.get("location")
@@ -1693,12 +1856,16 @@ def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
             continue
 
         if location_data:
-            log.info("Localização recebida")
+            log.info("Localização %srecebida", "ao vivo atualizada " if edited_location else "")
             guardar_localizacao(
                 conn, location_data["latitude"], location_data["longitude"], chat_id)
-            notifier.send(responder_localizacao(
+            if not edited_location:
+                notifier.send(responder_localizacao(
+                    location_data["latitude"], location_data["longitude"],
+                    conn, config, park_ids, coords), chat_id=chat_id)
+            enviar_alertas_personagens(
                 location_data["latitude"], location_data["longitude"],
-                conn, config, park_ids, coords), chat_id=chat_id)
+                conn, park_ids, coords, chat_id)
             continue
 
         resposta = handle_command(text, conn, config, park_ids, coords, chat_id)
