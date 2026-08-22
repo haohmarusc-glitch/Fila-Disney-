@@ -414,7 +414,8 @@ class TestMensagemPerto(BaseTeste):
                 "location": {"latitude": PORTAO[0], "longitude": PORTAO[1]}}}]})
             if "getUpdates" in url else Resposta(self.payload))
         self.monitor.serve_commands(None, self.conn, self.config, self.parques, 0, COORDS)
-        self.assertEqual(self.enviadas(), [])
+        self.assertEqual(len(self.enviadas()), 1)
+        self.assertIn("Acesso restrito", self.enviadas()[0])
 
     def test_comando_perto_pede_localizacao(self):
         r = self.monitor.handle_command("/perto", self.conn, self.config, self.parques)
