@@ -506,6 +506,84 @@ def format_menores(park_name: str, payload: dict, config: dict, limite: int) -> 
     return "\n".join(linhas)
 
 
+def maiores_filas(payload: dict, config: dict, limite: int) -> list[tuple[int, str]]:
+    """Maiores filas abertas e atuais, ignorando filas paralelas sem dado confiável."""
+    limite_obsoleto = config.get("alert", {}).get(
+        "max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO
+    )
+    abertas = []
+    for _land, ride in iter_rides(payload):
+        nome = ride["name"]
+        wait = ride.get("wait_time")
+        if (fila_paralela(nome) or not ride.get("is_open") or wait is None
+                or leitura_obsoleta(ride, limite_obsoleto)):
+            continue
+        abertas.append((wait, nome))
+    abertas.sort(key=lambda item: (-item[0], item[1]))
+    return abertas[:limite]
+
+
+def format_ranking_atual(rankings: list[tuple[int, str, str]], config: dict) -> str:
+    """Ranking atual de um ou vários parques."""
+    if not rankings:
+        return "🏆 <b>Maiores filas agora</b>\n\nNenhuma atração aberta com dado atual."
+    agora = now_park(config).strftime("%Hh%M")
+    linhas = ["🏆 <b>Maiores filas agora</b>", f"🕒 {agora} no horário do parque", ""]
+    for posicao, (wait, ride, park) in enumerate(rankings, 1):
+        linhas.append(
+            f"<b>{posicao}. {notifier.esc(ride)}</b> — {wait} min\n"
+            f"     {notifier.esc(park)}"
+        )
+    linhas += ["", "Ranking por tempo de espera, não por número de visitantes.",
+               "Powered by Queue-Times.com"]
+    return "\n".join(linhas)
+
+
+def periodo_ranking(config: dict, dias: int) -> tuple[str, str]:
+    """Limites UTC-naive para hoje ou últimos N dias no fuso do parque."""
+    agora = now_park(config)
+    inicio_local = datetime.combine(
+        agora.date() - timedelta(days=dias - 1), datetime.min.time(), tzinfo=agora.tzinfo
+    )
+    inicio = inicio_local.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+    fim = agora.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+    return inicio, fim
+
+
+def ranking_historico(conn: sqlite3.Connection, config: dict, dias: int,
+                      limite: int = 10) -> list[tuple[float, int, int, str, str]]:
+    """Atrações mais concorridas por média, com pico e tamanho da amostra."""
+    inicio, fim = periodo_ranking(config, dias)
+    rows = conn.execute(
+        """
+        SELECT AVG(wait_time), MAX(wait_time), COUNT(*), ride, park
+        FROM wait_times
+        WHERE ts >= ? AND ts <= ? AND is_open = 1 AND wait_time IS NOT NULL
+        GROUP BY park, ride
+        """,
+        (inicio, fim),
+    ).fetchall()
+    validas = [row for row in rows if not fila_paralela(row[3])]
+    validas.sort(key=lambda row: (-row[0], -row[1], row[3], row[4]))
+    return validas[:limite]
+
+
+def format_ranking_historico(conn: sqlite3.Connection, config: dict, dias: int) -> str:
+    """Formata concorrência estimada pelo histórico de filas."""
+    ranking = ranking_historico(conn, config, dias)
+    periodo = "hoje" if dias == 1 else "últimos 7 dias"
+    linhas = [f"📊 <b>Atrações mais concorridas — {periodo}</b>", ""]
+    if not ranking:
+        return "\n".join(linhas + ["Ainda não há leituras suficientes nesse período."])
+    for posicao, (media, pico, amostras, ride, park) in enumerate(ranking, 1):
+        linhas.append(
+            f"<b>{posicao}. {notifier.esc(ride)}</b> — média {media:.0f} min · pico {pico} min\n"
+            f"     {notifier.esc(park)} · {amostras} leituras"
+        )
+    linhas += ["", "Estimativa de concorrência pelo tempo de fila; não mede visitantes."]
+    return "\n".join(linhas)
+
+
 def format_top_alert(park_name: str, ranking: list, config: dict,
                      conn: sqlite3.Connection | None = None) -> str:
     """Mensagem curta do alerta recorrente — chega a cada N min, tem que ser enxuta."""
@@ -747,6 +825,10 @@ HELP = (
     "/status &lt;parque&gt; — fila de um parque específico (ex.: <code>/status Epcot</code>)\n"
     "/menores — ranking das menores filas do parque inteiro agora\n"
     "/menores &lt;parque&gt; — ranking de um parque específico\n"
+    "/ranking — maiores filas agora em todos os parques\n"
+    "/ranking &lt;parque&gt; — maiores filas agora em um parque\n"
+    "/ranking hoje — atrações mais concorridas hoje pelo histórico\n"
+    "/ranking semana — atrações mais concorridas nos últimos 7 dias\n"
     "/resumo — previsão do dia pelo histórico (o mesmo das 7h)\n"
     "/resumo &lt;parque&gt; — previsão de um parque específico\n"
     "/parques — parques monitorados\n"
@@ -894,10 +976,30 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     if cmd == "/parques":
         nomes = "\n".join(f"• {notifier.esc(n)}" for n in park_ids)
         return f"🎢 <b>Parques monitorados</b>\n{nomes}"
-    if cmd not in ("/status", "/resumo", "/menores", "/teste_alertas"):
+    if cmd not in ("/status", "/resumo", "/menores", "/ranking", "/teste_alertas"):
         return HELP
     if cmd == "/teste_alertas" and not arg:
         return "Use <code>/teste_alertas &lt;parque&gt;</code>. Veja /parques."
+
+    if cmd == "/ranking" and arg.lower() in ("hoje", "semana"):
+        return format_ranking_historico(conn, config, 1 if arg.lower() == "hoje" else 7)
+
+    if cmd == "/ranking" and not arg:
+        ranking = []
+        falhas = 0
+        for park_name, park_id in park_ids.items():
+            try:
+                payload = fetch_queue_times(park_id)
+            except requests.RequestException as exc:
+                falhas += 1
+                log.error("Falha ao buscar %s para /ranking: %s", park_name, exc)
+                continue
+            ranking.extend((wait, ride, park_name)
+                           for wait, ride in maiores_filas(payload, config, 10))
+        ranking.sort(key=lambda item: (-item[0], item[1], item[2]))
+        if falhas == len(park_ids):
+            return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
+        return format_ranking_atual(ranking[:10], config)
 
     if arg:
         matches = match_parks(arg, park_ids)
@@ -931,6 +1033,10 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict, park_ids: 
     if cmd == "/teste_alertas":
         enviar_teste_alertas(conn, config, park_name, payload)
         return None
+    if cmd == "/ranking":
+        ranking = [(wait, ride, park_name)
+                   for wait, ride in maiores_filas(payload, config, 10)]
+        return format_ranking_atual(ranking, config)
     return format_status(park_name, payload, config, conn)
 
 
