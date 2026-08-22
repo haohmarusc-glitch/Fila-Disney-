@@ -54,6 +54,15 @@ class TestRoteamento(BaseComando):
     def test_teste_alertas_exige_parque(self):
         self.assertIn("teste_alertas", self.cmd("/teste_alertas"))
 
+    def test_teste_park_to_park_mostra_simulacao_sem_chamar_api(self):
+        self.requests.gets.clear()
+        resposta = self.cmd("/teste_park_to_park")
+        self.assertIn("SIMULAÇÃO Park-to-Park", resposta)
+        self.assertIn("Vale trocar para Islands Of Adventure", resposta)
+        self.assertIn("economia estimada: <b>21 min</b>", resposta)
+        self.assertIn("não usa as filas atuais", resposta)
+        self.assertEqual(self.requests.gets, [])
+
 
 class TestParque(BaseComando):
     def test_atalhos_que_resolvem(self):

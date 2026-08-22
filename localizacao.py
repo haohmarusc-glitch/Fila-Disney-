@@ -579,6 +579,18 @@ def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
     return saida
 
 
+def format_troca_park_to_park(troca: dict) -> list[str]:
+    """Linhas compartilhadas pela recomendacao real e pelo teste do Telegram."""
+    return [
+        f"🚂 <b>Vale trocar para {notifier.esc(troca['park'])}</b>",
+        f"<b>{notifier.esc(troca['ride'])}</b> — <b>{troca['total']} min</b> total",
+        (f"     estação {troca['walk_to_station']} min · trem: fila "
+         f"{troca['train_wait']} + viagem {troca['train_ride']} min · "
+         f"atração: caminhada {troca['walk_to_ride']} + fila {troca['ride_wait']} min"),
+        f"     economia estimada: <b>{troca['savings']} min</b>",
+    ]
+
+
 def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5,
                  troca=None) -> str:
     ranking_detalhado = _ranking_detalhado(
@@ -624,12 +636,7 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
                                d_lat=destino_rota[0], d_lon=destino_rota[1])
         linhas += ["", f'🗺️ <a href="{rota}">Abrir rota até {notifier.esc(melhor[4])}</a>']
     if troca:
-        linhas += ["", f"🚂 <b>Vale trocar para {notifier.esc(troca['park'])}</b>",
-                   f"<b>{notifier.esc(troca['ride'])}</b> — <b>{troca['total']} min</b> total",
-                   (f"     estação {troca['walk_to_station']} min · trem: fila "
-                    f"{troca['train_wait']} + viagem {troca['train_ride']} min · "
-                    f"atração: caminhada {troca['walk_to_ride']} + fila {troca['ride_wait']} min"),
-                   f"     economia estimada: <b>{troca['savings']} min</b>"]
+        linhas += [""] + format_troca_park_to_park(troca)
     usadas = sum(item[6] == "google" for item in ranking_detalhado[:limite])
     estimadas = sum(item[6] == "estimativa" for item in ranking_detalhado[:limite])
     aviso = f"Caminhada: {usadas} rota(s) Google · {estimadas} estimativa(s) interna(s)."

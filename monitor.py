@@ -1293,6 +1293,7 @@ HELP = (
     "/perto — melhor atração agora considerando fila + caminhada\n"
     "/health — estado do monitor (coleta, banco, parques)\n"
     "/teste_alertas &lt;parque&gt; — envia os três alertas com prefixo de teste\n"
+    "/teste_park_to_park — simula no Telegram uma recomendação entre parques\n"
     "/help — esta mensagem\n\n"
     "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
     "Powered by Queue-Times.com"
@@ -1443,6 +1444,25 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         return PEDIR_LOCALIZACAO
     if cmd == "/health":
         return format_health(conn, config, park_ids)
+    if cmd == "/teste_park_to_park":
+        exemplo = {
+            "park": "Islands Of Adventure At Universal Orlando",
+            "ride": "Harry Potter and the Forbidden Journey",
+            "total": 42,
+            "walk_to_station": 6,
+            "train_wait": 8,
+            "train_ride": 4,
+            "walk_to_ride": 4,
+            "ride_wait": 16,
+            "savings": 21,
+        }
+        linhas = [
+            "🧪 <b>SIMULAÇÃO Park-to-Park</b>",
+            "Exemplo controlado — não usa as filas atuais e não altera o monitor.",
+            "",
+            *localizacao.format_troca_park_to_park(exemplo),
+        ]
+        return "\n".join(linhas)
     if cmd == "/parques":
         nomes = "\n".join(f"• {notifier.esc(n)}" for n in park_ids)
         return f"🎢 <b>Parques monitorados</b>\n{nomes}"
