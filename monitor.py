@@ -11,6 +11,7 @@ Nos dois modos o bot atende comandos no Telegram (/status, /parques, /help)
 enquanto espera o próximo ciclo de coleta.
 """
 import json
+import hmac
 import logging
 import os
 import sqlite3
@@ -36,6 +37,7 @@ BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "data" / "history.db"
 UPTIME_KUMA_PUSH_URL = os.environ.get("UPTIME_KUMA_PUSH_URL", "").strip()
 APP_GIT_SHA = os.environ.get("APP_GIT_SHA", "unknown").strip() or "unknown"
+FAMILY_ACCESS_PASSWORD = os.environ.get("FAMILY_ACCESS_PASSWORD", "")
 WATCHLIST_PATH = BASE_DIR / "watchlist.json"
 # data/ é o único volume persistente: coords.json gravado em /app some no
 # próximo `docker compose up --build`, junto com o trabalho todo do coords.py.
@@ -204,6 +206,41 @@ def init_db() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS database_maintenance ("
         "ran_on TEXT PRIMARY KEY, deleted_rows INTEGER NOT NULL)"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS authorized_chats ("
+        "chat_id TEXT PRIMARY KEY, authorized_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS user_locations ("
+        "chat_id TEXT PRIMARY KEY, latitude REAL NOT NULL, longitude REAL NOT NULL, "
+        "updated_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ride_watch_subscriptions ("
+        "chat_id TEXT NOT NULL, park TEXT NOT NULL, ride TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, PRIMARY KEY (chat_id, park, ride))"
+    )
+    if notifier.CHAT_ID:
+        principal = str(notifier.CHAT_ID)
+        conn.execute(
+            "INSERT OR IGNORE INTO authorized_chats (chat_id, authorized_at) VALUES (?, ?)",
+            (principal, utc_now().isoformat()),
+        )
+        antiga = conn.execute(
+            "SELECT latitude, longitude, updated_at FROM user_location WHERE id = 1"
+        ).fetchone()
+        if antiga:
+            conn.execute(
+                "INSERT OR IGNORE INTO user_locations "
+                "(chat_id, latitude, longitude, updated_at) VALUES (?, ?, ?, ?)",
+                (principal, *antiga),
+            )
+        conn.execute(
+            "INSERT OR IGNORE INTO ride_watch_subscriptions "
+            "(chat_id, park, ride, created_at) "
+            "SELECT ?, park, ride, created_at FROM ride_watches",
+            (principal,),
+        )
     conn.commit()
     return conn
 
@@ -699,18 +736,23 @@ def _format_opcoes_atracao(matches: list[tuple[str, str]]) -> str:
     )
 
 
-def guardar_localizacao(conn: sqlite3.Connection, latitude: float, longitude: float) -> None:
+def guardar_localizacao(conn: sqlite3.Connection, latitude: float, longitude: float,
+                        chat_id=None) -> None:
+    chat_id = str(chat_id if chat_id is not None else notifier.CHAT_ID)
     conn.execute(
-        "INSERT OR REPLACE INTO user_location (id, latitude, longitude, updated_at) "
-        "VALUES (1, ?, ?, ?)",
-        (latitude, longitude, utc_now().isoformat()),
+        "INSERT OR REPLACE INTO user_locations "
+        "(chat_id, latitude, longitude, updated_at) VALUES (?, ?, ?, ?)",
+        (chat_id, latitude, longitude, utc_now().isoformat()),
     )
     conn.commit()
 
 
-def ultima_localizacao(conn: sqlite3.Connection, max_minutos: int = 180) -> tuple[float, float] | None:
+def ultima_localizacao(conn: sqlite3.Connection, max_minutos: int = 180,
+                      chat_id=None) -> tuple[float, float] | None:
+    chat_id = str(chat_id if chat_id is not None else notifier.CHAT_ID)
     row = conn.execute(
-        "SELECT latitude, longitude, updated_at FROM user_location WHERE id = 1"
+        "SELECT latitude, longitude, updated_at FROM user_locations WHERE chat_id = ?",
+        (chat_id,),
     ).fetchone()
     if not row:
         return None
@@ -721,10 +763,12 @@ def ultima_localizacao(conn: sqlite3.Connection, max_minutos: int = 180) -> tupl
     return (row[0], row[1]) if idade <= timedelta(minutes=max_minutos) else None
 
 
-def vigiar_atracao(conn: sqlite3.Connection, park: str, ride: str) -> str:
+def vigiar_atracao(conn: sqlite3.Connection, park: str, ride: str, chat_id=None) -> str:
+    chat_id = str(chat_id if chat_id is not None else notifier.CHAT_ID)
     conn.execute(
-        "INSERT OR REPLACE INTO ride_watches (park, ride, created_at) VALUES (?, ?, ?)",
-        (park, ride, utc_now().isoformat()),
+        "INSERT OR REPLACE INTO ride_watch_subscriptions "
+        "(chat_id, park, ride, created_at) VALUES (?, ?, ?, ?)",
+        (chat_id, park, ride, utc_now().isoformat()),
     )
     conn.commit()
     return (
@@ -733,17 +777,23 @@ def vigiar_atracao(conn: sqlite3.Connection, park: str, ride: str) -> str:
     )
 
 
-def cancelar_vigia(conn: sqlite3.Connection, park: str, ride: str) -> str:
+def cancelar_vigia(conn: sqlite3.Connection, park: str, ride: str, chat_id=None) -> str:
+    chat_id = str(chat_id if chat_id is not None else notifier.CHAT_ID)
     removidas = conn.execute(
-        "DELETE FROM ride_watches WHERE park = ? AND ride = ?", (park, ride)
+        "DELETE FROM ride_watch_subscriptions WHERE chat_id = ? AND park = ? AND ride = ?",
+        (chat_id, park, ride),
     ).rowcount
     conn.commit()
     return (f"✅ Vigilância removida: {notifier.esc(ride)}."
             if removidas else f"Não havia vigilância ativa para {notifier.esc(ride)}.")
 
 
-def format_vigias(conn: sqlite3.Connection) -> str:
-    rows = conn.execute("SELECT park, ride FROM ride_watches ORDER BY park, ride").fetchall()
+def format_vigias(conn: sqlite3.Connection, chat_id=None) -> str:
+    chat_id = str(chat_id if chat_id is not None else notifier.CHAT_ID)
+    rows = conn.execute(
+        "SELECT park, ride FROM ride_watch_subscriptions "
+        "WHERE chat_id = ? ORDER BY park, ride", (chat_id,)
+    ).fetchall()
     if not rows:
         return ("👀 Nenhuma atração sendo vigiada.\n"
                 "Use <code>/vigiar &lt;atração&gt;</code>.")
@@ -780,15 +830,16 @@ def maybe_alertar_reabertura(conn: sqlite3.Connection, config: dict, park: str,
     nome = ride["name"]
     park_cfg = config.get("parks", {}).get(park, {})
     canonico = nome_watchlist(park_cfg, nome)
-    vigia = None
+    assinantes = []
     if canonico:
-        vigia = conn.execute(
-            "SELECT 1 FROM ride_watches WHERE park = ? AND ride = ?", (park, canonico)
-        ).fetchone()
+        assinantes = [row[0] for row in conn.execute(
+            "SELECT chat_id FROM ride_watch_subscriptions WHERE park = ? AND ride = ?",
+            (park, canonico),
+        ).fetchall()]
     cfg = config.get("reopen_alert", {})
     automatico = (cfg.get("enabled", True) and park in is_alert_day(config)
                   and canonico is not None and not in_quiet_hours(config))
-    if not vigia and not automatico:
+    if not assinantes and not automatico:
         return
     cooldown = int(cfg.get("cooldown_minutes", 90))
     if reabertura_em_cooldown(conn, park, nome, cooldown):
@@ -798,13 +849,21 @@ def maybe_alertar_reabertura(conn: sqlite3.Connection, config: dict, park: str,
     texto = (f"🚨 <b>REABRIU</b>\n\n<b>{notifier.esc(nome)}</b>\n"
              f"{notifier.esc(park)}\n{fila}\n\n"
              "Transição confirmada pelo Queue-Times; confira a entrada antes de caminhar.")
-    if notifier.send(texto):
+    destinatarios = set(assinantes)
+    if automatico and notifier.CHAT_ID:
+        destinatarios.add(str(notifier.CHAT_ID))
+    enviados = [destino for destino in destinatarios
+                if notifier.send(texto, chat_id=destino)]
+    if enviados:
         conn.execute(
             "INSERT INTO reopen_alerts (park, ride, sent_at) VALUES (?, ?, ?)",
             (park, nome, utc_now().isoformat()),
         )
-        if vigia:
-            conn.execute("DELETE FROM ride_watches WHERE park = ? AND ride = ?", (park, canonico))
+        if assinantes:
+            conn.execute(
+                "DELETE FROM ride_watch_subscriptions WHERE park = ? AND ride = ?",
+                (park, canonico),
+            )
         conn.commit()
 
 
@@ -1245,13 +1304,13 @@ def maybe_send_daily_summary(conn: sqlite3.Connection, config: dict, park_ids: d
 
 
 def enviar_teste_alertas(conn: sqlite3.Connection, config: dict, park_name: str,
-                         payload: dict) -> None:
+                         payload: dict, chat_id=None) -> None:
     """Envia os três formatos reais sem registrar cooldown ou resumo enviado."""
     ranking = menores_filas(payload, config, park_name, 3, apenas_watchlist=True)
     if not ranking:
         notifier.send(
             f"🧪 <b>TESTE</b> — nenhuma atração aberta da watchlist em "
-            f"{notifier.esc(park_name)}"
+            f"{notifier.esc(park_name)}", chat_id=chat_id
         )
         return
 
@@ -1265,11 +1324,33 @@ def enviar_teste_alertas(conn: sqlite3.Connection, config: dict, park_name: str,
         + format_daily_summary(conn, config, park_name),
     )
     for mensagem in mensagens:
-        notifier.send(mensagem)
+        notifier.send(mensagem, chat_id=chat_id)
     log.info("Teste explícito dos três alertas executado (%s)", park_name)
 
 
 # ---------------------------------------------------------------- comandos
+
+def chat_autorizado(conn: sqlite3.Connection, chat_id) -> bool:
+    if chat_id is None:
+        return False
+    if notifier.is_authorized(chat_id):
+        return True
+    return conn.execute(
+        "SELECT 1 FROM authorized_chats WHERE chat_id = ?", (str(chat_id),)
+    ).fetchone() is not None
+
+
+def autenticar_familiar(conn: sqlite3.Connection, chat_id, senha: str) -> str:
+    if not FAMILY_ACCESS_PASSWORD:
+        return "O acesso familiar ainda não foi configurado pelo administrador."
+    if not hmac.compare_digest(senha, FAMILY_ACCESS_PASSWORD):
+        return "Senha familiar incorreta."
+    conn.execute(
+        "INSERT OR REPLACE INTO authorized_chats (chat_id, authorized_at) VALUES (?, ?)",
+        (str(chat_id), utc_now().isoformat()),
+    )
+    conn.commit()
+    return "✅ Acesso familiar liberado. Use /help para ver os comandos."
 
 HELP = (
     "🎢 <b>Monitor de filas</b>\n\n"
@@ -1294,6 +1375,7 @@ HELP = (
     "/health — estado do monitor (coleta, banco, parques)\n"
     "/teste_alertas &lt;parque&gt; — envia os três alertas com prefixo de teste\n"
     "/teste_park_to_park — simula no Telegram uma recomendação entre parques\n"
+    "/entrar &lt;senha&gt; — libera este chat para uso familiar\n"
     "/help — esta mensagem\n\n"
     "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
     "Powered by Queue-Times.com"
@@ -1425,7 +1507,8 @@ def format_status(park_name: str, payload: dict, config: dict,
 
 
 def handle_command(text: str, conn: sqlite3.Connection, config: dict,
-                   park_ids: dict[str, int], coords: dict | None = None) -> str | None:
+                   park_ids: dict[str, int], coords: dict | None = None,
+                   chat_id=None) -> str | None:
     """Interpreta um comando do chat. Devolve a resposta ou None (ignorar)."""
     # só a primeira linha: no Telegram dá para mandar vários comandos numa
     # mensagem só, e sem isso o resto vira argumento do primeiro.
@@ -1468,7 +1551,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         return f"🎢 <b>Parques monitorados</b>\n{nomes}"
     if cmd == "/vigiar":
         if not arg:
-            return format_vigias(conn)
+            return format_vigias(conn, chat_id)
         cancelar = arg.lower().startswith("cancelar ")
         busca = arg.split(maxsplit=1)[1] if cancelar else arg
         matches = resolver_atracao(config, busca)
@@ -1478,7 +1561,8 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
             return (f"“{notifier.esc(busca)}” é ambíguo:\n"
                     + _format_opcoes_atracao(matches))
         park, ride = matches[0]
-        return cancelar_vigia(conn, park, ride) if cancelar else vigiar_atracao(conn, park, ride)
+        return (cancelar_vigia(conn, park, ride, chat_id) if cancelar
+                else vigiar_atracao(conn, park, ride, chat_id))
 
     if cmd == "/confianca":
         if not arg:
@@ -1525,7 +1609,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
 
     # Plano/chuva usam o parque realmente detectado quando há GPS recente.
     if cmd in ("/plano", "/chuva") and not arg and coords:
-        posicao = ultima_localizacao(conn)
+        posicao = ultima_localizacao(conn, chat_id=chat_id)
         detectado = localizacao.parque_mais_proximo(posicao, coords) if posicao else None
         if detectado in park_ids:
             arg = detectado
@@ -1564,7 +1648,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         limite = config.get("top_alert", {}).get("list_size", 10)
         return format_menores(park_name, payload, config, limite)
     if cmd == "/teste_alertas":
-        enviar_teste_alertas(conn, config, park_name, payload)
+        enviar_teste_alertas(conn, config, park_name, payload, chat_id)
         return None
     if cmd == "/ranking":
         ranking = [(wait, ride, park_name)
@@ -1594,24 +1678,35 @@ def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
         text = message.get("text", "")
         if not text and not location_data:
             continue
-        if not notifier.is_authorized(chat_id):
+        primeira = text.strip().split(maxsplit=1) if text else []
+        comando = primeira[0].split("@")[0].lower() if primeira else ""
+        if comando == "/entrar":
+            senha = primeira[1].strip() if len(primeira) > 1 else ""
+            notifier.send(autenticar_familiar(conn, chat_id, senha), chat_id=chat_id)
+            continue
+        if not chat_autorizado(conn, chat_id):
             log.warning("Comando ignorado de chat não autorizado: %s", chat_id)
+            notifier.send(
+                "🔒 Acesso restrito à família. Use <code>/entrar SUA_SENHA</code>.",
+                chat_id=chat_id,
+            )
             continue
 
         if location_data:
             log.info("Localização recebida")
-            guardar_localizacao(conn, location_data["latitude"], location_data["longitude"])
+            guardar_localizacao(
+                conn, location_data["latitude"], location_data["longitude"], chat_id)
             notifier.send(responder_localizacao(
                 location_data["latitude"], location_data["longitude"],
-                conn, config, park_ids, coords))
+                conn, config, park_ids, coords), chat_id=chat_id)
             continue
 
-        resposta = handle_command(text, conn, config, park_ids, coords)
+        resposta = handle_command(text, conn, config, park_ids, coords, chat_id)
         if resposta:
             log.info("Comando atendido: %s", text.split()[0])
             # /perto só é útil com o botão de localização junto
             botao = notifier.BOTAO_LOCALIZACAO if resposta is PEDIR_LOCALIZACAO else None
-            notifier.send(resposta, botao)
+            notifier.send(resposta, botao, chat_id=chat_id)
     return offset
 
 
