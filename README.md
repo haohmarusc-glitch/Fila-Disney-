@@ -188,6 +188,12 @@ mantêm tolerância maior por causa de lagos, entradas deslocadas e caminhos
 sinuosos. Cada descarte é gravado em `route_rejections` e o total aparece em
 `/health`, permitindo recalibrar os limites com dados reais.
 
+Quando o ponto real de uma atração não é caminhável no mapa, `route_anchors`
+guarda separadamente uma entrada conhecida pelo Google e o pequeno trecho final.
+A coordenada real não é substituída. Nomes decorados pela API, como
+`Revenge of the Mummy™`, são primeiro convertidos ao nome canônico da watchlist
+para reutilizar corretamente coordenadas e âncoras.
+
 O bot **não** consegue puxar sua posição sozinho — você compartilha quando quer.
 
 ### Coordenadas: rode uma vez
