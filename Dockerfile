@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+ARG APP_GIT_SHA=unknown
+ENV APP_GIT_SHA=${APP_GIT_SHA}
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

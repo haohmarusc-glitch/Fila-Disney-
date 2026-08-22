@@ -47,6 +47,17 @@ sem perder o histórico.
 
 Nas atualizações seguintes basta `git pull && docker compose up -d --build`.
 
+Para gravar no container o commit efetivamente implantado e exibi-lo em
+`/health`, faça o build com:
+
+```bash
+APP_GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+```
+
+Opcionalmente configure `GOOGLE_MAPS_API_KEY` no `.env` com uma chave restrita
+à Routes API e ao IP da VPS. Sem a chave, `/perto` continua usando a estimativa
+local por distância.
+
 ### Criar o bot Telegram (2 min)
 
 1. Fale com o `@BotFather` → `/newbot` → copie o token para `.env`

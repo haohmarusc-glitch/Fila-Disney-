@@ -107,9 +107,11 @@ class TestStatusEMenores(BaseComando):
         self.assertIn("Não consegui", self.cmd("/status Hollywood"))
 
     def test_health_responde_sem_historico(self):
+        self.monitor.APP_GIT_SHA = "abc1234"
         r = self.cmd("/health")
         self.assertIn("Monitor de filas", r)
         self.assertIn("nunca", r)
+        self.assertIn("abc1234", r)
 
     def test_teste_alertas_envia_tres_mensagens_sem_estado(self):
         antes = {

@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build da imagem
-        run: docker build -t fila-disney:ci .
+        run: docker build --build-arg APP_GIT_SHA="$GITHUB_SHA" -t fila-disney:ci .
 
       # O build sozinho não pega módulo faltando no COPY: docker build não
       # importa nada. Foi assim que o localizacao.py chegou em produção fora da
@@ -38,6 +38,7 @@ jobs:
         run: |
           docker run --rm fila-disney:ci python -c "
           import monitor, notifier, localizacao, coords, healthcheck, analyze
+          assert monitor.APP_GIT_SHA == '$GITHUB_SHA'
           print('todos os módulos importam dentro da imagem')
           "
 
