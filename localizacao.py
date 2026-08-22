@@ -28,6 +28,8 @@ MAPS_URL = ("https://www.google.com/maps/dir/?api=1"
 GOOGLE_ROUTES_URL = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
 ROTA_CACHE_TTL = 300
+ROTA_FATOR_MAX = 3.0
+ROTA_DESVIO_MAX_METROS = 500
 _rota_cache = {}
 
 # Pesos do score. NÃO SÃO CALIBRADOS: são um ponto de partida razoável, não o
@@ -93,6 +95,20 @@ def _chave_cache(posicao, destinos):
     return origem, tuple((nome, tuple(coord)) for nome, coord in destinos)
 
 
+def rota_caminhada_plausivel(posicao, destino, metros_rota):
+    """Rejeita contornos externos que o Google sugere dentro dos parques.
+
+    A folga absoluta evita falsos positivos em trajetos curtos, nos quais uma
+    entrada deslocada algumas dezenas de metros produz uma razão muito alta.
+    """
+    if metros_rota < 0:
+        return False
+    direta = distancia_metros(posicao, destino)
+    limite = max(direta * ROTA_FATOR_MAX,
+                 direta + ROTA_DESVIO_MAX_METROS)
+    return metros_rota <= limite
+
+
 def rotas_google(posicao, destinos):
     """Retorna {nome: (minutos, metros)} ou {} se a API não estiver configurada.
 
@@ -144,7 +160,16 @@ def rotas_google(posicao, destinos):
             metros = int(elemento["distanceMeters"])
         except (KeyError, TypeError, ValueError):
             continue
-        saida[destinos[indice][0]] = (minutos, metros)
+        destino = destinos[indice]
+        if not rota_caminhada_plausivel(posicao, destino[1], metros):
+            direta = distancia_metros(posicao, destino[1])
+            log.warning(
+                "Routes API descartada para %s: rota=%sm, direta=%.0fm; "
+                "usando estimativa interna",
+                destino[0], metros, direta,
+            )
+            continue
+        saida[destino[0]] = (minutos, metros)
     _rota_cache[chave] = (agora, saida)
     return saida
 
