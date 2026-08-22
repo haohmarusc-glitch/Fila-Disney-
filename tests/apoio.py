@@ -85,7 +85,7 @@ class BaseTeste(unittest.TestCase):
         sys.modules["requests"] = _requests
         self.requests = _requests
 
-        for nome in ("notifier", "monitor", "localizacao", "coords"):
+        for nome in ("notifier", "monitor", "localizacao", "personagens", "coords"):
             sys.modules.pop(nome, None)
         self.notifier = importlib.import_module("notifier")
         self.monitor = importlib.import_module("monitor")
