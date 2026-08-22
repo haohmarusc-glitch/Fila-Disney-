@@ -262,6 +262,12 @@
     }
   },
   "aliases": {},
+  "park_to_park": {
+    "stations": {
+      "Universal Studios At Universal Orlando": [28.4794, -81.4703],
+      "Islands Of Adventure At Universal Orlando": [28.4741, -81.4727]
+    }
+  },
   "route_anchors": {
     "Disney Animal Kingdom": {
       "Na'vi River Journey": {
