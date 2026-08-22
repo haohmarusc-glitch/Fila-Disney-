@@ -74,6 +74,10 @@ local por distância.
 | `/resumo <parque>` | Previsão de um parque específico, em qualquer data |
 | `/menores` | Ranking das menores filas do parque **inteiro** agora |
 | `/menores <parque>` | Ranking de um parque específico |
+| `/ranking` | Maiores filas agora entre todos os parques |
+| `/ranking <parque>` | Maiores filas agora em um parque específico |
+| `/ranking hoje` | Atrações mais concorridas hoje, pela média do histórico |
+| `/ranking semana` | Atrações mais concorridas nos últimos 7 dias |
 | `/parques` | Lista os parques que o monitor resolveu na API |
 | `/perto` (ou `/agora`) | Melhor atração agora por **fila + caminhada**, a partir da sua localização |
 | `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
