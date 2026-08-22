@@ -227,6 +227,32 @@ class TestRotasGoogle(BaseTeste):
         self.assertEqual(self.requests.headers_enviados["X-Goog-Api-Key"],
                          "chave-de-teste")
 
+    def test_descarta_rota_que_sai_do_parque(self):
+        destino = (PORTAO[0] + 300 / 111_111, PORTAO[1])
+        self.requests.roteador_post = lambda _url, _payload: Resposta([{
+            "destinationIndex": 0,
+            "condition": "ROUTE_EXISTS",
+            "duration": "1980s",
+            "distanceMeters": 1081,
+        }])
+
+        rotas = self.loc.rotas_google(PORTAO, [("Forbidden Journey", destino)])
+
+        self.assertEqual(rotas, {}, "rota externa não pode inverter o ranking")
+
+    def test_preserva_contorno_interno_no_limite(self):
+        destino = (PORTAO[0] + 233 / 111_111, PORTAO[1])
+        self.requests.roteador_post = lambda _url, _payload: Resposta([{
+            "destinationIndex": 0,
+            "condition": "ROUTE_EXISTS",
+            "duration": "600s",
+            "distanceMeters": 689,
+        }])
+
+        rotas = self.loc.rotas_google(PORTAO, [("Skull Island", destino)])
+
+        self.assertEqual(rotas["Skull Island"], (10, 689))
+
     def test_cache_evitar_cobranca_repetida(self):
         self.requests.roteador_post = lambda _url, _payload: Resposta([{
             "destinationIndex": 0, "condition": "ROUTE_EXISTS",
