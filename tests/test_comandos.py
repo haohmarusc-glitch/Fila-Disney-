@@ -134,6 +134,34 @@ class TestStatusEMenores(BaseComando):
         self.assertEqual(depois, antes)
 
 
+class TestRanking(BaseComando):
+    def test_ranking_parque_ordena_maior_primeiro(self):
+        r = self.cmd("/ranking Hollywood")
+        self.assertLess(r.index("Rock 'n' Roller"), r.index("Slinky Dog Dash"))
+        self.assertNotIn("Single Rider", r)
+        self.assertNotIn("Indiana Jones", r)
+
+    def test_ranking_sem_argumento_compara_todos_os_parques(self):
+        r = self.cmd("/ranking")
+        self.assertIn("Maiores filas agora", r)
+        self.assertIn("Disney Hollywood Studios", r)
+        self.assertEqual(len(self.requests.gets), len(self.parques))
+
+    def test_ranking_hoje_usa_historico(self):
+        parque = "Disney Hollywood Studios"
+        agora_utc = dt.datetime(2026, 10, 13, 16, 0)
+        self.gravar(parque, "Slinky Dog Dash", 70, agora_utc)
+        self.gravar(parque, "Slinky Dog Dash", 50, agora_utc + dt.timedelta(minutes=5))
+        self.gravar(parque, "Toy Story Mania!", 30, agora_utc)
+        r = self.cmd("/ranking hoje")
+        self.assertLess(r.index("Slinky Dog Dash"), r.index("Toy Story Mania!"))
+        self.assertIn("média 60 min", r)
+        self.assertEqual(self.requests.gets, [], "histórico não deve chamar a API")
+
+    def test_ranking_explica_que_nao_mede_visitantes(self):
+        self.assertIn("não por número de visitantes", self.cmd("/ranking Hollywood"))
+
+
 class TestAutorizacao(BaseComando):
     def _update(self, chat_id, texto, update_id=1):
         return {"update_id": update_id, "message": {"chat": {"id": chat_id}, "text": texto}}
