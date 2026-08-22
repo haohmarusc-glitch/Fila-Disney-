@@ -117,9 +117,22 @@
     "list_size": 10,
     "only_park_days": true
   },
+  "reopen_alert": {
+    "enabled": true,
+    "cooldown_minutes": 90
+  },
+  "park_to_park": {
+    "enabled": true,
+    "min_savings_minutes": 15,
+    "train_ride_minutes": 4,
+    "boarding_buffer_minutes": 4
+  },
   "daily_summary": {
     "enabled": true,
     "hour": "07:00",
     "only_park_days": true
+  },
+  "database": {
+    "raw_retention_days": 180
   }
 }
