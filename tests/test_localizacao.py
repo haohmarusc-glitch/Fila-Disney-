@@ -103,6 +103,17 @@ class TestGeometria(BaseTeste):
         self.assertEqual(coord, tuple(ancora["coord"]))
         self.assertEqual((minutos, metros), (2, 150))
 
+    def test_hogsmeade_usa_entrada_publica_sem_fixar_tempo(self):
+        caminho = Path(__file__).parents[1] / "coords.json"
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            dados["park_to_park"]["stations"][
+                "Islands Of Adventure At Universal Orlando"
+            ],
+            [28.4741, -81.4727],
+        )
+
 
 class TestRankingPorTempoTotal(BaseTeste):
     def setUp(self):
