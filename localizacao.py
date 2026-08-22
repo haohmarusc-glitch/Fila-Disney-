@@ -32,40 +32,52 @@ MAPS_URL = ("https://www.google.com/maps/dir/?api=1"
 GOOGLE_ROUTES_URL = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
 ROTA_CACHE_TTL = 300
-# Nao e um teto absoluto: em trajetos curtos, a folga de 500 m prevalece para
-# tolerar entradas deslocadas. O teto do parque e a duracao ainda precisam passar.
-ROTA_FATOR_REFERENCIA = 3.0
-ROTA_FOLGA_CURTA_METROS = 500
+# Nao e um teto absoluto: em trajetos curtos, a folga prevalece para tolerar
+# entradas deslocadas. IOA usa folga menor por causa dos contornos externos.
 ROTA_VELOCIDADE_MIN_M_POR_MIN = 40  # abaixo de 2,4 km/h ja inclui paradas generosas
 ROTA_FOLGA_DURACAO_MIN = 5
-ROTA_TETO_PADRAO_METROS = 3_000
-ROTA_TETO_POR_PARQUE = {
-    "Disney Magic Kingdom": 2_500,
-    "Epcot": 4_000,
-    "Disney Hollywood Studios": 2_000,
-    "Disney Animal Kingdom": 3_000,
-    "Universal Studios At Universal Orlando": 1_800,
-    "Islands Of Adventure At Universal Orlando": 1_400,
-    "Universal Epic Universe": 2_500,
+ROTA_REGRA_PADRAO = {"fator": 3.0, "folga_metros": 500, "teto_metros": 3_000}
+ROTA_REGRAS_POR_PARQUE = {
+    "Disney Magic Kingdom": {"fator": 3.0, "folga_metros": 500, "teto_metros": 2_500},
+    "Epcot": {"fator": 3.0, "folga_metros": 500, "teto_metros": 4_000},
+    "Disney Hollywood Studios": {"fator": 3.0, "folga_metros": 500, "teto_metros": 2_000},
+    "Disney Animal Kingdom": {"fator": 3.0, "folga_metros": 500, "teto_metros": 3_000},
+    "Universal Studios At Universal Orlando": {
+        "fator": 3.0, "folga_metros": 350, "teto_metros": 1_800},
+    "Islands Of Adventure At Universal Orlando": {
+        "fator": 3.0, "folga_metros": 250, "teto_metros": 1_400},
+    "Universal Epic Universe": {"fator": 3.0, "folga_metros": 500, "teto_metros": 2_500},
 }
 _rota_cache = {}
 
-# Pesos do score. NÃO SÃO CALIBRADOS: são um ponto de partida razoável, não o
-# resultado de backtest. Ficam em watchlist.json para poder mudar sem deploy, e
-# a intenção é recalibrá-los em setembro, quando houver semanas de histórico.
-PESOS_PADRAO = {"tempo": 0.5, "historico": 0.3, "tendencia": 0.2}
+# O score mede somente a qualidade da fila. A posicao decide a medalha por
+# fila+caminhada, mas nao pode mudar a nota da mesma fila e tendencia.
+PESOS_QUALIDADE_FILA = {"historico": 0.6, "tendencia": 0.4}
 MIN_AMOSTRAS_FAIXA = 12
 
 
 def load_coords() -> dict:
-    """coords.json é opcional: sem ele o bot roda igual, só sem /perto."""
-    try:
-        caminho = (monitor.COORDS_PATH if monitor.COORDS_PATH.exists()
-                   else monitor.COORDS_PATH_REPO)
-        with open(caminho, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {"parks": {}, "rides": {}}
+    """Combina o versionado com o volume; o volume vence sem ocultar âncoras."""
+    saida = {"parks": {}, "rides": {}}
+    for caminho in (monitor.COORDS_PATH_REPO, monitor.COORDS_PATH):
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                dados = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        saida = _mesclar_dict(saida, dados)
+    return saida
+
+
+def _mesclar_dict(base: dict, sobrepor: dict) -> dict:
+    """Merge recursivo usado para preservar novas seções do arquivo versionado."""
+    saida = dict(base)
+    for chave, valor in sobrepor.items():
+        if isinstance(valor, dict) and isinstance(saida.get(chave), dict):
+            saida[chave] = _mesclar_dict(saida[chave], valor)
+        else:
+            saida[chave] = valor
+    return saida
 
 
 def distancia_metros(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -87,29 +99,46 @@ def _chave_cache(posicao, park_name, destinos):
     return park_name, origem, tuple((nome, tuple(coord)) for nome, coord in destinos)
 
 
-def rota_caminhada_plausivel(posicao, destino, metros_rota, minutos_rota,
-                             park_name):
-    """Valida distancia e duracao antes de uma rota afetar o ranking.
+def validar_rota_caminhada(posicao, destino, metros_rota, minutos_rota,
+                           park_name):
+    """Devolve ``(valida, motivo)`` antes de uma rota afetar o ranking.
 
     O fator de 3x e apenas uma referencia: para trajetos curtos, a folga
-    absoluta de 500 m evita rejeitar uma entrada deslocada. Em todos os casos,
-    o teto proprio do parque e o limite de duracao continuam obrigatorios.
+    configurada evita rejeitar uma entrada deslocada. Em todos os casos, o teto
+    proprio do parque e o limite de duracao continuam obrigatorios.
     """
     if metros_rota < 0 or minutos_rota < 1:
-        return False
+        return False, "valor_negativo_ou_zero"
     direta = distancia_metros(posicao, destino)
+    regra = {**ROTA_REGRA_PADRAO, **ROTA_REGRAS_POR_PARQUE.get(park_name, {})}
     limite_geometrico = max(
-        direta * ROTA_FATOR_REFERENCIA,
-        direta + ROTA_FOLGA_CURTA_METROS,
+        direta * regra["fator"],
+        direta + regra["folga_metros"],
     )
-    teto_parque = ROTA_TETO_POR_PARQUE.get(park_name, ROTA_TETO_PADRAO_METROS)
+    if metros_rota > min(limite_geometrico, regra["teto_metros"]):
+        return False, "distancia_implausivel"
     limite_duracao = math.ceil(metros_rota / ROTA_VELOCIDADE_MIN_M_POR_MIN)
     limite_duracao += ROTA_FOLGA_DURACAO_MIN
-    return metros_rota <= min(limite_geometrico, teto_parque) \
-        and minutos_rota <= limite_duracao
+    if minutos_rota > limite_duracao:
+        return False, "duracao_implausivel"
+    return True, "ok"
 
 
-def rotas_google(posicao, park_name, destinos):
+def registrar_rota_rejeitada(conn, park_name, ride_name, direta, metros,
+                             minutos, motivo):
+    if conn is None:
+        return
+    conn.execute(
+        "INSERT INTO route_rejections "
+        "(ts, park, ride, direct_meters, route_meters, route_minutes, reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (monitor.utc_now().isoformat(), park_name, ride_name, direta,
+         metros, minutos, motivo),
+    )
+    conn.commit()
+
+
+def rotas_google(posicao, park_name, destinos, conn=None):
     """Retorna rotas plausiveis; cada elemento ruim conserva seu fallback."""
     if not GOOGLE_MAPS_API_KEY or not destinos:
         return {}
@@ -160,13 +189,16 @@ def rotas_google(posicao, park_name, destinos):
         except (KeyError, TypeError, ValueError):
             continue
         nome, destino = destinos[indice]
-        if not rota_caminhada_plausivel(
-                posicao, destino, metros, minutos, park_name):
+        direta = distancia_metros(posicao, destino)
+        valida, motivo = validar_rota_caminhada(
+            posicao, destino, metros, minutos, park_name)
+        if not valida:
+            registrar_rota_rejeitada(
+                conn, park_name, nome, direta, metros, minutos, motivo)
             log.warning(
-                "Routes API descartada para %s/%s: rota=%sm/%smin, direta=%.0fm; "
+                "Routes API descartada para %s/%s (%s): rota=%sm/%smin, direta=%.0fm; "
                 "usando estimativa interna",
-                park_name, nome, metros, minutos,
-                distancia_metros(posicao, destino),
+                park_name, nome, motivo, metros, minutos, direta,
             )
             continue
         saida[nome] = (minutos, metros)
@@ -174,31 +206,22 @@ def rotas_google(posicao, park_name, destinos):
     return saida
 
 
-def score_oportunidade(total: int, melhor_total: int, pior_total: int,
-                       desvio_historico: float | None, seta: str | None,
-                       pesos: dict) -> int:
-    """0 a 100 combinando tempo total, desvio da média histórica e tendência.
+def score_qualidade_fila(desvio_historico: float | None, seta: str | None,
+                         pesos: dict) -> int:
+    """0 a 100 para a fila, independente da posicao do visitante.
 
-    Cada componente é normalizado para 0..1 antes de entrar com seu peso, então
-    o número é comparável entre atrações do mesmo ranking — e só entre elas.
-    Não é probabilidade nem nota absoluta: 80 aqui não significa nada fora
-    desta lista.
+    Historico e tendencia sao normalizados; pesos informados sao renormalizados
+    para impedir que configuracoes antigas com ``tempo`` distorcam a escala.
     """
-    # tempo: melhor do ranking = 1, pior = 0
-    faixa = max(pior_total - melhor_total, 1)
-    componente_tempo = 1 - (total - melhor_total) / faixa
-
-    # histórico: quanto a fila está abaixo da média daquela atração
     if desvio_historico is None:
-        componente_hist = 0.5  # sem histórico, nem premia nem pune
+        componente_hist = 0.5
     else:
         componente_hist = min(max(0.5 + desvio_historico / 2, 0.0), 1.0)
-
     componente_tend = {"↓": 1.0, "→": 0.5, "↑": 0.0}.get(seta, 0.5)
-
-    bruto = (pesos.get("tempo", 0.5) * componente_tempo
-             + pesos.get("historico", 0.3) * componente_hist
-             + pesos.get("tendencia", 0.2) * componente_tend)
+    peso_hist = max(0, pesos.get("historico", 0.6))
+    peso_tend = max(0, pesos.get("tendencia", 0.4))
+    soma = peso_hist + peso_tend or 1
+    bruto = (peso_hist * componente_hist + peso_tend * componente_tend) / soma
     return round(bruto * 100)
 
 
@@ -298,8 +321,31 @@ def parque_mais_proximo(posicao: tuple[float, float], coords: dict) -> str | Non
     return parque if distancia <= RAIO_PARQUE_METROS else None
 
 
-def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
-    """(total, fila, caminhada, metros, atração, coord) ordenado por tempo total.
+def coordenada_atracao(do_parque: dict, nome: str):
+    """Resolve o nome canônico e, com segurança, um subtítulo após hífen."""
+    coord = do_parque.get(nome)
+    if coord is not None:
+        return coord
+    nome_base = nome.split(" - ", 1)[0].strip()
+    return do_parque.get(nome_base) if nome_base != nome else None
+
+
+def ancora_rota(coords: dict, park_name: str, nome: str, coord_padrao):
+    """Ponto caminhável e ajuste final sem apagar a coordenada real."""
+    dados = coords.get("route_anchors", {}).get(park_name, {}).get(nome)
+    if not isinstance(dados, dict):
+        return tuple(coord_padrao), 0, 0
+    coord = dados.get("coord", coord_padrao)
+    try:
+        extra_minutos = max(0, int(dados.get("extra_minutes", 0)))
+        extra_metros = max(0, int(dados.get("extra_meters", 0)))
+        return tuple(coord), extra_minutos, extra_metros
+    except (TypeError, ValueError):
+        return tuple(coord_padrao), 0, 0
+
+
+def _ranking_detalhado(posicao, park_name, payload, config, coords, conn=None):
+    """Itens com origem ``google``, ``estimativa`` ou ``sem_coordenada``.
 
     O critério é fila + caminhada, não menor fila: 19 min de fila a 7 min de
     caminhada ganha de 16 min de fila a 13 min de caminhada.
@@ -316,30 +362,49 @@ def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=No
         if monitor.leitura_obsoleta(ride, limite_obsoleto):
             continue
         fila = ride.get("wait_time")
-        if fila is None or monitor.get_threshold(park_cfg, nome) is None:
+        nome_configurado = monitor.nome_watchlist(park_cfg, nome)
+        if fila is None or nome_configurado is None:
             continue
-        coord = do_parque.get(nome)
+        coord = coordenada_atracao(do_parque, nome_configurado)
         if coord is None:  # sem coordenada entra no fim, sem estimativa
-            itens.append((None, fila, None, None, nome, None))
+            itens.append((None, fila, None, None, nome, None,
+                          "sem_coordenada", None))
             continue
-        metros = distancia_metros(posicao, tuple(coord))
-        caminhada = minutos_a_pe(metros)
-        itens.append((fila + caminhada, fila, caminhada, metros, nome, tuple(coord)))
+        ancora, extra_minutos, extra_metros = ancora_rota(
+            coords, park_name, nome_configurado, coord)
+        metros_ate_ancora = distancia_metros(posicao, ancora)
+        metros = metros_ate_ancora + extra_metros
+        caminhada = minutos_a_pe(metros_ate_ancora) + extra_minutos
+        itens.append((fila + caminhada, fila, caminhada, metros, nome,
+                      tuple(coord), "estimativa", ancora))
 
     com_coord = sorted([i for i in itens if i[0] is not None])
-    destinos = [(item[4], item[5]) for item in com_coord]
-    rotas = rotas_google(posicao, park_name, destinos)
+    destinos = [(item[4], item[7]) for item in com_coord]
+    rotas = rotas_google(posicao, park_name, destinos, conn)
     if rotas:
         atualizados = []
         for item in com_coord:
-            total, fila, caminhada, metros, nome, coord = item
+            total, fila, caminhada, metros, nome, coord, origem, ancora = item
             if nome in rotas:
                 caminhada, metros = rotas[nome]
+                nome_configurado = monitor.nome_watchlist(park_cfg, nome)
+                _ancora, extra_minutos, extra_metros = ancora_rota(
+                    coords, park_name, nome_configurado, coord)
+                caminhada += extra_minutos
+                metros += extra_metros
                 total = fila + caminhada
-            atualizados.append((total, fila, caminhada, metros, nome, coord))
+                origem = "google"
+            atualizados.append((total, fila, caminhada, metros, nome, coord,
+                                origem, ancora))
         com_coord = sorted(atualizados)
     sem_coord = sorted([i for i in itens if i[0] is None], key=lambda i: i[1])
     return com_coord + sem_coord
+
+
+def ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn=None):
+    """Interface compativel: tuplas de seis campos, ordenadas por tempo total."""
+    return [item[:6] for item in _ranking_detalhado(
+        posicao, park_name, payload, config, coords, conn)]
 
 
 def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
@@ -353,8 +418,7 @@ def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
     if not com_tempo:
         return [(item, None) for item in ranking]
 
-    pesos = {**PESOS_PADRAO, **config.get("score_weights", {})}
-    melhor, pior = com_tempo[0][0], com_tempo[-1][0]
+    pesos = {**PESOS_QUALIDADE_FILA, **config.get("score_weights", {})}
     saida = []
     for item in ranking:
         total, fila, _caminhada, _metros, nome, _coord = item
@@ -364,12 +428,14 @@ def com_score(ranking: list, park_name: str, config: dict, conn=None) -> list:
         desvio = desvio_da_media(conn, park_name, nome, fila, config)
         resultado = monitor.tendencia(conn, park_name, nome) if conn is not None else None
         seta = resultado[0] if resultado else None
-        saida.append((item, score_oportunidade(total, melhor, pior, desvio, seta, pesos)))
+        saida.append((item, score_qualidade_fila(desvio, seta, pesos)))
     return saida
 
 
 def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=5) -> str:
-    ranking = ranking_por_tempo_total(posicao, park_name, payload, config, coords, conn)
+    ranking_detalhado = _ranking_detalhado(
+        posicao, park_name, payload, config, coords, conn)
+    ranking = [item[:6] for item in ranking_detalhado]
     if not ranking:
         return (f"📍 <b>{notifier.esc(park_name)}</b>\n\n"
                 "Nenhuma atração da watchlist aberta com dado agora.")
@@ -383,6 +449,7 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
     ]
     medalhas = ("🥇", "🥈", "🥉", "4️⃣", "5️⃣")
     pontuado = com_score(ranking, park_name, config, conn)
+    origens = {item[4]: item[6] for item in ranking_detalhado}
     for i, (item, score) in enumerate(pontuado[:limite]):
         total, fila, caminhada, metros, nome, _coord = item
         medalha = medalhas[i] if i < len(medalhas) else "•"
@@ -391,21 +458,26 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
             linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — fila {fila} min{seta}")
             linhas.append("     <i>sem coordenada: distância desconhecida</i>")
             continue
-        estrela = f" · ⭐ {score}" if score is not None else ""
+        estrela = f" · qualidade da fila ⭐ {score}" if score is not None else ""
         linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — <b>{total} min</b> no total{estrela}")
         perfil = perfil_historico(conn, config, park_name, nome, fila)
         classe = classificar_fila(fila, perfil)
         contexto = f" · {classe}" if classe else ""
-        linhas.append(f"     fila {fila} min{seta}{contexto} · 🚶 {caminhada} min ({metros:.0f} m)")
+        fonte = "rota Google" if origens[nome] == "google" else "estimativa interna"
+        linhas.append(
+            f"     fila {fila} min{seta}{contexto} · 🚶 {caminhada} min "
+            f"({metros:.0f} m, {fonte})")
 
     melhor = ranking[0]
     if melhor[5] is not None:
+        melhor_detalhado = ranking_detalhado[0]
+        destino_rota = melhor_detalhado[7] or melhor[5]
         rota = MAPS_URL.format(o_lat=posicao[0], o_lon=posicao[1],
-                               d_lat=melhor[5][0], d_lon=melhor[5][1])
+                               d_lat=destino_rota[0], d_lon=destino_rota[1])
         linhas += ["", f'🗺️ <a href="{rota}">Abrir rota até {notifier.esc(melhor[4])}</a>']
-    aviso = ("Caminhada calculada por rota a pé; rotas implausíveis usam estimativa."
-             if GOOGLE_MAPS_API_KEY else
-             "Caminhada é estimativa por distância, não rota.")
+    usadas = sum(item[6] == "google" for item in ranking_detalhado[:limite])
+    estimadas = sum(item[6] == "estimativa" for item in ranking_detalhado[:limite])
+    aviso = f"Caminhada: {usadas} rota(s) Google · {estimadas} estimativa(s) interna(s)."
     linhas += ["", aviso,
                "Powered by Queue-Times.com"]
     return "\n".join(linhas)

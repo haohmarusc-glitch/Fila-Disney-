@@ -146,6 +146,19 @@ def init_db() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS route_rejections (
+            ts              TEXT NOT NULL,
+            park            TEXT NOT NULL,
+            ride            TEXT NOT NULL,
+            direct_meters   REAL NOT NULL,
+            route_meters    INTEGER NOT NULL,
+            route_minutes   INTEGER NOT NULL,
+            reason          TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     return conn
 
@@ -381,15 +394,21 @@ def fila_paralela(ride_name: str) -> bool:
     return any(termo in ride_name.lower() for termo in FILAS_IGNORADAS)
 
 
-def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
-    """Threshold da atração; None se não estiver na watchlist do parque."""
+def nome_watchlist(park_cfg: dict, ride_name: str) -> str | None:
+    """Nome canônico da watchlist correspondente ao nome devolvido pela API."""
     if fila_paralela(ride_name):
         return None
     attractions = park_cfg.get("attractions", {})
-    for watched, threshold in attractions.items():
+    for watched in attractions:
         if watched.lower() in ride_name.lower() or ride_name.lower() in watched.lower():
-            return threshold
+            return watched
     return None
+
+
+def get_threshold(park_cfg: dict, ride_name: str) -> int | None:
+    """Threshold da atração; None se não estiver na watchlist do parque."""
+    nome = nome_watchlist(park_cfg, ride_name)
+    return park_cfg.get("attractions", {}).get(nome) if nome else None
 
 
 # ---------------------------------------------------------------- tendência
@@ -758,6 +777,8 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
         saude, coleta = "🔴", "nunca"
 
     alertas = conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0]
+    rotas_rejeitadas = conn.execute(
+        "SELECT COUNT(*) FROM route_rejections").fetchone()[0]
     do_dia = [p for p in is_alert_day(config) if p in park_ids]
     return "\n".join([
         f"{saude} <b>Monitor de filas</b>",
@@ -766,6 +787,7 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
         f"Parques resolvidos: {len(park_ids)}/{esperados}",
         f"Histórico: {total:,} leituras em {dias} dia(s) · {tamanho_mb:.1f} MB".replace(",", "."),
         f"Alertas já enviados: {alertas}",
+        f"Rotas implausíveis descartadas: {rotas_rejeitadas}",
         f"Versão: <code>{notifier.esc(APP_GIT_SHA)}</code>",
         f"Hoje: {notifier.esc(do_dia[0]) if do_dia else 'sem parque (modo coleta)'}",
         "",

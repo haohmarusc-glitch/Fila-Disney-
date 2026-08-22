@@ -1,8 +1,10 @@
 """Obsolescência do dado, distância, e ranking por fila + caminhada."""
 import copy
 import datetime as dt
+import json
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tests.apoio import CHAT_FAKE, BaseTeste, Resposta
@@ -100,6 +102,18 @@ class TestGeometria(BaseTeste):
         sao_paulo = (-23.55, -46.63)
         self.assertIsNone(self.loc.parque_mais_proximo(sao_paulo, COORDS))
 
+    def test_navi_preserva_coordenada_real_e_usa_ancora_caminhavel(self):
+        dados = json.loads((Path(__file__).parents[1] / "coords.json").read_text(
+            encoding="utf-8"))
+        real = dados["rides"]["Disney Animal Kingdom"]["Na'vi River Journey"]
+        ancora = dados["route_anchors"]["Disney Animal Kingdom"]["Na'vi River Journey"]
+        self.assertNotEqual(real, ancora["coord"])
+        self.assertEqual(
+            self.loc.ancora_rota(
+                dados, "Disney Animal Kingdom", "Na'vi River Journey", real),
+            (tuple(ancora["coord"]), 2, 150),
+        )
+
 
 class TestRankingPorTempoTotal(BaseTeste):
     def setUp(self):
@@ -148,6 +162,62 @@ class TestRankingPorTempoTotal(BaseTeste):
         ]}]}
         nomes = [i[4] for i in self.ranking(payload)]
         self.assertEqual(nomes, ["Toy Story Mania!"])
+
+    def test_nomes_reais_da_universal_usam_coordenadas_canonicas(self):
+        parque = "Universal Studios At Universal Orlando"
+        equivalencias = {
+            "Revenge of the Mummy™": "Revenge of the Mummy",
+            "The Simpsons Ride™": "The Simpsons Ride",
+            "Harry Potter and the Escape from Gringotts™":
+                "Harry Potter and the Escape from Gringotts",
+            "Illumination's Villain-Con Minion Blast": "Villain-Con Minion Blast",
+        }
+        config = {**self.config, "parks": {**self.config["parks"], parque: {
+            "attractions": {canonico: 60 for canonico in equivalencias.values()}}}}
+        coords = {"rides": {parque: {
+            canonico: [28.48 + indice / 1000, -81.47]
+            for indice, canonico in enumerate(equivalencias.values())}}}
+        payload = {"lands": [{"name": "L", "rides": [
+            ride(nome_api, 20) for nome_api in equivalencias
+        ]}]}
+
+        ranking = self.loc.ranking_por_tempo_total(
+            PORTAO, parque, payload, config, coords)
+
+        self.assertEqual(len(ranking), len(equivalencias))
+        self.assertTrue(all(item[0] is not None for item in ranking))
+
+    def test_subtitulo_nao_casa_com_chave_parcial_ambigua(self):
+        self.assertIsNone(self.loc.coordenada_atracao(
+            {"Expedition": [1, 2]},
+            "Expedition Everest - Legend of the Forbidden Mountain"))
+
+    def test_ranking_rota_ate_ancora_e_soma_trecho_final(self):
+        parque = "Disney Animal Kingdom"
+        real = [28.3550988, -81.5924427]
+        ancora = [28.354861, -81.592826]
+        coords = {
+            "rides": {parque: {"Na'vi River Journey": real}},
+            "route_anchors": {parque: {"Na'vi River Journey": {
+                "coord": ancora, "extra_minutes": 2, "extra_meters": 150}}},
+        }
+        self.loc.GOOGLE_MAPS_API_KEY = "chave-de-teste"
+        self.loc._rota_cache.clear()
+        self.requests.roteador_post = lambda _url, _corpo: Resposta([{
+            "destinationIndex": 0, "condition": "ROUTE_EXISTS",
+            "duration": "300s", "distanceMeters": 300,
+        }])
+
+        ranking = self.loc.ranking_por_tempo_total(
+            PORTAO, parque,
+            {"lands": [{"name": "L", "rides": [ride("Na'vi River Journey", 20)]}]},
+            self.config, coords, self.conn)
+
+        enviado = self.requests.posts[-1]["destinations"][0]
+        latlng = enviado["waypoint"]["location"]["latLng"]
+        self.assertEqual([latlng["latitude"], latlng["longitude"]], ancora)
+        self.assertEqual(ranking[0][2:4], (7, 450))
+        self.assertEqual(ranking[0][5], tuple(real), "coordenada real permanece intacta")
 
 
 class TestPercentisPorHorario(BaseTeste):
@@ -208,7 +278,8 @@ class TestRotasGoogleSeguras(BaseTeste):
             "duration": f"{segundos}s",
             "distanceMeters": metros_rota,
         }])
-        return self.loc.rotas_google(PORTAO, self.PARK, [("Atração", destino)])
+        return self.loc.rotas_google(
+            PORTAO, self.PARK, [("Atração", destino)], self.conn)
 
     def test_descarta_contorno_externo_da_pr_32(self):
         self.assertEqual(self.resposta(300, 1081, 1980), {})
@@ -219,8 +290,30 @@ class TestRotasGoogleSeguras(BaseTeste):
     def test_teto_especifico_do_ioa_prevalece(self):
         self.assertEqual(self.resposta(1000, 1500, 1200), {})
 
+    def test_folga_reduzida_do_ioa_rejeita_contorno_curto(self):
+        self.assertEqual(self.resposta(200, 650, 600), {})
+
     def test_preserva_contorno_interno_plausivel(self):
         self.assertEqual(self.resposta(233, 689, 600)["Atração"], (10, 689))
+
+    def test_registra_motivo_da_rejeicao(self):
+        self.resposta(300, 1081, 1980)
+        linha = self.conn.execute(
+            "SELECT park, ride, route_meters, reason FROM route_rejections"
+        ).fetchone()
+        self.assertEqual(linha, (self.PARK, "Atração", 1081,
+                                 "distancia_implausivel"))
+
+    def test_qualidade_da_fila_nao_depende_da_posicao(self):
+        self.loc.desvio_da_media = lambda *_args: 0.4
+        self.monitor.tendencia = lambda *_args: ("↓", -10)
+        base = (10, 5, 5, 300, "Hulk", (1, 1))
+        longe = (100, 5, 95, 6000, "Hulk", (1, 1))
+        score_perto = self.loc.com_score(
+            [base], self.PARK, self.config, self.conn)[0][1]
+        score_longe = self.loc.com_score(
+            [longe], self.PARK, self.config, self.conn)[0][1]
+        self.assertEqual(score_perto, score_longe)
 
     def test_ranking_ioa_cai_no_fallback_sem_inversao(self):
         nomes = {
@@ -253,7 +346,7 @@ class TestRotasGoogleSeguras(BaseTeste):
 
         self.requests.roteador_post = responder
         ranking = self.loc.ranking_por_tempo_total(
-            PORTAO, self.PARK, payload, self.config, coords)
+            PORTAO, self.PARK, payload, self.config, coords, self.conn)
         por_nome = {item[4]: item for item in ranking}
 
         self.assertLess(por_nome["Harry Potter and the Forbidden Journey"][2], 5)
@@ -279,6 +372,21 @@ class TestMensagemPerto(BaseTeste):
         self.assertIn("no total", texto)
         self.assertIn("🚶", texto)
         self.assertIn("google.com/maps/dir", texto)
+        self.assertIn("estimativa interna", texto)
+
+    def test_mensagem_identifica_rota_google(self):
+        self.loc.GOOGLE_MAPS_API_KEY = "chave-de-teste"
+        self.loc._rota_cache.clear()
+        self.requests.roteador_post = lambda _url, corpo: Resposta([
+            {"destinationIndex": indice, "condition": "ROUTE_EXISTS",
+             "duration": "120s", "distanceMeters": 150}
+            for indice, _destino in enumerate(corpo["destinations"])
+        ])
+        texto = self.loc.format_perto(
+            PORTAO, "Disney Hollywood Studios", self.payload,
+            self.config, COORDS, self.conn)
+        self.assertIn("rota Google", texto)
+        self.assertIn("qualidade da fila", texto)
 
     def test_sem_coords_json_orienta_rodar_o_script(self):
         r = self.monitor.responder_localizacao(
@@ -579,6 +687,22 @@ class TestPersistenciaDoCoords(BaseTeste):
         import importlib
         loc = importlib.import_module("localizacao")
         self.assertEqual(loc.load_coords()["parks"], {"X": [1, 2]})
+
+    def test_volume_nao_oculta_ancoras_novas_do_versionado(self):
+        import importlib
+        self.monitor.COORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self.monitor.COORDS_PATH_REPO.write_text(json.dumps({
+            "parks": {"X": [1, 2]}, "rides": {},
+            "route_anchors": {"X": {"A": {"coord": [3, 4]}}},
+        }), encoding="utf-8")
+        self.monitor.COORDS_PATH.write_text(json.dumps({
+            "parks": {"X": [9, 9]}, "rides": {},
+        }), encoding="utf-8")
+
+        dados = importlib.import_module("localizacao").load_coords()
+
+        self.assertEqual(dados["parks"]["X"], [9, 9])
+        self.assertEqual(dados["route_anchors"]["X"]["A"]["coord"], [3, 4])
 
     def test_cai_no_versionado_quando_o_volume_esta_vazio(self):
         import json as _json, importlib
