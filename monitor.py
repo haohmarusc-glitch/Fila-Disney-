@@ -14,6 +14,7 @@ import json
 import hmac
 import logging
 import os
+import shutil
 import sqlite3
 import time
 import math
@@ -308,6 +309,10 @@ def init_db() -> sqlite3.Connection:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS reminders_sent ("
         "id TEXT PRIMARY KEY, sent_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS evening_alert ("
+        "sent_on TEXT NOT NULL, park TEXT NOT NULL, PRIMARY KEY (sent_on, park))"
     )
     if notifier.CHAT_ID:
         principal = str(notifier.CHAT_ID)
@@ -1355,6 +1360,150 @@ def maybe_send_top_alert(conn: sqlite3.Connection, config: dict, park_ids: dict[
             log.info("Top-%d de menores filas enviado (%s)", len(ranking), park_name)
 
 
+# ---------------------------------------------------------------- janela noturna
+
+# Fogos, parada e o pós-jantar esvaziam as filas por uma janela curta. A hora em
+# que isso acontece muda por parque e por temporada, então ela é MEDIDA no
+# próprio histórico, não cravada no código.
+JANELA_LOOKBACK_DIAS = 30
+JANELA_MIN_AMOSTRAS = 12     # ~1h de coleta numa hora do dia
+JANELA_QUEDA_MINIMA = 20     # % abaixo do pico para valer o aviso
+JANELA_MIN_HORAS = 4         # perfil com menos horas que isso não descreve o dia
+
+
+def perfil_por_hora(conn: sqlite3.Connection, config: dict, park: str,
+                    dias: int = JANELA_LOOKBACK_DIAS) -> dict[int, tuple[float, int]]:
+    """Fila média do parque inteiro por hora local, com a contagem de leituras.
+
+    O parque inteiro, e não só a watchlist: o que se quer medir é o movimento
+    da multidão, e a média sobre muitas atrações é mais estável que sobre oito.
+    """
+    corte = (utc_now() - timedelta(days=dias)).isoformat()
+    linhas = conn.execute(
+        """
+        SELECT date(ts), CAST(strftime('%H', ts) AS INTEGER), AVG(wait_time), COUNT(*)
+        FROM wait_times
+        WHERE park = ? AND ts >= ? AND is_open = 1 AND wait_time IS NOT NULL
+        GROUP BY 1, 2
+        """,
+        (park, corte),
+    ).fetchall()
+    return agregar_por_hora_local(linhas, fuso_do_parque(config))
+
+
+def janela_noturna(conn: sqlite3.Connection, config: dict,
+                   park: str) -> tuple[int, float, int] | None:
+    """(hora local, queda % em relação ao pico, hora do pico) ou None.
+
+    É a primeira hora DEPOIS do pico em que a fila média cai o bastante. Depois
+    do pico de propósito: a manhã também tem fila baixa, mas ali a decisão já é
+    outra (rope drop), e avisar "vai agora" às 9h não ajuda ninguém.
+    """
+    cfg = config.get("evening_alert", {})
+    perfil = perfil_por_hora(conn, config, park, cfg.get("lookback_days", JANELA_LOOKBACK_DIAS))
+    minimo = cfg.get("min_samples", JANELA_MIN_AMOSTRAS)
+    validos = {h: dados for h, dados in perfil.items()
+               if dados[1] >= minimo and h in HORAS_PARQUE}
+    if len(validos) < JANELA_MIN_HORAS:
+        return None
+
+    hora_pico, (pico, _n) = max(validos.items(), key=lambda item: item[1][0])
+    if pico <= 0:
+        return None
+    queda_minima = cfg.get("min_drop_percent", JANELA_QUEDA_MINIMA)
+    for hora in sorted(h for h in validos if h > hora_pico):
+        queda = (pico - validos[hora][0]) / pico * 100
+        if queda >= queda_minima:
+            return hora, queda, hora_pico
+    return None
+
+
+def janela_enviada(conn: sqlite3.Connection, dia: str, park: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM evening_alert WHERE sent_on = ? AND park = ? LIMIT 1", (dia, park)
+    ).fetchone() is not None
+
+
+def marcar_janela_enviada(conn: sqlite3.Connection, dia: str, park: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO evening_alert (sent_on, park) VALUES (?, ?)",
+                 (dia, park))
+    conn.commit()
+
+
+def format_janela_noturna(park: str, hora: int, queda: float, hora_pico: int,
+                          ranking: list, config: dict,
+                          conn: sqlite3.Connection | None = None) -> str:
+    agora = now_park(config).strftime("%Hh%M")
+    linhas = [
+        f"🌙 <b>Janela de fila curta — {notifier.esc(park)}</b>",
+        f"🕒 {agora} no horário do parque",
+        "",
+        f"A partir das {hora:02d}h a fila média deste parque cai <b>{queda:.0f}%</b> "
+        f"em relação ao pico das {hora_pico:02d}h — é o efeito de fogos, parada e jantar.",
+        "",
+        "Menores filas da sua watchlist agora:",
+    ]
+    medalhas = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣")
+    for i, (wait, ride, threshold) in enumerate(ranking):
+        marca = " ✅" if threshold is not None and wait <= threshold else ""
+        seta = marca_tendencia(conn, park, ride)
+        medalha = medalhas[i] if i < len(medalhas) else "•"
+        linhas.append(f"{medalha} {notifier.esc(ride)} — <b>{wait} min</b>{seta}{marca}")
+    linhas += ["", "Média do seu histórico, não previsão do dia.",
+               "Powered by Queue-Times.com"]
+    return "\n".join(linhas)
+
+
+def format_janela(conn: sqlite3.Connection, config: dict, park: str) -> str:
+    """Deixa a janela conferível antes da viagem, em vez de só confiar no push."""
+    perfil = perfil_por_hora(conn, config, park)
+    resultado = janela_noturna(conn, config, park)
+    linhas = [f"🌙 <b>Janela noturna — {notifier.esc(park)}</b>",
+              f"Últimos {JANELA_LOOKBACK_DIAS} dias", ""]
+    if resultado is None:
+        return "\n".join(linhas + [
+            "Ainda não dá para afirmar uma janela: falta histórico, ou a fila não "
+            f"cai {JANELA_QUEDA_MINIMA}% depois do pico neste parque."])
+    hora, queda, hora_pico = resultado
+    linhas.append(f"Pico às <b>{hora_pico:02d}h</b> · queda de <b>{queda:.0f}%</b> "
+                  f"a partir das <b>{hora:02d}h</b>")
+    linhas.append("")
+    for h in sorted(perfil):
+        if h not in HORAS_PARQUE or perfil[h][1] < JANELA_MIN_AMOSTRAS:
+            continue
+        media, n = perfil[h]
+        marca = " 🌙" if h == hora else (" 🔺" if h == hora_pico else "")
+        linhas.append(f"{h:02d}h — {media:.0f} min (n={n}){marca}")
+    linhas += ["", "Média do parque inteiro por hora, do seu próprio histórico."]
+    return "\n".join(linhas)
+
+
+def maybe_send_evening_alert(conn: sqlite3.Connection, config: dict,
+                             park_ids: dict[str, int], payloads: dict[str, dict]) -> None:
+    """Avisa uma vez por dia, na hora em que a fila do parque historicamente cai."""
+    cfg = config.get("evening_alert", {})
+    if not cfg.get("enabled", False) or in_quiet_hours(config):
+        return
+    agora = now_park(config)
+    dia = agora.date().isoformat()
+    for park in [p for p in is_alert_day(config) if p in park_ids]:
+        payload = payloads.get(park)
+        if payload is None or janela_enviada(conn, dia, park):
+            continue
+        resultado = janela_noturna(conn, config, park)
+        if resultado is None or agora.hour != resultado[0]:
+            continue
+        ranking = menores_filas(payload, config, park, cfg.get("count", 3),
+                                apenas_watchlist=True)
+        if not ranking:
+            continue
+        hora, queda, hora_pico = resultado
+        if notifier.send(format_janela_noturna(
+                park, hora, queda, hora_pico, ranking, config, conn)):
+            marcar_janela_enviada(conn, dia, park)
+            log.info("Janela noturna avisada (%s, %02dh, queda %.0f%%)", park, hora, queda)
+
+
 # ---------------------------------------------------------------- resumo diário
 
 JANELA_RESUMO_MINUTOS = 120  # se o container subiu tarde, o resumo ainda vale
@@ -1755,6 +1904,7 @@ HELP = (
     "/ranking semana — atrações mais concorridas nos últimos 7 dias\n"
     "/fechadas &lt;parque&gt; — o que está fechado AGORA, duração e instabilidade\n"
     "/quebras &lt;parque&gt; — quais atrações quebram MAIS, pelo histórico\n"
+    "/janela &lt;parque&gt; — a hora em que a fila do parque cai, pelo histórico\n"
     "/vigiar &lt;atração&gt; — avisa uma vez quando a atração reabrir\n"
     "/confianca &lt;atração&gt; — compara a fila com o histórico equivalente\n"
     "/lotacao &lt;parque&gt; — pressão estimada pelas filas e fechamentos\n"
@@ -1779,6 +1929,24 @@ HELP = (
 )
 
 
+DISCO_LIVRE_ALERTA_GB = 2.0
+
+
+def espaco_em_disco() -> tuple[float, float] | None:
+    """(GB livres, % usado) do volume do banco, ou None se não der para saber.
+
+    O /health mostrava só o tamanho do banco, o que não conta a história toda:
+    em 23/08/2026 o disco da VPS estava em 83% por causa de 20 GB de cache de
+    build do Docker, com o banco ocupando 56 MB. Quem olhasse só o banco não
+    veria o problema.
+    """
+    try:
+        uso = shutil.disk_usage(DB_PATH.parent)
+    except OSError:
+        return None
+    return uso.free / 1_000_000_000, 100.0 * uso.used / uso.total
+
+
 def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) -> str:
     """Estado do monitor: dá para responder 'está vivo?' sem abrir SSH."""
     ultima = conn.execute("SELECT MAX(ts) FROM wait_times").fetchone()[0]
@@ -1800,6 +1968,13 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
     rotas_rejeitadas = conn.execute(
         "SELECT COUNT(*) FROM route_rejections").fetchone()[0]
     do_dia = [p for p in is_alert_day(config) if p in park_ids]
+    disco = espaco_em_disco()
+    if disco is None:
+        linha_disco = "💾 Disco: indisponível"
+    else:
+        livre, usado = disco
+        icone = "⚠️" if livre < DISCO_LIVRE_ALERTA_GB else "💾"
+        linha_disco = f"{icone} Disco: {livre:.1f} GB livres ({usado:.0f}% usado)"
     return "\n".join([
         f"{saude} <b>Monitor de filas</b>",
         "",
@@ -1808,6 +1983,7 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
         f"Histórico: {total:,} leituras em {dias} dia(s) · {tamanho_mb:.1f} MB".replace(",", "."),
         f"Alertas já enviados: {alertas}",
         f"Rotas implausíveis descartadas: {rotas_rejeitadas}",
+        linha_disco,
         f"Versão: <code>{notifier.esc(APP_GIT_SHA)}</code>",
         f"Hoje: {', '.join(notifier.esc(p) for p in do_dia) if do_dia else 'sem parque (modo coleta)'}",
         "",
@@ -2133,7 +2309,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         return format_confianca(conn, config, park, ride, payload)
 
     comandos_parque = ("/status", "/resumo", "/menores", "/ranking", "/teste_alertas",
-                       "/fechadas", "/quebras", "/lotacao", "/plano", "/chuva")
+                       "/fechadas", "/quebras", "/janela", "/lotacao", "/plano", "/chuva")
     if cmd not in comandos_parque:
         return HELP
     if cmd == "/teste_alertas" and not arg:
@@ -2192,6 +2368,8 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         return format_daily_summary(conn, config, park_name)
     if cmd == "/quebras":
         return format_quebras(conn, config, park_name)
+    if cmd == "/janela":
+        return format_janela(conn, config, park_name)
 
     try:
         payload = fetch_queue_times(park_ids[park_name])
@@ -2475,6 +2653,10 @@ def main() -> None:
             maybe_send_top_alert(conn, config, park_ids, payloads)
         except Exception:  # noqa: BLE001 — alerta quebrado não pode parar a coleta
             log.exception("Erro no alerta de menores filas")
+        try:
+            maybe_send_evening_alert(conn, config, park_ids, payloads)
+        except Exception:  # noqa: BLE001 — aviso quebrado não pode parar a coleta
+            log.exception("Erro no aviso da janela noturna")
         try:
             maybe_send_daily_summary(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — resumo quebrado não pode parar a coleta

@@ -24,6 +24,15 @@ services:
     container_name: fila-disney-api
     command: ["python", "-u", "api_server.py"]
     restart: unless-stopped
+    # Sobrescreve o HEALTHCHECK da imagem, que mede a coleta do monitor: aqui a
+    # pergunta é se o servidor HTTP responde. Sem isto o container aparecia
+    # "healthy" com a API morta.
+    healthcheck:
+      test: ["CMD", "python", "healthcheck_api.py"]
+      interval: 1m
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     env_file: .env
     volumes:
       - ./data:/app/data

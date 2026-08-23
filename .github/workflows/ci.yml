@@ -38,7 +38,7 @@ jobs:
         run: |
           docker run --rm fila-disney:ci python -c "
           import monitor, notifier, localizacao, personagens, coords, healthcheck, analyze
-          import api_server
+          import api_server, healthcheck_api
           assert monitor.APP_GIT_SHA == '$GITHUB_SHA'
           print('todos os módulos importam dentro da imagem')
           "
