@@ -613,75 +613,14 @@ def fila_paralela(ride_name: str) -> bool:
     return any(termo in ride_name.lower() for termo in FILAS_IGNORADAS)
 
 
-# A regra 10 tira essas filas de alerta e de ranking, e continua valendo: elas
-# reportam 0 min sem dado e o match parcial casa com a atração real. Mas o
-# roteiro planeja single rider em Flight of Passage, Guardians, Tron e Tiana, e
-# no IOA/USF não há Express — esconder por completo tira informação de quem
-# decidiu usar a fila. O /status passa a mostrá-las num bloco à parte, que nunca
-# alerta e nunca entra em ranking.
-SINGLE_RIDER_LOOKBACK_DIAS = 30
-SINGLE_RIDER_MIN_LEITURAS = 12
-
-
-def atracao_da_fila_paralela(park_cfg: dict, ride_name: str) -> str | None:
-    """Atração da watchlist a que esta fila paralela pertence, se houver."""
-    if not fila_paralela(ride_name):
-        return None
-    alvo = normalizar_nome_api(ride_name)
-    # Só nesta direção: o nome da watchlist cabe dentro do nome da fila paralela
-    # ("Test Track" ⊂ "Test Track Presented by Chevrolet Single Rider"), nunca o
-    # contrário. Aceitar os dois lados casaria fila paralela com atração errada.
-    for watched in park_cfg.get("attractions", {}):
-        if normalizar_nome_api(watched) in alvo:
-            return watched
-    return None
-
-
-def paralelas_com_historico(conn: sqlite3.Connection, park: str,
-                            dias: int = SINGLE_RIDER_LOOKBACK_DIAS) -> set[str]:
-    """Filas paralelas que a API realmente publica, decidido pelo histórico.
-
-    O motivo da regra 10 é que essas entradas vêm com 0 min quando não há dado —
-    e ausência de dado não pode virar 0 (regra 15). O número de agora não
-    distingue os dois casos; o histórico distingue. Entrada que em 30 dias nunca
-    passou de 0 é entrada morta e fica escondida. Numa que já reportou fila de
-    verdade, um 0 de agora é walk-on de verdade.
-    """
-    corte = (utc_now() - timedelta(days=dias)).isoformat()
-    linhas = conn.execute(
-        "SELECT ride, COUNT(*), MAX(wait_time) FROM wait_times "
-        "WHERE park = ? AND ts >= ? AND is_open = 1 AND wait_time IS NOT NULL "
-        "GROUP BY ride",
-        (park, corte),
-    ).fetchall()
-    return {ride for ride, leituras, maior in linhas
-            if fila_paralela(ride) and leituras >= SINGLE_RIDER_MIN_LEITURAS
-            and (maior or 0) > 0}
-
-
-def filas_paralelas_ativas(payload: dict, config: dict, park_name: str,
-                           conn: sqlite3.Connection | None) -> list[tuple[str, int]]:
-    """(atração da watchlist, minutos) das filas paralelas com dado agora."""
-    if conn is None:
-        return []   # sem histórico não dá para separar fila viva de entrada morta
-    park_cfg = config["parks"].get(park_name, {})
-    limite_obsoleto = config.get("alert", {}).get(
-        "max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
-    vivas = paralelas_com_historico(conn, park_name)
-    achadas = []
-    for _land, ride in iter_rides(payload):
-        if ride["name"] not in vivas:
-            continue
-        atracao = atracao_da_fila_paralela(park_cfg, ride["name"])
-        wait = ride.get("wait_time")
-        if (atracao is None or not ride.get("is_open") or wait is None
-                or leitura_obsoleta(ride, limite_obsoleto)):
-            continue
-        achadas.append((atracao, wait))
-    achadas.sort()
-    return achadas
-
-
+# Medido em 23/08/2026, com 30 dias de coleta: as 19 filas paralelas que a API
+# publica somam ~18.000 leituras e **nenhuma** com wait_time acima de 0. O campo
+# é placeholder fixo, não dado que às vezes chega. O is_open também não informa:
+# nas do Universal fica preso em true (963/963 leituras abertas, o que nenhum
+# parque faz), e nas da Disney fica em ~50%, espelhando a operação da atração-mãe.
+# Já houve uma tentativa de mostrar essas filas num bloco à parte do /status,
+# revelando só as que o histórico provasse vivas — o histórico provou que não há
+# nenhuma. O teste tests/test_filas_paralelas_reais.py guarda os 19 nomes.
 _SO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 
 
@@ -2533,11 +2472,6 @@ def format_status(park_name: str, payload: dict, config: dict,
         linhas.append(f"🔒 {notifier.esc(ride)} — fechada")
     for ride, wait in sorted(obsoletas):
         linhas.append(f"⏳ {notifier.esc(ride)} — {wait} min (dado desatualizado)")
-    paralelas = filas_paralelas_ativas(payload, config, park_name, conn)
-    if paralelas:
-        linhas += ["", "🎟 <b>Single rider</b> — fila à parte, nunca alerta:"]
-        for atracao, wait in paralelas:
-            linhas.append(f"     {notifier.esc(atracao)} — <b>{wait} min</b>")
     linhas += ["", "✅ = no ponto de ir · ↓ caindo · ↑ subindo (últimos 35 min)",
                "Powered by Queue-Times.com"]
     return "\n".join(linhas)
