@@ -13,7 +13,11 @@ import healthcheck_api
 from tests.apoio import BaseTeste
 
 PARQUE = "Disney Magic Kingdom"
-ATRACOES = ["Space Mountain", "Haunted Mansion", "Jungle Cruise"]
+# Seis: o índice exige um mínimo de atrações por hora, senão a "média do
+# parque" seria a média de duas coisas.
+ATRACOES = ["Space Mountain", "Haunted Mansion", "Jungle Cruise",
+            "Peter Pan's Flight", "Big Thunder Mountain Railroad",
+            "Pirates of the Caribbean"]
 
 
 class BasePerfil(BaseTeste):
@@ -47,7 +51,9 @@ class TestDeteccaoDaJanela(BasePerfil):
         hora, queda, pico = self.monitor.janela_noturna(self.conn, self.config, PARQUE)
         self.assertEqual(hora, 20)
         self.assertEqual(pico, 14)
-        self.assertAlmostEqual(queda, 100 * (60 - 35) / 60, places=0)
+        # A queda é contra a hora TÍPICA (mediana), não contra o pico: 35 min
+        # numa mediana de ~45 dá ~22%, e não os 42% que o pico sugeriria.
+        self.assertAlmostEqual(queda, 22.2, places=0)
 
     def test_manha_nao_conta_mesmo_com_fila_baixa(self):
         """9h tem fila menor que 20h, mas ali a decisão é rope drop, não 'vai agora'."""
@@ -60,18 +66,40 @@ class TestDeteccaoDaJanela(BasePerfil):
         self.assertIsNone(self.monitor.janela_noturna(self.conn, self.config, PARQUE))
 
     def test_hora_com_poucas_amostras_e_ignorada(self):
-        self.gravar_perfil(self.PERFIL_TIPICO, dias=1, por_hora=2)  # 2 leituras/hora
+        self.gravar_perfil(self.PERFIL_TIPICO, dias=1, por_hora=1)  # 1 leitura/hora
         self.assertIsNone(self.monitor.janela_noturna(self.conn, self.config, PARQUE),
-                          "2 leituras por hora não descrevem o parque")
+                          "uma leitura por hora não descreve o parque")
 
     def test_sem_historico_nenhum(self):
         self.assertIsNone(self.monitor.janela_noturna(self.conn, self.config, PARQUE))
 
     def test_queda_minima_e_configuravel(self):
-        self.gravar_perfil({9: 20, 12: 50, 14: 60, 16: 58, 18: 55, 20: 51})  # queda de 15%
+        self.gravar_perfil({9: 20, 12: 50, 14: 60, 16: 58, 18: 55, 20: 44})  # queda de ~16%
         self.assertIsNone(self.monitor.janela_noturna(self.conn, self.config, PARQUE))
         config = dict(self.config, evening_alert={"min_drop_percent": 10})
         self.assertIsNotNone(self.monitor.janela_noturna(self.conn, config, PARQUE))
+
+    def test_atracao_que_so_reporta_zero_nao_entra_no_indice(self):
+        """Cinco atrações do Hollywood Studios reportam fila 0 as 24 horas."""
+        self.gravar_perfil(self.PERFIL_TIPICO)
+        sem_zero = self.monitor.janela_noturna(self.conn, self.config, PARQUE)
+        fuso = self.monitor.fuso_do_parque(self.config)
+        hoje = self.monitor.utc_now().date()
+        linhas = []
+        for dia in range(1, 4):
+            for hora_local in self.PERFIL_TIPICO:
+                local = dt.datetime.combine(hoje - dt.timedelta(days=dia),
+                                            dt.time(hora_local), tzinfo=fuso)
+                utc = local.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                for i in range(12):
+                    ts = (utc + dt.timedelta(minutes=i)).isoformat()
+                    linhas.append((ts, PARQUE, "L", "Walt Disney Presents", 0, 1))
+        self.conn.executemany(
+            "INSERT INTO wait_times (ts, park, land, ride, wait_time, is_open) "
+            "VALUES (?, ?, ?, ?, ?, ?)", linhas)
+        self.conn.commit()
+        self.assertEqual(self.monitor.janela_noturna(self.conn, self.config, PARQUE),
+                         sem_zero, "atração sempre em 0 não diz nada sobre lotação")
 
 
 class TestAvisoDaJanela(BasePerfil):
