@@ -315,6 +315,19 @@ def init_db() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS evening_alert ("
         "sent_on TEXT NOT NULL, park TEXT NOT NULL, PRIMARY KEY (sent_on, park))"
     )
+    # Compartilhar posição com o resto da família é opt-in explícito: a linha só
+    # existe depois de alguém mandar /grupo on. Ausência de linha é "não".
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS group_sharing ("
+        "chat_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, "
+        "updated_at TEXT NOT NULL)"
+    )
+    # Sem isto o /grupo listaria números de chat. O nome vem do próprio Telegram,
+    # a cada mensagem, e sai junto com o acesso quando o chat é revogado.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS chat_names ("
+        "chat_id TEXT PRIMARY KEY, nome TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
     if notifier.CHAT_ID:
         principal = str(notifier.CHAT_ID)
         conn.execute(
@@ -600,6 +613,75 @@ def fila_paralela(ride_name: str) -> bool:
     return any(termo in ride_name.lower() for termo in FILAS_IGNORADAS)
 
 
+# A regra 10 tira essas filas de alerta e de ranking, e continua valendo: elas
+# reportam 0 min sem dado e o match parcial casa com a atração real. Mas o
+# roteiro planeja single rider em Flight of Passage, Guardians, Tron e Tiana, e
+# no IOA/USF não há Express — esconder por completo tira informação de quem
+# decidiu usar a fila. O /status passa a mostrá-las num bloco à parte, que nunca
+# alerta e nunca entra em ranking.
+SINGLE_RIDER_LOOKBACK_DIAS = 30
+SINGLE_RIDER_MIN_LEITURAS = 12
+
+
+def atracao_da_fila_paralela(park_cfg: dict, ride_name: str) -> str | None:
+    """Atração da watchlist a que esta fila paralela pertence, se houver."""
+    if not fila_paralela(ride_name):
+        return None
+    alvo = normalizar_nome_api(ride_name)
+    # Só nesta direção: o nome da watchlist cabe dentro do nome da fila paralela
+    # ("Test Track" ⊂ "Test Track Presented by Chevrolet Single Rider"), nunca o
+    # contrário. Aceitar os dois lados casaria fila paralela com atração errada.
+    for watched in park_cfg.get("attractions", {}):
+        if normalizar_nome_api(watched) in alvo:
+            return watched
+    return None
+
+
+def paralelas_com_historico(conn: sqlite3.Connection, park: str,
+                            dias: int = SINGLE_RIDER_LOOKBACK_DIAS) -> set[str]:
+    """Filas paralelas que a API realmente publica, decidido pelo histórico.
+
+    O motivo da regra 10 é que essas entradas vêm com 0 min quando não há dado —
+    e ausência de dado não pode virar 0 (regra 15). O número de agora não
+    distingue os dois casos; o histórico distingue. Entrada que em 30 dias nunca
+    passou de 0 é entrada morta e fica escondida. Numa que já reportou fila de
+    verdade, um 0 de agora é walk-on de verdade.
+    """
+    corte = (utc_now() - timedelta(days=dias)).isoformat()
+    linhas = conn.execute(
+        "SELECT ride, COUNT(*), MAX(wait_time) FROM wait_times "
+        "WHERE park = ? AND ts >= ? AND is_open = 1 AND wait_time IS NOT NULL "
+        "GROUP BY ride",
+        (park, corte),
+    ).fetchall()
+    return {ride for ride, leituras, maior in linhas
+            if fila_paralela(ride) and leituras >= SINGLE_RIDER_MIN_LEITURAS
+            and (maior or 0) > 0}
+
+
+def filas_paralelas_ativas(payload: dict, config: dict, park_name: str,
+                           conn: sqlite3.Connection | None) -> list[tuple[str, int]]:
+    """(atração da watchlist, minutos) das filas paralelas com dado agora."""
+    if conn is None:
+        return []   # sem histórico não dá para separar fila viva de entrada morta
+    park_cfg = config["parks"].get(park_name, {})
+    limite_obsoleto = config.get("alert", {}).get(
+        "max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
+    vivas = paralelas_com_historico(conn, park_name)
+    achadas = []
+    for _land, ride in iter_rides(payload):
+        if ride["name"] not in vivas:
+            continue
+        atracao = atracao_da_fila_paralela(park_cfg, ride["name"])
+        wait = ride.get("wait_time")
+        if (atracao is None or not ride.get("is_open") or wait is None
+                or leitura_obsoleta(ride, limite_obsoleto)):
+            continue
+        achadas.append((atracao, wait))
+    achadas.sort()
+    return achadas
+
+
 _SO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 
 
@@ -881,6 +963,136 @@ def ultima_localizacao(conn: sqlite3.Connection, max_minutos: int = 180,
     except (TypeError, ValueError):
         return None
     return (row[0], row[1]) if idade <= timedelta(minutes=max_minutos) else None
+
+
+# ---------------------------------------------------------------- grupo
+
+GRUPO_MAX_MINUTOS = 180      # mesma janela que o /perto considera posição atual
+# "perto de X" a 900 m de X é falso. Além deste raio sai só o parque: dizer menos
+# é melhor que dizer uma referência que manda a família para o lado errado.
+GRUPO_REFERENCIA_MAX_METROS = 400
+
+
+def registrar_nome_chat(conn: sqlite3.Connection, chat_id, nome: str) -> None:
+    """Guarda o primeiro nome que o Telegram manda, para o /grupo ter rótulo."""
+    nome = (nome or "").strip()[:40]
+    if not nome:
+        return
+    conn.execute(
+        "INSERT INTO chat_names (chat_id, nome, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(chat_id) DO UPDATE SET nome = excluded.nome, "
+        "updated_at = excluded.updated_at",
+        (str(chat_id), nome, utc_now().isoformat()),
+    )
+    conn.commit()
+
+
+def nome_do_chat(conn: sqlite3.Connection, chat_id) -> str:
+    row = conn.execute(
+        "SELECT nome FROM chat_names WHERE chat_id = ?", (str(chat_id),)).fetchone()
+    return row[0] if row else f"chat {chat_id}"
+
+
+def compartilha_no_grupo(conn: sqlite3.Connection, chat_id) -> bool:
+    row = conn.execute(
+        "SELECT enabled FROM group_sharing WHERE chat_id = ?", (str(chat_id),)).fetchone()
+    return bool(row and row[0])
+
+
+def definir_compartilhamento(conn: sqlite3.Connection, chat_id, ligado: bool) -> str:
+    conn.execute(
+        "INSERT INTO group_sharing (chat_id, enabled, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(chat_id) DO UPDATE SET enabled = excluded.enabled, "
+        "updated_at = excluded.updated_at",
+        (str(chat_id), int(ligado), utc_now().isoformat()),
+    )
+    conn.commit()
+    if ligado:
+        return ("👨‍👩‍👧 Pronto: sua posição passa a aparecer no <code>/grupo</code> "
+                "para quem também compartilha.\n"
+                "Só entra o que você mandar pelo botão de localização, e some "
+                "sozinho depois de 3h sem atualizar.\n"
+                "<code>/grupo off</code> desliga a qualquer momento.")
+    return ("🔕 Você saiu do <code>/grupo</code>. Sua posição não aparece mais "
+            "para ninguém — e você também deixa de ver a dos outros.")
+
+
+def posicoes_do_grupo(conn: sqlite3.Connection, exceto=None,
+                      max_minutos: int = GRUPO_MAX_MINUTOS) -> list[tuple]:
+    """(chat_id, nome, lat, lon, minutos atrás) de quem compartilha e é recente."""
+    corte = (utc_now() - timedelta(minutes=max_minutos)).isoformat()
+    linhas = conn.execute(
+        "SELECT u.chat_id, u.latitude, u.longitude, u.updated_at "
+        "FROM user_locations u "
+        "JOIN group_sharing g ON g.chat_id = u.chat_id AND g.enabled = 1 "
+        "JOIN authorized_chats a ON a.chat_id = u.chat_id "
+        "WHERE u.updated_at >= ? ORDER BY u.updated_at DESC",
+        (corte,),
+    ).fetchall()
+    agora = utc_now()
+    posicoes = []
+    for chat_id, lat, lon, quando in linhas:
+        if exceto is not None and chat_id == str(exceto):
+            continue
+        try:
+            idade = int((agora - datetime.fromisoformat(quando)).total_seconds() // 60)
+        except (TypeError, ValueError):
+            continue
+        posicoes.append((chat_id, nome_do_chat(conn, chat_id), lat, lon, idade))
+    return posicoes
+
+
+def atracao_mais_proxima(posicao, park_name: str, coords: dict):
+    """(nome, metros) da atração conhecida mais perto, ou None sem coordenada.
+
+    Regra 12: só sai de coordenada real do coords.json. Parque sem coordenada
+    aparece sem referência, nunca com um ponto inventado.
+    """
+    do_parque = coords.get("rides", {}).get(park_name, {})
+    if not do_parque:
+        return None
+    perto = min(((localizacao.distancia_metros(posicao, tuple(coord)), nome)
+                 for nome, coord in do_parque.items()), default=None)
+    return (perto[1], perto[0]) if perto else None
+
+
+def format_grupo(conn: sqlite3.Connection, config: dict, coords: dict, chat_id) -> str:
+    """Onde está a família — só entre quem compartilha, e sem coordenada crua.
+
+    Ver exige compartilhar: sem essa simetria o comando vira janela de mão única
+    para quem não se expõe. E o que sai é parque + referência + há quanto tempo,
+    não lat/lon: é o que responde "onde todo mundo está" sem publicar a posição
+    exata de ninguém num chat.
+    """
+    if not compartilha_no_grupo(conn, chat_id):
+        return ("👨‍👩‍👧 O <code>/grupo</code> mostra onde está quem compartilha — e para "
+                "ver é preciso compartilhar também.\n\n"
+                "<code>/grupo on</code> entra. Depois é só mandar sua localização "
+                "pelo 📎 quando quiser atualizar.")
+    minha = ultima_localizacao(conn, GRUPO_MAX_MINUTOS, chat_id=chat_id)
+    posicoes = posicoes_do_grupo(conn, exceto=chat_id)
+    if not posicoes:
+        return ("👨‍👩‍👧 <b>Grupo</b>\n\nNinguém mais compartilhou posição nas últimas "
+                f"{GRUPO_MAX_MINUTOS // 60}h.\n"
+                "Cada um precisa mandar <code>/grupo on</code> e depois a própria "
+                "localização.")
+    linhas = ["👨‍👩‍👧 <b>Grupo — onde está todo mundo</b>", ""]
+    for _cid, nome, lat, lon, idade in posicoes:
+        parque = localizacao.parque_mais_proximo((lat, lon), coords)
+        onde = notifier.esc(parque) if parque else "fora dos parques monitorados"
+        linhas.append(f"📍 <b>{notifier.esc(nome)}</b> — {onde}")
+        detalhes = []
+        perto = atracao_mais_proxima((lat, lon), parque, coords) if parque else None
+        if perto and perto[1] <= GRUPO_REFERENCIA_MAX_METROS:
+            detalhes.append(f"perto de {notifier.esc(perto[0])}")
+        if minha:
+            distancia = localizacao.distancia_metros(minha, (lat, lon))
+            detalhes.append(f"{distancia:.0f} m de você"
+                            if distancia < 1000 else f"{distancia / 1000:.1f} km de você")
+        detalhes.append("agora" if idade < 1 else f"há {idade} min")
+        linhas.append("     " + " · ".join(detalhes))
+    linhas += ["", "Posição só de quem mandou pelo 📎 · <code>/grupo off</code> para sair"]
+    return "\n".join(linhas)
 
 
 def vigiar_atracao(conn: sqlite3.Connection, park: str, ride: str, chat_id=None) -> str:
@@ -1990,6 +2202,11 @@ def revogar_acesso(conn: sqlite3.Connection, alvo, solicitante) -> str:
     apagados = conn.execute(
         "DELETE FROM authorized_chats WHERE chat_id = ?", (alvo,)
     ).rowcount
+    # Tirar o acesso e deixar a posição no banco seria meia revogação: quem saiu
+    # continuaria aparecendo no /grupo de quem ficou.
+    for tabela in ("group_sharing", "chat_names", "user_locations",
+                   "character_last_checks"):
+        conn.execute(f"DELETE FROM {tabela} WHERE chat_id = ?", (alvo,))
     conn.commit()
     if not apagados:
         return f"O chat <code>{notifier.esc(alvo)}</code> não estava liberado."
@@ -2037,6 +2254,8 @@ HELP = (
     "/perto — melhor atração agora considerando fila + caminhada\n"
     "/personagens_perto — encontros abertos perto da sua localização\n"
     "/alerta_personagens on|off — liga ou desliga avisos por proximidade\n"
+    "/grupo — onde está a família (só entre quem compartilha)\n"
+    "/grupo on|off — entra ou sai do compartilhamento de posição\n"
     "/lembretes — prazos que ainda vão chegar (Lightning Lane, conferências)\n"
     "/health — estado do monitor (coleta, banco, parques)\n"
     "/teste_alertas &lt;parque&gt; — ensaia TODAS as mensagens automáticas, marcadas\n"
@@ -2314,6 +2533,11 @@ def format_status(park_name: str, payload: dict, config: dict,
         linhas.append(f"🔒 {notifier.esc(ride)} — fechada")
     for ride, wait in sorted(obsoletas):
         linhas.append(f"⏳ {notifier.esc(ride)} — {wait} min (dado desatualizado)")
+    paralelas = filas_paralelas_ativas(payload, config, park_name, conn)
+    if paralelas:
+        linhas += ["", "🎟 <b>Single rider</b> — fila à parte, nunca alerta:"]
+        for atracao, wait in paralelas:
+            linhas.append(f"     {notifier.esc(atracao)} — <b>{wait} min</b>")
     linhas += ["", "✅ = no ponto de ir · ↓ caindo · ↑ subindo (últimos 35 min)",
                "Powered by Queue-Times.com"]
     return "\n".join(linhas)
@@ -2359,6 +2583,13 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         except requests.RequestException:
             return "Não consegui consultar os personagens agora. Tente novamente em 1 min."
         return format_personagens_proximos(park, items, raio)
+    if cmd == "/grupo":
+        opcao = arg.lower()
+        if opcao in ("on", "ligar", "ativar", "entrar"):
+            return definir_compartilhamento(conn, chat_id, True)
+        if opcao in ("off", "desligar", "desativar", "sair"):
+            return definir_compartilhamento(conn, chat_id, False)
+        return format_grupo(conn, config, coords or {}, chat_id)
     if cmd == "/sair":
         return revogar_acesso(conn, chat_id, chat_id)
     if cmd == "/revogar":
@@ -2539,6 +2770,7 @@ def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
             senha = primeira[1].strip() if len(primeira) > 1 else ""
             notifier.send(autenticar_familiar(conn, chat_id, senha), chat_id=chat_id)
             continue
+        remetente = message.get("from") or message.get("chat") or {}
         if not chat_autorizado(conn, chat_id):
             log.warning("Comando ignorado de chat não autorizado: %s", chat_id)
             if deve_avisar_nao_autorizado(conn, chat_id):
@@ -2547,6 +2779,7 @@ def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
                     chat_id=chat_id,
                 )
             continue
+        registrar_nome_chat(conn, chat_id, remetente.get("first_name", ""))
 
         if location_data:
             log.info("Localização %srecebida", "ao vivo atualizada " if edited_location else "")

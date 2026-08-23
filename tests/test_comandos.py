@@ -99,6 +99,12 @@ class TestStatusEMenores(BaseComando):
         self.assertIn("⭐", r, "marca o que está na watchlist")
 
     def test_single_rider_fora_dos_dois(self):
+        """Fora das listas que decidem ir ou não ir.
+
+        O /status ganhou um bloco separado de single rider, mas ele só aparece
+        com histórico mostrando fila de verdade (ver tests/test_single_rider.py)
+        — e o nome da API nunca vai para a tela, sai o nome da watchlist.
+        """
         for texto in ("/status Hollywood", "/menores Hollywood"):
             self.assertNotIn("Single Rider", self.cmd(texto), texto)
 
