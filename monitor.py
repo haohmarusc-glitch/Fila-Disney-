@@ -470,8 +470,10 @@ def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
                 if tentativa < tentativas:
                     _dormir(espera)
                 continue
-            if 400 <= resp.status_code < 500:
-                resp.raise_for_status()  # não adianta repetir
+            # Quem decide não repetir 4xx é o `break` no except abaixo, olhando
+            # o status da exceção. Havia aqui um raise_for_status() extra dentro
+            # de um `if 400 <= status < 500` — não mudava nada, porque a linha
+            # seguinte levanta do mesmo jeito.
             resp.raise_for_status()
             return resp.json()
         except (requests.RequestException, ValueError) as exc:
@@ -2899,6 +2901,30 @@ def compactar_banco(conn: sqlite3.Connection) -> float | None:
     return (antes - DB_PATH.stat().st_size) / 1_000_000
 
 
+def avisar_disco_apertado() -> None:
+    """Avisa no Telegram quando o disco aperta. Uma vez por dia, sem tabela nova.
+
+    O /health já mostrava o espaço livre, mas só para quem pedisse — e ninguém
+    pede /health por acaso. Em 23/08/2026 o disco chegou a 83% sem ninguém
+    notar, e quem notou foi uma auditoria. Disco cheio para a coleta em silêncio.
+
+    Vive dentro da manutenção diária de propósito: aquele bloco já roda uma vez
+    por dia, então o aviso herda o "não repetir" sem precisar de estado próprio.
+    """
+    disco = espaco_em_disco()
+    if disco is None or disco[0] >= DISCO_LIVRE_ALERTA_GB:
+        return
+    livre, usado = disco
+    log.warning("Disco apertado: %.1f GB livres (%.0f%% usado)", livre, usado)
+    notifier.send(
+        f"⚠️ <b>Disco do VPS apertando</b>\n\n"
+        f"Livres: <b>{livre:.1f} GB</b> ({usado:.0f}% usado)\n\n"
+        "A coleta para em silêncio se encher. Para recuperar espaço de cache de "
+        "build: <code>docker builder prune</code> — ele não toca em imagem em "
+        "uso, container nem volume."
+    )
+
+
 def maybe_maintain_db(conn: sqlite3.Connection, config: dict) -> None:
     """Manutenção diária curta; histórico bruto só expira depois da viagem."""
     hoje = utc_now().date().isoformat()
@@ -2937,6 +2963,7 @@ def maybe_maintain_db(conn: sqlite3.Connection, config: dict) -> None:
                  (hoje, apagadas))
     conn.execute("PRAGMA optimize")
     conn.commit()
+    avisar_disco_apertado()
     # Depois do commit: o VACUUM não roda dentro de transação aberta.
     try:
         recuperado = compactar_banco(conn)
@@ -3032,4 +3059,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # `python monitor.py` carrega este arquivo como __main__; o `import monitor`
+    # do localizacao.py carrega de novo, sob o nome `monitor`. São dois objetos
+    # de módulo com globais separadas. Hoje só há constantes e ninguém percebe,
+    # mas qualquer estado futuro (cache, conexão, contador) passaria a existir
+    # em duas cópias que divergem em silêncio — o pior tipo de bug.
+    # Delegar para o módulo importado garante que quem roda é sempre a mesma
+    # cópia que o resto do programa enxerga.
+    import monitor
+
+    monitor.main()
