@@ -2683,6 +2683,55 @@ def enviar_heartbeat(payloads: dict[str, dict], park_ids: dict[str, int]) -> Non
         log.warning("Falha ao enviar heartbeat ao Uptime Kuma (%s)", type(exc).__name__)
 
 
+RETENCAO_GPS_DIAS = 7        # posição da família não é log: expira rápido
+VACUUM_MIN_LIVRE_MB = 50     # abaixo disso o VACUUM custa mais do que devolve
+
+
+def paginas_livres_mb(conn: sqlite3.Connection) -> float:
+    """Espaço morto dentro do arquivo: o DELETE do SQLite não devolve ao disco."""
+    livres = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    pagina = conn.execute("PRAGMA page_size").fetchone()[0]
+    return livres * pagina / 1_000_000
+
+
+def compactar_banco(conn: sqlite3.Connection) -> float | None:
+    """VACUUM só quando há espaço morto de verdade — e disco para o dobro.
+
+    Apagar não encolhe o arquivo: as páginas vão para a lista livre e o banco
+    só cresce. O VACUUM devolve, mas reescreve o banco inteiro segurando lock
+    exclusivo — o container da API lê o mesmo arquivo e espera (busy_timeout de
+    5s). Por isso não é rotina: só roda quando tem o que recuperar.
+
+    Devolve os MB que o arquivo encolheu de fato, None quando decide não mexer.
+    """
+    livre_mb = paginas_livres_mb(conn)
+    if livre_mb < VACUUM_MIN_LIVRE_MB:
+        return None
+    # O VACUUM monta o banco novo ao lado antes de trocar. Sem espaço para essa
+    # cópia ele falha no meio de um disco já apertado — exatamente a situação em
+    # que alguém pensaria em rodá-lo.
+    tamanho_gb = DB_PATH.stat().st_size / 1_000_000_000
+    disco = espaco_em_disco()
+    if disco is not None and disco[0] < tamanho_gb * 2:
+        log.warning("VACUUM adiado: %.1f GB livres no disco para um banco de %.1f GB",
+                    disco[0], tamanho_gb)
+        return None
+    antes = DB_PATH.stat().st_size
+    conn.execute("VACUUM")
+    # Em WAL o VACUUM escreve o banco novo no -wal: sem checkpoint o arquivo
+    # principal continua do tamanho antigo E o -wal fica do tamanho do banco
+    # inteiro — momentaneamente o dobro do disco, o oposto do que se queria.
+    # Medido: 90 MB viraram 90 MB + 90 MB de WAL; com o checkpoint, 0,2 MB.
+    ocupado, _, _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    if ocupado:
+        # Leitor segurando o WAL (o container da API). O espaço volta no
+        # próximo checkpoint; nada quebrou, mas não dá para dizer que encolheu.
+        log.warning("VACUUM feito, mas o checkpoint não passou: o arquivo "
+                    "encolhe quando o leitor soltar o WAL")
+        return None
+    return (antes - DB_PATH.stat().st_size) / 1_000_000
+
+
 def maybe_maintain_db(conn: sqlite3.Connection, config: dict) -> None:
     """Manutenção diária curta; histórico bruto só expira depois da viagem."""
     hoje = utc_now().date().isoformat()
@@ -2696,6 +2745,19 @@ def maybe_maintain_db(conn: sqlite3.Connection, config: dict) -> None:
         apagadas += conn.execute(
             f"DELETE FROM {tabela} WHERE {coluna} < ?", (corte_logs,)
         ).rowcount
+    # GPS da família não é log de operação: é a posição de gente real, e nenhum
+    # leitor olha para trás. `ultima_localizacao` descarta acima de 180 min,
+    # `character_last_checks` serve a uma dedupe de 2 min e `character_alerts` ao
+    # cooldown de personagem. Guardar isso por 90 dias como os outros seria
+    # manter o rastro da viagem inteira sem que nada leia. Sete dias já é folga
+    # de sobra sobre a maior dessas janelas.
+    corte_gps = (utc_now() - timedelta(days=RETENCAO_GPS_DIAS)).isoformat()
+    for tabela, coluna in (("user_locations", "updated_at"),
+                           ("character_last_checks", "checked_at"),
+                           ("character_alerts", "sent_at")):
+        apagadas += conn.execute(
+            f"DELETE FROM {tabela} WHERE {coluna} < ?", (corte_gps,)
+        ).rowcount
     retencao = max(30, int(config.get("database", {}).get("raw_retention_days", 180)))
     try:
         fim_viagem = date.fromisoformat(config["trip"]["end"])
@@ -2708,6 +2770,14 @@ def maybe_maintain_db(conn: sqlite3.Connection, config: dict) -> None:
                  (hoje, apagadas))
     conn.execute("PRAGMA optimize")
     conn.commit()
+    # Depois do commit: o VACUUM não roda dentro de transação aberta.
+    try:
+        recuperado = compactar_banco(conn)
+    except sqlite3.Error as exc:  # noqa: BLE001 — manutenção nunca derruba o ciclo
+        log.warning("VACUUM falhou (%s); o banco segue utilizável", exc)
+    else:
+        if recuperado is not None:
+            log.info("VACUUM devolveu ~%.0f MB ao disco", recuperado)
 
 
 def main() -> None:

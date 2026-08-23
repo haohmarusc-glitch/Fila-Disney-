@@ -29,6 +29,22 @@ ESPERA_BANCO_S = 60      # o monitor cria o banco; a API só lê
 _falhas: list[float] = []
 _bloqueado_ate = 0.0
 
+# Token válido também precisa de freio: o limite acima só segura quem erra o
+# token. Um cliente com bug em laço, ou a família toda recarregando junto,
+# chegava autenticado e passava direto — cada pedido virando um GET à
+# Queue-Times e uma volta no ranking. O limite é global pelo mesmo motivo do
+# outro: atrás do Caddy todo mundo tem o mesmo IP.
+PERTO_MAX_JANELA = 30
+PERTO_JANELA_S = 60
+_pedidos: list[float] = []
+
+# A Queue-Times publica em ciclos de ~5 min: dois /perto seguidos devolviam o
+# mesmo dado ao custo de duas chamadas a uma API gratuita. 60s é curto o
+# bastante para o ranking não envelhecer e longo o bastante para absorver a
+# rajada de todo mundo abrindo o site ao mesmo tempo.
+CACHE_TTL_S = 60
+_cache: dict[int, tuple[float, dict]] = {}
+
 
 def token_valido(recebido: str) -> bool:
     """Comparação de tempo constante, como já é feito na senha familiar."""
@@ -50,6 +66,37 @@ def registrar_falha(agora: float) -> bool:
         _falhas.clear()
         return True
     return False
+
+
+def excedeu_ritmo(agora: float) -> bool:
+    """Freio de pedidos autenticados; anota o pedido quando ele passa."""
+    global _pedidos
+    _pedidos = [t for t in _pedidos if agora - t < PERTO_JANELA_S]
+    if len(_pedidos) >= PERTO_MAX_JANELA:
+        return True
+    _pedidos.append(agora)
+    return False
+
+
+def payload_do_parque(park_id: int, agora: float) -> dict:
+    """Payload da Queue-Times com cache curto por parque."""
+    entrada = _cache.get(park_id)
+    if entrada is not None and agora - entrada[0] < CACHE_TTL_S:
+        return entrada[1]
+    # Falha não vira cache: um erro momentâneo não pode congelar por 60s. Sem
+    # entrada nova, o pedido seguinte tenta de novo.
+    payload = monitor.fetch_queue_times(park_id)
+    _cache[park_id] = (agora, payload)
+    return payload
+
+
+def limpar_estado() -> None:
+    """Zera cache e contadores — usado pelos testes, que rodam no mesmo processo."""
+    global _bloqueado_ate, _pedidos
+    _falhas.clear()
+    _pedidos = []
+    _cache.clear()
+    _bloqueado_ate = 0.0
 
 
 def esperar_banco(espera_s: int = ESPERA_BANCO_S) -> None:
@@ -81,7 +128,7 @@ def build_perto_payload(latitude: float, longitude: float, conn, config, park_id
     park_name = localizacao.parque_mais_proximo(position, coords)
     if park_name is None or park_name not in park_ids:
         raise ValueError("localização fora dos parques monitorados")
-    payload = monitor.fetch_queue_times(park_ids[park_name])
+    payload = payload_do_parque(park_ids[park_name], time.monotonic())
     detailed = localizacao._ranking_detalhado(position, park_name, payload, config, coords, conn)
     ranking = [item[:6] for item in detailed]
     scores = {item[4]: score for item, score in localizacao.com_score(ranking, park_name, config, conn)}
@@ -93,7 +140,12 @@ def build_perto_payload(latitude: float, longitude: float, conn, config, park_id
             "total": total, "coordinate": list(coord) if coord else None,
             "route_source": source, "quality": scores.get(name),
         })
-    return {"park": park_name, "items": items, "source": "fila-disney-vps"}
+    # Regra 2 do projeto e exigência da API gratuita: a atribuição tem que estar
+    # visível. Toda mensagem do Telegram já a carrega; o JSON do site não
+    # carregava nenhuma, e é a superfície mais visível do projeto. Vai no payload
+    # para que a página não dependa de alguém lembrar de escrevê-la no HTML.
+    return {"park": park_name, "items": items, "source": "fila-disney-vps",
+            "attribution": "Powered by Queue-Times.com"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -106,13 +158,15 @@ class Handler(BaseHTTPRequestHandler):
     def version_string(self) -> str:
         return self.server_version
 
-    def _send(self, status: int, payload: dict):
+    def _send(self, status: int, payload: dict, extras: dict | None = None):
         body = json.dumps(payload, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(body)))
+        for nome, valor in (extras or {}).items():
+            self.send_header(nome, valor)
         self.end_headers()
         if not self.somente_cabecalho:
             self.wfile.write(body)
@@ -139,6 +193,11 @@ class Handler(BaseHTTPRequestHandler):
                 log.warning("Bloqueando /perto por %ds: %d falhas de token na janela",
                             BLOQUEIO_S, FALHAS_MAX)
             return self._send(401, {"error": "não autorizado"})
+        if excedeu_ritmo(agora):
+            log.warning("Ritmo de /perto excedido: mais de %d pedidos em %ds",
+                        PERTO_MAX_JANELA, PERTO_JANELA_S)
+            return self._send(429, {"error": "muitos pedidos; tente em instantes"},
+                              {"Retry-After": str(PERTO_JANELA_S)})
         try:
             query = parse_qs(parsed.query)
             lat = _number(query, "lat", -90, 90)

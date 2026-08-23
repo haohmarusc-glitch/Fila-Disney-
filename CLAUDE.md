@@ -16,7 +16,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 8. Todo nome vindo da API (atração, parque, land) passa por `notifier.esc` antes
    de entrar numa mensagem: `parse_mode=HTML` + `&` cru = 400 do Telegram, e
    "Mickey & Minnie's Runaway Railway" está na watchlist.
-9. Comando só é atendido se vier do `TELEGRAM_CHAT_ID` configurado.
+9. Comando só é atendido de chat autorizado. O `TELEGRAM_CHAT_ID` do `.env` entra
+   autorizado na criação do banco; os demais entram por `/entrar <senha>`
+   (`FAMILY_ACCESS_PASSWORD`), com freio de 5 erros por hora e aviso único a quem
+   não tem acesso. A regra antiga — só o `TELEGRAM_CHAT_ID` — valeu até o acesso
+   familiar existir; quem escrever comando novo lê `authorized_chats`, não a env.
 10. Fila de single rider / virtual não entra em alerta nem `/status`
     (`FILAS_IGNORADAS`): a API publica como atração separada, o match parcial
     casa com a atração real e o tempo vem 0 sem dado — alerta falso na certa.
@@ -39,6 +43,16 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `notifier.py` — transporte Telegram: `send`, `get_updates`, `esc` (env:
   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
 - `analyze.py` — CLI de análise do histórico
+- `api_server.py` — API HTTP privada que serve o site (`/perto`, `/health`).
+  Processo separado, container `fila-disney-api`, **somente leitura** no mesmo
+  SQLite. Publicada pelo Caddy do Premercado em `api-filadisney.premercadosc.com`
+  — ou seja, encara a internet: token por `hmac.compare_digest`, freio de chute
+  de token, freio de ritmo autenticado e cache de 60s por parque
+- `personagens.py` — pontos de encontro de personagens; alimenta o alerta por
+  proximidade quando a família compartilha localização
+- `localizacao.py` — tudo que fala de geografia (distância, rota, ranking)
+- `healthcheck.py` / `healthcheck_api.py` — um por container; o da API bate em
+  `/health` por HTTP, o do monitor mede se a coleta está viva
 - `watchlist.json` — config declarativa (parques, atrações, thresholds, dias)
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
 - `coords.py` — script avulso (roda uma vez) que busca coordenadas no OpenStreetMap
@@ -46,6 +60,13 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `data/history.db` — SQLite, volume Docker, fora do git
 
 Tabelas: `wait_times(ts, park, land, ride, wait_time, is_open)`, `alerts_sent(park, ride, sent_at)` e `daily_summary(sent_on)` — esta última guarda a data (no fuso do parque) em que o resumo das 7h já saiu, para não repetir. `top_alert(id=1, sent_at)` guarda o último envio do alerta de menores filas.
+
+Retenção não é uniforme de propósito (`maybe_maintain_db`): logs de operação
+expiram em 90 dias, `wait_times` só 30 dias depois do fim da viagem — é o dado
+que treina a previsão — e as tabelas de GPS (`user_locations`,
+`character_last_checks`, `character_alerts`) em 7 dias, porque nenhum leitor olha
+além de 180 min e é posição de gente real. O `VACUUM` não é rotina: só roda
+quando há espaço morto de verdade e disco para a cópia que ele monta.
 
 `run_cycle` devolve os payloads que buscou; o alerta de menores filas consome esse dicionário em vez de refazer o fetch. Se um parque falhou no ciclo, ele simplesmente não está no dicionário e o alerta pula a rodada.
 

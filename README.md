@@ -547,6 +547,65 @@ Para tirar um acesso concedido:
 O chat do `TELEGRAM_CHAT_ID` não pode ser revogado por comando — ele vem do
 `.env` e é reinserido a cada subida.
 
+## Site e API HTTP
+
+O `docker compose` sobe **dois** containers: `fila-disney` (o monitor, que coleta e
+fala com o Telegram) e `fila-disney-api` (o `api_server.py`, que serve o site).
+
+O front-end **não está neste repositório** — ele é servido pela stack do Premercado.
+Este repo entrega só a API, e por isso o compose depende da rede externa
+`premercado_default`: é por ela que o Caddy do Premercado alcança o container.
+
+```
+GET /health            público, sem token → {"ok": true, "service": "fila-disney-api"}
+GET /perto?lat=&lon=   exige Authorization: Bearer $WEB_API_TOKEN
+```
+
+O `/perto` devolve o mesmo ranking do comando do Telegram: parque detectado pela
+coordenada, até 12 atrações ordenadas por **fila + caminhada**, cada uma com
+`wait` (que é `null` quando não há dado — nunca 0), `walk`, `meters`, `total`,
+`route_source` e `quality`. O campo `attribution` traz o "Powered by
+Queue-Times.com" que a página precisa exibir.
+
+### Isto encara a internet
+
+O Caddy do Premercado publica a API num hostname próprio:
+
+```
+api-filadisney.premercadosc.com {
+    reverse_proxy fila-disney-api:8080
+}
+```
+
+Não publicar porta no host (o `docker-compose.yml` não tem `ports:`) **não** deixa
+o serviço privado — só significa que quem abre a porta é o Caddy. Então o
+`WEB_API_TOKEN` é a única barreira, e existem três freios:
+
+- **chute de token** — 10 falhas em 5 min bloqueiam `/perto` por 5 min (429);
+- **ritmo autenticado** — 30 pedidos por minuto no total, com `Retry-After`. Segura
+  cliente com laço bugado, não a família recarregando a tela;
+- **cache de 60s por parque** — a Queue-Times publica a cada ~5 min, então dois
+  `/perto` seguidos devolviam o mesmo dado ao custo de duas chamadas a uma API
+  gratuita.
+
+Os dois primeiros contam **global**, não por IP: atrás do proxy todo cliente chega
+com o mesmo endereço, e contar por IP bloquearia todo mundo junto.
+
+O `WEB_API_TOKEN` não pode viver no JavaScript da página — quem abre o devtools
+lê. O certo é o Caddy injetar o header no `reverse_proxy` e o front nunca conhecer
+o token.
+
+### Variáveis de ambiente
+
+| Variável | Para quê | Sem ela |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | bot e chat principal | coleta segue, nenhum alerta ou comando funciona |
+| `WEB_API_TOKEN` | autentica o `/perto` | o container da API não sobe |
+| `FAMILY_ACCESS_PASSWORD` | senha do `/entrar` para os outros chats | só o `TELEGRAM_CHAT_ID` usa o bot |
+| `GOOGLE_MAPS_API_KEY` | rota real no `/perto` | cai na estimativa local por distância |
+| `WEB_API_PORT` | porta interna da API (padrão 8080) | usa 8080 |
+| `APP_GIT_SHA` | commit implantado, exibido no `/health` | `/health` não sabe qual commit está no ar |
+
 ## Configuração (`watchlist.json`)
 
 - `trip`: período da viagem e timezone
@@ -603,18 +662,25 @@ Não automatiza compras nem reservas no My Disney Experience — isso viola os t
 ## Estrutura
 
 ```
-monitor.py        # loop principal: polling + persistência + alertas
-docs/ROTEIRO.md   # roteiro da viagem (fonte de verdade do park_days)
-notifier.py       # Telegram: envio de mensagens + leitura de comandos
-analyze.py        # análise do histórico (CLI)
-watchlist.json    # parques, atrações, thresholds, dias da viagem
-data/history.db   # SQLite (criado em runtime, fora do git)
+monitor.py          # loop principal: polling + persistência + alertas + comandos
+api_server.py       # API HTTP que serve o site (container separado, só leitura)
+notifier.py         # Telegram: envio de mensagens + leitura de comandos
+localizacao.py      # geografia: distância, rota, ranking do /perto
+personagens.py      # pontos de encontro de personagens
+analyze.py          # análise do histórico (CLI)
+coords.py           # busca coordenadas no OpenStreetMap (roda uma vez)
+healthcheck.py      # healthcheck do container do monitor (a coleta está viva?)
+healthcheck_api.py  # healthcheck do container da API (o /health responde?)
+watchlist.json      # parques, atrações, thresholds, dias da viagem
+coords.json         # coordenadas por atração (versionado)
+docs/ROTEIRO.md     # roteiro da viagem (fonte de verdade do park_days)
+data/history.db     # SQLite (criado em runtime, fora do git)
 ```
 
 ## Roadmap (backlog para Claude Code)
 
 - [x] Comando `/status` no bot (fila atual da watchlist sob demanda)
 - [x] Resumo diário automático às 7h com previsão do dia baseada no histórico
-- [ ] Dashboard web opcional em `disney.premercadosc.com` (React + endpoint FastAPI lendo o SQLite)
+- [x] Site em `filadisney.premercadosc.com`, servido pela stack do Premercado, consumindo a API deste repo (ver **Site e API HTTP**)
 - [ ] Detectar atração reaberta após "Down" (filas despencam nos primeiros minutos)
 - [ ] Exportar histórico pós-viagem como dataset para portfólio
