@@ -1,0 +1,14 @@
+{
+  "_comment": "Duracao das atracoes, em minutos. A Queue-Times nao publica este dado (entrega so id, name, is_open, wait_time e last_updated), entao ele mora aqui, versionado, no mesmo espirito do coords.json.",
+  "_regra": "Atracao ausente daqui aparece SEM duracao, nunca com estimativa — mesma regra 12 que vale para coordenada. Valor invalido (zero, texto, nulo) e ignorado com aviso no log, porque duracao 0 seria dado inventado disfarcado.",
+  "_como_preencher": "A chave e o nome CANONICO da watchlist.json, nao o nome que a API devolve. Confira contra a fonte oficial do parque ou o app; o lembrete de 05/10 pede essa conferencia junto com os horarios.",
+  "rides": {
+    "Disney Magic Kingdom": {},
+    "Epcot": {},
+    "Disney Hollywood Studios": {},
+    "Disney Animal Kingdom": {},
+    "Universal Studios At Universal Orlando": {},
+    "Islands Of Adventure At Universal Orlando": {},
+    "Universal Epic Universe": {}
+  }
+}

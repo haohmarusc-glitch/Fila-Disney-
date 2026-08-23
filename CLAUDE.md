@@ -35,7 +35,13 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     não busca JSON e não pode ter retry. Heartbeat retentado mente sobre o ciclo
     em que foi gerado, e um watchdog que recebe batida atrasada é pior que um que
     não recebe nada. Exceção nova só existe se entrar nesta regra.
-12. Distância/tempo a pé só sai de coordenada real do `coords.json`. Atração sem coordenada aparece sem estimativa — nunca com número inventado.
+12. Distância/tempo a pé só sai de coordenada real do `coords.json`, e duração de
+    atração só sai do `duracoes.json`. Sem o dado, a atração aparece sem a
+    estimativa — nunca com número inventado. Duração **não** entra em soma que
+    ordena nada: fila e caminhada são custo, duração é o que se quer, e somá-la
+    poria o Kilimanjaro Safaris (22 min de passeio) atrás de um brinquedo de 90
+    segundos com a mesma fila. Ela serve para dizer o compromisso de tempo e
+    para o "cabe antes de fechar".
 13. Coordenada de parque vinda da API passa por sanidade (`coordenadas_sanas`): o `parks.json` já entregou o Epic Universe com longitude positiva. Ponto fora da curva é isolado com aviso, nunca corrigido em silêncio.
 14. `last_updated` da API é levado a sério: leitura velha não alerta e não entra em ranking (`leitura_obsoleta`).
 15. Ausência de dado **nunca** vira 0 min: `wait_time` None fica None, no banco e na mensagem.
@@ -46,6 +52,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     quanto tempo — nunca lat/lon, que num chat vira registro permanente da
     posição exata de alguém. Perder o acesso (`/sair`, `/revogar`) apaga junto a
     posição, o nome e o compartilhamento.
+19. Horário de funcionamento não é cravado: sai do histórico
+    (`horario_operacao`), porque muda por dia e por temporada — em outubro os
+    parques esticam por causa das festas de Halloween. A hora de fechamento
+    medida fica fora do "melhor do dia": ali a fila está drenando e a dica
+    mandaria o grupo para um parque fechando.
 
 ## Arquitetura
 
@@ -72,6 +83,9 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
 - `coords.py` — script avulso (roda uma vez) que busca coordenadas no OpenStreetMap
 - `coords.json` — coordenadas por atração; opcional, só o `/perto` depende dele
+- `duracoes.json` — duração de cada atração em minutos; opcional e curado à
+  mão, porque a API não publica isso. Ausente ou incompleto = atração sem
+  duração na tela, nunca com estimativa
 - `data/history.db` — SQLite, volume Docker, fora do git
 
 Tabelas: `wait_times(ts, park, land, ride, wait_time, is_open)`, `alerts_sent(park, ride, sent_at)` e `daily_summary(sent_on)` — esta última guarda a data (no fuso do parque) em que o resumo das 7h já saiu, para não repetir. `top_alert(id=1, sent_at)` guarda o último envio do alerta de menores filas.

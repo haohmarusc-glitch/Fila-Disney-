@@ -56,5 +56,37 @@ class TestDockerfile(unittest.TestCase):
         self.assertFalse(faltando, f"módulo do projeto fora do Dockerfile: {faltando}")
 
 
+class TestDadosNoCOPY(unittest.TestCase):
+    """Arquivo de dado fora do COPY some no container e ninguém percebe.
+
+    O `duracoes.json` e o `coords.json` desativam recurso quando ausentes — em
+    vez de quebrar o build, o /perto e a duração simplesmente sumiriam da tela,
+    sem erro no log.
+    """
+
+    def test_arquivos_de_dado_estao_no_dockerfile(self):
+        dockerfile = (RAIZ / "Dockerfile").read_text()
+        for nome in ("watchlist.json", "coords.jso[n]", "duracoes.jso[n]"):
+            with self.subTest(arquivo=nome):
+                self.assertIn(nome, dockerfile)
+
+    def test_duracoes_json_cobre_os_parques_da_watchlist(self):
+        import json
+        duracoes = json.loads((RAIZ / "duracoes.json").read_text(encoding="utf-8"))
+        watchlist = json.loads((RAIZ / "watchlist.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(duracoes["rides"]), set(watchlist["parks"]))
+
+    def test_toda_duracao_aponta_para_atracao_da_watchlist(self):
+        """Chave é o nome canônico: errar aqui faz a duração nunca aparecer."""
+        import json
+        duracoes = json.loads((RAIZ / "duracoes.json").read_text(encoding="utf-8"))
+        watchlist = json.loads((RAIZ / "watchlist.json").read_text(encoding="utf-8"))
+        for parque, atracoes in duracoes["rides"].items():
+            conhecidas = set(watchlist["parks"][parque]["attractions"])
+            for nome in atracoes:
+                with self.subTest(parque=parque, atracao=nome):
+                    self.assertIn(nome, conhecidas)
+
+
 if __name__ == "__main__":
     unittest.main()

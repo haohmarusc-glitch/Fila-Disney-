@@ -340,6 +340,59 @@ warning, mas nunca interrompe a coleta.
 Como o Kuma está na mesma VPS, esse monitor detecta falha do processo ou da
 coleta, mas não queda completa da máquina ou do provedor.
 
+## Horário de operação e duração da atração
+
+Duas perguntas que a Queue-Times não responde — ela entrega só `id`, `name`,
+`is_open`, `wait_time` e `last_updated`.
+
+```
+🎢 Epcot
+🕒 21h20 no horário do parque
+🕘 Opera por volta de 09h–21h, pelo histórico
+
+✅ Soarin' — 25 min (alerta ≤ 30)
+     🎬 atração ~5 min
+▫️ Test Track — 55 min (alerta ≤ 40)
+     🎬 atração ~5 min · ⏳ não cabe antes de fechar
+```
+
+### O horário é medido, não cravado
+
+`horario_operacao` olha os últimos 30 dias e chama de hora de operação aquela em
+que ao menos 25% das atrações estavam abertas — a mesma fração que o resto do
+código já usa para decidir se o parque está operando. Cravar no `watchlist.json`
+seria pior: o horário muda por dia e por temporada, e em outubro os parques
+esticam por causa das festas de Halloween.
+
+Filas paralelas ficam de fora dessa conta, e não é detalhe: as do Universal
+reportam `is_open` verdadeiro em 963 de 963 leituras, então incluí-las faria as
+3h da manhã parecerem horário de operação.
+
+Isso também conserta um defeito do resumo: **a hora de fechamento sai do "melhor
+do dia"**. Ali a fila está drenando — 10 min numa atração que passou o dia em 60
+não é dica, é parque fechando, e a recomendação mandaria o grupo para um portão
+que vai baixar.
+
+### A duração vem do `duracoes.json`
+
+Arquivo curado à mão, versionado, no mesmo espírito do `coords.json`. A chave é o
+nome **canônico da watchlist**, não o que a API devolve:
+
+```json
+{ "rides": { "Epcot": { "Test Track": 5, "Frozen Ever After": 5 } } }
+```
+
+Atração ausente aparece **sem** duração, nunca com estimativa — regra 12. Valor
+inválido (zero, texto, nulo) é ignorado com aviso no log, porque duração 0 seria
+número inventado disfarçado. Mudou o arquivo, precisa rebuildar a imagem, igual
+ao `coords.json`.
+
+**A duração não entra em soma que ordena nada.** Fila e caminhada são custo;
+duração é o que você quer. Somando os três, o Kilimanjaro Safaris — 22 min de
+passeio — cairia atrás de um brinquedo de 90 segundos com a mesma fila, que é o
+contrário do que interessa. Ela serve para dizer o compromisso de tempo e para o
+aviso de **não cabe antes de fechar**, que é decisão de verdade no fim do dia.
+
 ## Single rider: por que não aparece
 
 As filas de single rider **não** entram em alerta, ranking ou `/status`. Isso é

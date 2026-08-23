@@ -98,6 +98,9 @@ class BaseTeste(unittest.TestCase):
         # estado para os testes seguintes
         self.monitor.COORDS_PATH = Path(self.tmp.name) / "data" / "coords.json"
         self.monitor.COORDS_PATH_REPO = Path(self.tmp.name) / "coords.json"
+        # sem redirecionar, o /status leria o duracoes.json do repo e o teste
+        # passaria a depender de dado de produção
+        self.monitor.DURACOES_PATH = Path(self.tmp.name) / "duracoes.json"
         self.monitor._dormir = lambda _s: None  # nenhum teste espera de verdade
         self.conn = self.monitor.init_db()
         self.addCleanup(self.conn.close)

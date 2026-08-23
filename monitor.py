@@ -47,6 +47,7 @@ WATCHLIST_PATH = BASE_DIR / "watchlist.json"
 # próximo `docker compose up --build`, junto com o trabalho todo do coords.py.
 COORDS_PATH = BASE_DIR / "data" / "coords.json"
 COORDS_PATH_REPO = BASE_DIR / "coords.json"  # versionado no git, se houver
+DURACOES_PATH = BASE_DIR / "duracoes.json"   # opcional, mesmo espírito do coords.json
 
 PARKS_URL = "https://queue-times.com/parks.json"
 QUEUE_URL = "https://queue-times.com/parks/{park_id}/queue_times.json"
@@ -906,6 +907,53 @@ def ultima_localizacao(conn: sqlite3.Connection, max_minutos: int = 180,
     return (row[0], row[1]) if idade <= timedelta(minutes=max_minutos) else None
 
 
+# ---------------------------------------------------------------- duração
+
+def carregar_duracoes() -> dict[str, dict[str, int]]:
+    """Duração das atrações, por parque. Arquivo ausente desativa o recurso.
+
+    A Queue-Times entrega só `id`, `name`, `is_open`, `wait_time` e
+    `last_updated` — duração não vem de lá, então mora num arquivo curado, como
+    já acontece com as coordenadas.
+
+    Atração sem entrada aqui simplesmente não mostra duração. É a mesma regra do
+    `coords.json`: melhor sem estimativa do que com número inventado (regra 12).
+    """
+    try:
+        with open(DURACOES_PATH, encoding="utf-8") as f:
+            dados = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    saida = {}
+    for parque, atracoes in dados.get("rides", {}).items():
+        limpo = {}
+        for nome, minutos in atracoes.items():
+            # Entrada quebrada não pode virar "0 min de atração": ou é número
+            # positivo, ou a atração fica sem duração.
+            if isinstance(minutos, (int, float)) and minutos > 0:
+                limpo[nome] = int(minutos)
+            else:
+                log.warning("Duração inválida ignorada: %s / %s = %r",
+                            parque, nome, minutos)
+        saida[parque] = limpo
+    return saida
+
+
+def duracao_da_atracao(duracoes: dict, park: str, ride: str) -> int | None:
+    """Duração pelo nome canônico da watchlist, ou None."""
+    return duracoes.get(park, {}).get(ride)
+
+
+def cabe_antes_de_fechar(agora, fechamento: int, minutos: int) -> bool:
+    """Dá tempo de encarar a fila, andar até lá e fazer a atração antes de fechar?
+
+    O fechamento medido é a última hora COM operação, então o parque fecha no
+    fim dela — 21h medido significa portão às 22h.
+    """
+    fim = agora.replace(hour=fechamento, minute=59, second=59, microsecond=0)
+    return (fim - agora).total_seconds() / 60 >= minutos
+
+
 # ---------------------------------------------------------------- grupo
 
 GRUPO_MAX_MINUTOS = 180      # mesma janela que o /perto considera posição atual
@@ -1714,6 +1762,49 @@ MIN_LEITURAS_HORA = 6        # hora com menos leituras que isso não opina
 FRACAO_HORA_SOLIDA = 0.5     # ...nem hora com menos da metade da mais coberta
 
 
+HORARIO_LOOKBACK_DIAS = 30
+HORARIO_MIN_LEITURAS = 12    # por hora local, somando os dias da janela
+
+
+def horario_operacao(conn: sqlite3.Connection, config: dict, park: str,
+                     dias: int = HORARIO_LOOKBACK_DIAS) -> tuple[int, int] | None:
+    """(hora de abertura, hora de fechamento) no fuso do parque, pelo histórico.
+
+    A Queue-Times não publica horário de funcionamento, e ele muda por dia e por
+    temporada — em outubro os parques esticam por causa das festas de Halloween.
+    Então é medido, não cravado: hora em que pelo menos `FRACAO_PARQUE_OPERANDO`
+    das atrações está aberta é hora de operação, a mesma fração que o resto do
+    código já usa para decidir se o parque está operando.
+
+    Filas paralelas ficam de fora, e não é detalhe: medido em 23/08/2026, as do
+    Universal reportam `is_open` verdadeiro em 963 de 963 leituras — incluí-las
+    faria as 3h da manhã parecerem horário de operação.
+    """
+    corte = (utc_now() - timedelta(days=dias)).isoformat()
+    # O filtro sai de FILAS_IGNORADAS para a regra viver num lugar só; repetir os
+    # termos aqui em SQL era ter duas listas para esquecer de atualizar.
+    filtro = "".join(" AND lower(ride) NOT LIKE ?" for _ in FILAS_IGNORADAS)
+    linhas = conn.execute(
+        "SELECT date(ts), CAST(strftime('%H', ts) AS INTEGER), "
+        "       SUM(is_open), COUNT(*) "
+        f"FROM wait_times WHERE park = ? AND ts >= ?{filtro} "
+        "GROUP BY 1, 2",
+        (park, corte, *(f"%{termo}%" for termo in FILAS_IGNORADAS)),
+    ).fetchall()
+    fuso = fuso_do_parque(config)
+    por_hora: dict[int, list[int]] = {}
+    for dia, hora_utc, abertas, total in linhas:
+        hora = hora_no_parque(dia, hora_utc, fuso)
+        acumulado = por_hora.setdefault(hora, [0, 0])
+        acumulado[0] += abertas or 0
+        acumulado[1] += total
+    operando = sorted(
+        hora for hora, (abertas, total) in por_hora.items()
+        if total >= HORARIO_MIN_LEITURAS and abertas / total >= FRACAO_PARQUE_OPERANDO
+    )
+    return (operando[0], operando[-1]) if operando else None
+
+
 def hhmm_em_minutos(hhmm: str) -> int:
     horas, minutos = hhmm.split(":")
     return int(horas) * 60 + int(minutos)
@@ -1811,13 +1902,20 @@ def previsao_por_atracao(conn: sqlite3.Connection, config: dict, park_name: str)
                 continue
             por_atracao.setdefault(ride, []).append((hora, media, n))
 
+    # A última hora de operação tem a fila drenando: quem entra ali pega 10 min
+    # numa atração que passou o dia em 60, e "melhor do dia" apontava justamente
+    # essa hora — mandaria o grupo para um parque fechando. O corte por amostras
+    # abaixo pegava o caso extremo (a hora DEPOIS do fechamento, com poucas
+    # leituras), mas não a hora de fechamento em si, que tem leituras de sobra.
+    # Medido agora em vez de cravado: em outubro os parques esticam o horário.
+    horario = horario_operacao(conn, config, park_name)
+    fechamento = horario[1] if horario else None
+
     previsao = []
     for ride, serie in por_atracao.items():
         serie.sort()  # por hora
-        # A hora de fechamento tem poucas leituras e fila drenando: sem este
-        # corte, "melhor do dia" apontava 22h em atração que fecha às 21h —
-        # mandaria o grupo para um parque fechando. Metade da hora mais coberta
-        # é o bastante para separar hora de operação de sobra de fechamento.
+        if fechamento is not None and len(serie) > 1:
+            serie = [item for item in serie if item[0] != fechamento] or serie
         n_maior = max(item[2] for item in serie)
         solidas = [item for item in serie
                    if item[2] >= max(MIN_LEITURAS_HORA, n_maior * FRACAO_HORA_SOLIDA)]
@@ -2440,7 +2538,8 @@ def match_parks(query: str, park_ids: dict[str, int]) -> list[str]:
 
 
 def format_status(park_name: str, payload: dict, config: dict,
-                  conn: sqlite3.Connection | None = None) -> str:
+                  conn: sqlite3.Connection | None = None,
+                  duracoes: dict | None = None) -> str:
     """Monta a resposta do /status: watchlist do parque com a fila de agora."""
     park_cfg = config["parks"].get(park_name, {})
     limite_obsoleto = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
@@ -2465,11 +2564,32 @@ def format_status(park_name: str, payload: dict, config: dict,
         )
 
     agora = now_park(config).strftime("%Hh%M")
-    linhas = [f"🎢 <b>{notifier.esc(park_name)}</b>", f"🕒 {agora} no horário do parque", ""]
+    linhas = [f"🎢 <b>{notifier.esc(park_name)}</b>", f"🕒 {agora} no horário do parque"]
+    horario = horario_operacao(conn, config, park_name) if conn is not None else None
+    if horario:
+        # "pelo histórico" não é ressalva de rodapé: é horário observado, não o
+        # oficial do parque, e num dia de festa de Halloween os dois divergem.
+        linhas.append(f"🕘 Opera por volta de {horario[0]:02d}h–{horario[1]:02d}h, "
+                      "pelo histórico")
+    linhas.append("")
+    duracoes = carregar_duracoes() if duracoes is None else duracoes
+    agora_local = now_park(config)
     for wait, ride, threshold in sorted(abertas):
         marca = "✅" if wait <= threshold else "▫️"
         seta = marca_tendencia(conn, park_name, ride)
         linhas.append(f"{marca} {notifier.esc(ride)} — <b>{wait} min</b>{seta} (alerta ≤ {threshold})")
+        minutos = duracao_da_atracao(duracoes, park_name, ride)
+        if minutos is None:
+            continue
+        # A duração não entra na soma que ordena nada: fila e caminhada são
+        # custo, duração é o que se quer. Somá-la poria o Kilimanjaro Safaris,
+        # de 22 min de passeio, atrás de um brinquedo de 90 segundos com a mesma
+        # fila. Ela serve para saber o compromisso de tempo — e para o aviso
+        # abaixo, que é decisão de verdade no fim do dia.
+        detalhe = f"     🎬 atração ~{minutos} min"
+        if horario and not cabe_antes_de_fechar(agora_local, horario[1], wait + minutos):
+            detalhe += " · ⏳ não cabe antes de fechar"
+        linhas.append(detalhe)
     for ride in sorted(fechadas):
         linhas.append(f"🔒 {notifier.esc(ride)} — fechada")
     for ride, wait in sorted(obsoletas):
