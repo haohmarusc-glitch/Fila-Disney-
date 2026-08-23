@@ -11,39 +11,34 @@ para você planejar rope drop, almoço e fim de tarde antes da viagem.
 """
 import sqlite3
 import sys
-from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import monitor
+
 DB_PATH = Path(__file__).parent / "data" / "history.db"
 
-TZ_PARQUE = ZoneInfo("America/New_York")
-# Agrupa por (dia, hora) em UTC e converte cada balde depois. Um offset fixo
-# erraria: em 01/11/2026 Orlando volta ao EST, e um "-4" cravado deslocaria em
-# 1h todo o histórico de outubro assim que a análise fosse rodada em novembro.
+# Agrupa por (dia, hora) em UTC e converte cada balde depois, com a MESMA função
+# que o monitor usa no resumo das 7h. Um offset fixo erraria: em 01/11/2026
+# Orlando volta ao EST, e um "-4" cravado deslocaria em 1h todo o histórico de
+# outubro assim que a análise fosse rodada em novembro.
 DIA_HORA_UTC = "date(ts) AS d, CAST(strftime('%H', ts) AS INTEGER) AS h"
 
 
+def fuso() -> ZoneInfo:
+    """O fuso do watchlist.json; a análise não pode divergir do monitor."""
+    try:
+        return monitor.fuso_do_parque(monitor.load_config())
+    except (OSError, KeyError, ValueError):
+        return ZoneInfo("America/New_York")
+
+
 def hora_local(dia_utc: str, hora_utc: int) -> int:
-    """Hora no fuso do parque para um balde (dia, hora) gravado em UTC."""
-    momento = datetime.fromisoformat(f"{dia_utc}T{hora_utc:02d}:00:00+00:00")
-    return momento.astimezone(TZ_PARQUE).hour
+    return monitor.hora_no_parque(dia_utc, hora_utc, fuso())
 
 
 def agregar_por_hora_local(linhas) -> dict[int, tuple[float, int]]:
-    """[(dia, hora, media, n)] -> {hora local: (média ponderada, n)}.
-
-    Ponderado pela contagem: dois baldes com número de leituras diferente não
-    podem pesar igual só porque caíram na mesma hora local.
-    """
-    acumulado: dict[int, tuple[float, int]] = {}
-    for dia, hora, media, n in linhas:
-        if media is None or not n:
-            continue
-        local = hora_local(dia, hora)
-        soma, total = acumulado.get(local, (0.0, 0))
-        acumulado[local] = (soma + media * n, total + n)
-    return {h: (soma / total, total) for h, (soma, total) in acumulado.items()}
+    return monitor.agregar_por_hora_local(linhas, fuso())
 
 
 def summary(conn: sqlite3.Connection) -> None:
