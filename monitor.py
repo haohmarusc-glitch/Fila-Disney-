@@ -939,6 +939,15 @@ def reabertura_em_cooldown(conn: sqlite3.Connection, park: str, ride: str,
     ).fetchone() is not None
 
 
+def format_reabertura(park: str, ride: str, wait: int | None) -> str:
+    """Formato do alerta de reabertura, separado para o ensaio usar o real."""
+    fila = (f"Fila publicada: <b>{wait} min</b>." if wait is not None
+            else "Fila ainda sem estimativa.")
+    return (f"🚨 <b>REABRIU</b>\n\n<b>{notifier.esc(ride)}</b>\n"
+            f"{notifier.esc(park)}\n{fila}\n\n"
+            "Transição confirmada pelo Queue-Times; confira a entrada antes de caminhar.")
+
+
 def maybe_alertar_reabertura(conn: sqlite3.Connection, config: dict, park: str,
                              ride: dict, anterior: int | None,
                              parque_operava: bool, estado_atual: str) -> None:
@@ -963,11 +972,7 @@ def maybe_alertar_reabertura(conn: sqlite3.Connection, config: dict, park: str,
     cooldown = int(cfg.get("cooldown_minutes", 90))
     if reabertura_em_cooldown(conn, park, nome, cooldown):
         return
-    wait = ride.get("wait_time")
-    fila = f"Fila publicada: <b>{wait} min</b>." if wait is not None else "Fila ainda sem estimativa."
-    texto = (f"🚨 <b>REABRIU</b>\n\n<b>{notifier.esc(nome)}</b>\n"
-             f"{notifier.esc(park)}\n{fila}\n\n"
-             "Transição confirmada pelo Queue-Times; confira a entrada antes de caminhar.")
+    texto = format_reabertura(park, nome, ride.get("wait_time"))
     destinatarios = set(assinantes)
     if automatico and notifier.CHAT_ID:
         destinatarios.add(str(notifier.CHAT_ID))
@@ -1741,6 +1746,25 @@ def format_lembretes(config: dict) -> str:
     return "\n".join(linhas)
 
 
+def format_lembrete(agora: datetime, texto: str) -> str:
+    """Formato do lembrete, separado para o ensaio usar o real."""
+    return f"⏰ <b>Lembrete — {agora.strftime('%d/%m')}</b>\n\n{notifier.esc(texto)}"
+
+
+def proximo_lembrete(config: dict) -> dict | None:
+    """O lembrete pendente mais próximo, para o ensaio ter o que mostrar."""
+    hoje = now_park(config).date()
+    futuros = []
+    for lembrete in config.get("reminders", []):
+        try:
+            data = date.fromisoformat(lembrete["date"])
+        except (KeyError, ValueError):
+            continue
+        if data >= hoje:
+            futuros.append((data, lembrete))
+    return min(futuros, key=lambda item: item[0])[1] if futuros else None
+
+
 def maybe_send_reminders(conn: sqlite3.Connection, config: dict) -> None:
     """Prazos com data marcada — Lightning Lane, conferências de véspera.
 
@@ -1762,36 +1786,73 @@ def maybe_send_reminders(conn: sqlite3.Connection, config: dict) -> None:
         alvo = hhmm_em_minutos(lembrete.get("hour", "07:00"))
         if not alvo <= minutos_agora < alvo + JANELA_RESUMO_MINUTOS:
             continue
-        texto = (f"⏰ <b>Lembrete — {agora.strftime('%d/%m')}</b>\n\n"
-                 f"{notifier.esc(lembrete.get('text', ''))}")
-        if notifier.send(texto):
+        if notifier.send(format_lembrete(agora, lembrete.get("text", ""))):
             marcar_lembrete_enviado(conn, lembrete_id)
             log.info("Lembrete enviado: %s", lembrete_id)
 
 
+def ensaio_alertas(conn: sqlite3.Connection, config: dict, park_name: str,
+                   payload: dict) -> list[tuple[str, str]]:
+    """(rótulo, mensagem) de TUDO que o bot envia sozinho, com o formato real.
+
+    Existe porque as seis mensagens automáticas estreariam na viagem: um erro de
+    formatação ou de lógica só apareceria no dia, com o grupo dentro do parque.
+    Monta chamando os mesmos formatadores da produção — ensaio com texto copiado
+    não ensaiaria nada.
+
+    Não grava nada: não marca cooldown, resumo, janela nem lembrete enviado.
+    """
+    ranking = menores_filas(payload, config, park_name, 3, apenas_watchlist=True)
+    ensaio: list[tuple[str, str]] = []
+
+    if ranking:
+        wait, ride, threshold = ranking[0]
+        ensaio.append(("alerta de threshold",
+                       notifier.format_alert(park_name, ride, wait, threshold or wait,
+                                             marca_tendencia(conn, park_name, ride))))
+        ensaio.append(("Top-3 menores filas",
+                       format_top_alert(park_name, ranking, config, conn)))
+        ensaio.append(("reabertura de atração",
+                       format_reabertura(park_name, ride, wait)))
+    else:
+        ensaio.append(("filas agora",
+                       f"Nenhuma atração aberta da watchlist em "
+                       f"{notifier.esc(park_name)} — os três formatos que dependem "
+                       f"da fila atual ficaram de fora deste ensaio."))
+
+    ensaio.append(("resumo das 7h", format_daily_summary(conn, config, park_name)))
+
+    janela = janela_noturna(conn, config, park_name)
+    if janela and ranking:
+        hora, queda, hora_pico = janela
+        ensaio.append(("janela noturna", format_janela_noturna(
+            park_name, hora, queda, hora_pico, ranking, config, conn)))
+    else:
+        ensaio.append(("janela noturna",
+                       "Ainda não há janela detectada neste parque — o aviso não "
+                       "sairia hoje. Veja <code>/janela</code> para o perfil."))
+
+    lembrete = proximo_lembrete(config)
+    if lembrete:
+        ensaio.append((f"lembrete de {lembrete['date']}",
+                       format_lembrete(now_park(config), lembrete.get("text", ""))))
+    else:
+        ensaio.append(("lembrete", "Nenhum lembrete pendente no watchlist.json."))
+    return ensaio
+
+
 def enviar_teste_alertas(conn: sqlite3.Connection, config: dict, park_name: str,
                          payload: dict, chat_id=None) -> None:
-    """Envia os três formatos reais sem registrar cooldown ou resumo enviado."""
-    ranking = menores_filas(payload, config, park_name, 3, apenas_watchlist=True)
-    if not ranking:
-        notifier.send(
-            f"🧪 <b>TESTE</b> — nenhuma atração aberta da watchlist em "
-            f"{notifier.esc(park_name)}", chat_id=chat_id
-        )
-        return
-
-    wait, ride, threshold = ranking[0]
-    mensagens = (
-        "🧪 <b>TESTE — alerta de threshold</b>\n\n"
-        + notifier.format_alert(park_name, ride, wait, threshold or wait),
-        "🧪 <b>TESTE — Top-3 menores</b>\n\n"
-        + format_top_alert(park_name, ranking, config, conn),
-        "🧪 <b>TESTE — resumo das 7h</b>\n\n"
-        + format_daily_summary(conn, config, park_name),
-    )
-    for mensagem in mensagens:
-        notifier.send(mensagem, chat_id=chat_id)
-    log.info("Teste explícito dos três alertas executado (%s)", park_name)
+    """Manda o ensaio ao chat que pediu, cada mensagem marcada como teste."""
+    mensagens = ensaio_alertas(conn, config, park_name, payload)
+    notifier.send(
+        f"🧪 <b>Ensaio — {notifier.esc(park_name)}</b>\n\n"
+        f"Vêm {len(mensagens)} mensagens, no formato real do que o bot envia "
+        f"sozinho. Nada é gravado: cooldown, resumo, janela e lembretes seguem "
+        f"como estavam.", chat_id=chat_id)
+    for rotulo, texto in mensagens:
+        notifier.send(f"🧪 <b>TESTE — {rotulo}</b>\n\n{texto}", chat_id=chat_id)
+    log.info("Ensaio de %d alertas executado (%s)", len(mensagens), park_name)
 
 
 # ---------------------------------------------------------------- comandos
@@ -1918,7 +1979,7 @@ HELP = (
     "/alerta_personagens on|off — liga ou desliga avisos por proximidade\n"
     "/lembretes — prazos que ainda vão chegar (Lightning Lane, conferências)\n"
     "/health — estado do monitor (coleta, banco, parques)\n"
-    "/teste_alertas &lt;parque&gt; — envia os três alertas com prefixo de teste\n"
+    "/teste_alertas &lt;parque&gt; — ensaia TODAS as mensagens automáticas, marcadas\n"
     "/teste_park_to_park — simula no Telegram uma recomendação entre parques\n"
     "/entrar &lt;senha&gt; — libera este chat para uso familiar\n"
     "/sair — remove este chat da lista de liberados\n"

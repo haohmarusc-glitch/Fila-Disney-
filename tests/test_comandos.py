@@ -122,25 +122,40 @@ class TestStatusEMenores(BaseComando):
         self.assertIn("nunca", r)
         self.assertIn("abc1234", r)
 
-    def test_teste_alertas_envia_tres_mensagens_sem_estado(self):
-        antes = {
-            "threshold": self.conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0],
-            "top": self.conn.execute("SELECT COUNT(*) FROM top_alert").fetchone()[0],
-            "resumo": self.conn.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0],
-        }
+    def _estado(self):
+        return {tabela: self.conn.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
+                for tabela in ("alerts_sent", "top_alert", "daily_summary",
+                               "reopen_alerts", "evening_alert", "reminders_sent")}
+
+    def test_ensaio_cobre_todas_as_mensagens_automaticas(self):
+        """As seis estreariam na viagem se não fossem ensaiadas antes."""
+        antes = self._estado()
         self.assertIsNone(self.cmd("/teste_alertas Hollywood"))
         mensagens = self.enviadas()
-        self.assertEqual(len(mensagens), 3)
-        self.assertTrue(all("TESTE" in mensagem for mensagem in mensagens))
-        self.assertIn("threshold", mensagens[0])
-        self.assertIn("Top-3", mensagens[1])
-        self.assertIn("resumo das 7h", mensagens[2])
-        depois = {
-            "threshold": self.conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0],
-            "top": self.conn.execute("SELECT COUNT(*) FROM top_alert").fetchone()[0],
-            "resumo": self.conn.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0],
-        }
-        self.assertEqual(depois, antes)
+        self.assertIn("Ensaio", mensagens[0], "abre dizendo o que vem")
+        corpo = mensagens[1:]
+        self.assertTrue(all("TESTE" in mensagem for mensagem in corpo))
+        for esperado in ("threshold", "Top-3", "reabertura", "resumo das 7h",
+                         "janela noturna", "lembrete"):
+            with self.subTest(mensagem=esperado):
+                self.assertTrue(any(esperado in m for m in corpo),
+                                f"o ensaio não cobre {esperado}")
+        self.assertEqual(self._estado(), antes,
+                         "ensaio não pode marcar cooldown, resumo, janela nem lembrete")
+
+    def test_ensaio_usa_os_formatadores_reais(self):
+        """Ensaio com texto copiado não ensaiaria nada."""
+        self.cmd("/teste_alertas Hollywood")
+        corpo = "\n".join(self.enviadas())
+        self.assertIn("REABRIU", corpo)          # format_reabertura
+        self.assertIn("Vai agora", corpo)        # notifier.format_alert
+        self.assertIn("Powered by Queue-Times.com", corpo)
+
+    def test_ensaio_admite_o_que_nao_da_para_mostrar(self):
+        """Sem janela detectada, ele diz isso em vez de omitir a mensagem."""
+        self.cmd("/teste_alertas Hollywood")
+        corpo = "\n".join(self.enviadas())
+        self.assertIn("Ainda não há janela detectada", corpo)
 
 
 class TestRanking(BaseComando):

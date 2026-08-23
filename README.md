@@ -90,7 +90,7 @@ local por distância.
 | `/perto` (ou `/agora`) | Melhor atração agora por **fila + caminhada**, a partir da sua localização |
 | `/lembretes` | Prazos que ainda vão chegar (Lightning Lane, conferências) |
 | `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
-| `/teste_alertas <parque>` | Envia ao chat real os três formatos com prefixo **TESTE**, sem cooldown |
+| `/teste_alertas <parque>` | Ensaia **todas** as mensagens automáticas, marcadas como **TESTE**, sem gravar nada |
 | `/entrar <senha>` | Libera este chat para uso familiar (5 tentativas por hora) |
 | `/sair` | Remove este chat da lista de liberados |
 | `/revogar <chat_id>` | Só no chat principal: tira o acesso de outro chat |
@@ -245,16 +245,23 @@ watchlist — serve para achar fila curta em atração que você não listou.
 
 ### Ensaio antes da viagem
 
-O comando explícito abaixo envia três mensagens reais ao chat configurado:
+O bot envia **seis** mensagens por conta própria, e todas estreariam durante a
+viagem: alerta de threshold, Top-3 menores filas, reabertura de atração, resumo
+das 7h, janela noturna e lembrete de prazo. Um erro de formatação ou de lógica
+em qualquer uma só apareceria no dia, com o grupo dentro do parque.
 
 ```text
 /teste_alertas Hollywood
 ```
 
-Ele exercita o formato do alerta de threshold, o Top-3 e o resumo das 7h. Todas
-as mensagens começam com `TESTE`. O ensaio não grava em `alerts_sent`,
-`top_alert` nem `daily_summary`, portanto pode ser repetido sem alterar cooldown
-ou bloquear disparos reais.
+Manda as seis ao chat que pediu, cada uma com prefixo **TESTE**, montadas pelos
+**mesmos formatadores da produção** — ensaio com texto copiado não ensaiaria
+nada. O ensaio **não grava**: cooldown, resumo, janela e lembretes ficam como
+estavam, então pode ser repetido à vontade.
+
+Quando algo não pode ser mostrado, ele diz em vez de omitir: parque sem janela
+detectada rende "ainda não há janela detectada neste parque", e parque com a
+watchlist toda fechada avisa quais formatos ficaram de fora.
 
 ## Lembretes de prazo
 
