@@ -108,12 +108,11 @@ O `/perto` identifica o parque pelo **contorno formado pelas atrações** no
 `coords.json`, com margem curta para GPS e entradas. Isso evita que Yacht Club,
 Pop Century e parques aquáticos sejam confundidos com um parque temático.
 
-Filas de **single rider** e virtuais nunca alertam e nunca entram em ranking: a
-API publica cada uma como atração separada, o nome casa por match parcial com a
-atração de verdade e o tempo vem 0 quando não há dado — o que viraria alerta
-falso de "0 min, vai agora". Elas aparecem num bloco à parte do `/status`, e só
-quando o histórico prova que a API publica dado real ali — ver
-**Single rider: visível, nunca alertando**.
+Filas de **single rider** e virtuais ficam fora do alerta, do ranking e do
+`/status`: a API publica cada uma como atração separada, o nome casa por match
+parcial com a atração de verdade e o tempo vem sempre 0 — o que viraria alerta
+falso de "0 min, vai agora". Elas continuam sendo gravadas no histórico. Por que
+não dá para exibi-las, com a medição: **Single rider: por que não aparece**.
 
 ## Inteligência operacional
 
@@ -341,62 +340,54 @@ warning, mas nunca interrompe a coleta.
 Como o Kuma está na mesma VPS, esse monitor detecta falha do processo ou da
 coleta, mas não queda completa da máquina ou do provedor.
 
-## Single rider: visível, nunca alertando
+## Single rider: por que não aparece
 
-O `/status` mostra as filas de single rider num bloco separado, no fim da
-mensagem:
+As filas de single rider **não** entram em alerta, ranking ou `/status`. Isso é
+regra antiga, mas em 23/08/2026 ela foi testada contra o dado real, e vale
+registrar o resultado para ninguém tentar de novo.
 
-```
-🎟 Single rider — fila à parte, nunca alerta:
-     Test Track — 15 min
-```
+A API publica 19 filas paralelas — todas as atrações que realmente oferecem
+single rider, e nenhuma a mais:
 
-Elas continuam **fora de alerta e de todo ranking** — a regra de sempre. O que
-mudou é que deixaram de ser invisíveis. O `docs/ROTEIRO.md` conta com single
-rider no **IOA em 19/10** ("sem Express: rope drop + single rider"), e é
-justamente lá que a API publica quatro filas, todas na watchlist: Hagrid's,
-Hulk, Forbidden Journey e Doctor Doom.
+| Parque | Filas |
+|---|---|
+| Magic Kingdom | 0 |
+| Epcot | Test Track, Remy's |
+| Hollywood Studios | Millennium Falcon, Rise of the Resistance, Rock 'n' Roller Coaster |
+| Animal Kingdom | Expedition Everest |
+| Universal Studios | Mummy, Gringotts, MEN IN BLACK, Fast & Furious |
+| Islands of Adventure | Hagrid's, Hulk, Forbidden Journey, Doctor Doom |
+| Epic Universe | Stardust, Werewolf, Mario Kart, Mine-Cart, Battle at the Ministry |
 
-O problema dessas entradas é que a API publica `0 min` quando não tem dado, e
-ausência de dado não pode virar "vai agora". O número de agora não distingue um
-walk-on real de uma entrada morta — **o histórico distingue**. Só aparece a fila
-que, nos últimos 30 dias, já reportou tempo maior que zero em pelo menos 12
-leituras. Numa fila assim, um `0 min` de agora é walk-on de verdade.
+Chegou a existir um bloco no `/status` que mostraria só as filas que o histórico
+provasse vivas — a ideia era que `0 min` numa entrada que já reportou fila de
+verdade é walk-on, e numa que nunca reportou é ausência de dado. O critério
+funcionou; a resposta dele foi **nenhuma**:
 
-### O que a API publica hoje
+- **~18.000 leituras em 30 dias, `max(wait_time) = 0` em todas as 19.** O campo é
+  placeholder fixo, não um número que às vezes chega.
+- **O `is_open` não salva.** Nas do Universal ele fica preso em `true` — 963 de
+  963 leituras abertas, e nenhum parque de Orlando opera 24h. Nas da Disney fica
+  em ~50%, que é a fração de horas de operação: espelha a atração-mãe, sem
+  informar nada sobre a fila de single rider em si.
 
-Conferido na VPS em 23/08/2026 — 19 filas paralelas, 18 casando com a watchlist:
+Não há fonte alternativa — a Queue-Times é a única, e automatizar os apps
+oficiais está fora de questão (regra 1). O código de exibição foi removido; o que
+ficou é `tests/test_filas_paralelas_reais.py`, com os 19 nomes verbatim e a
+medição. Ele guarda a regra 10 contra o match parcial e serve de registro de por
+que a exibição não existe. Se a API passar a publicar tempo, o teste falha e o
+assunto reabre.
 
-| Parque | Filas | Quais |
-|---|---|---|
-| Magic Kingdom | 0 | — |
-| Epcot | 2 | Test Track, Remy's Ratatouille Adventure |
-| Hollywood Studios | 3 | Millennium Falcon, Rise of the Resistance, Rock 'n' Roller Coaster |
-| Animal Kingdom | 1 | Expedition Everest |
-| Universal Studios | 4 | Mummy, Gringotts, MEN IN BLACK (+ Fast & Furious, fora da watchlist) |
-| Islands of Adventure | 4 | Hagrid's, Hulk, Forbidden Journey, Doctor Doom |
-| Epic Universe | 5 | Stardust, Werewolf, Mario Kart, Mine-Cart, Battle at the Ministry |
-
-São exatamente as atrações que oferecem single rider de verdade — **Flight of
-Passage, Guardians, TRON e Tiana não têm essa fila**, e por isso não aparecem
-aqui nem vão aparecer no `/status`. A única que a API publica e o bot ignora é
-Fast & Furious, que não está na watchlist.
-
-O `tests/test_filas_paralelas_reais.py` guarda esses 19 nomes verbatim: nome de
-atração muda sozinho, e o casamento por normalização já falhou em silêncio antes.
-
-Consequência prática: num parque cuja API não publique single rider, ou logo
-depois de um banco novo, o bloco simplesmente não aparece. Para reconferir o que
-a Queue-Times publica:
+Para reconferir o que a API publica:
 
 ```bash
 docker compose exec -T fila-disney python -c "
 import monitor
-for nome, pid in monitor.resolve_park_ids(list(monitor.load_config()['parks'])).items():
-    filas = [r['name'] for _l, r in monitor.iter_rides(monitor.fetch_queue_times(pid))
-             if monitor.fila_paralela(r['name'])]
-    print(f'{nome}: {len(filas)}')
-    for f in filas: print('   ', f)
+c = monitor.init_db()
+corte = (monitor.utc_now() - monitor.timedelta(days=30)).isoformat()
+for ride, qtd, ab, mx in c.execute('SELECT ride, COUNT(*), SUM(is_open), MAX(wait_time) FROM wait_times WHERE ts >= ? GROUP BY ride', (corte,)):
+    if monitor.fila_paralela(ride):
+        print('%-44s n=%-6d abertas=%-6s max=%s' % (ride[:44], qtd, ab, mx))
 "
 ```
 

@@ -21,13 +21,15 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
    (`FAMILY_ACCESS_PASSWORD`), com freio de 5 erros por hora e aviso único a quem
    não tem acesso. A regra antiga — só o `TELEGRAM_CHAT_ID` — valeu até o acesso
    familiar existir; quem escrever comando novo lê `authorized_chats`, não a env.
-10. Fila de single rider / virtual nunca alerta e nunca entra em ranking
-    (`FILAS_IGNORADAS`): a API publica como atração separada, o match parcial
-    casa com a atração real e o tempo vem 0 sem dado — alerta falso na certa.
-    O `/status` mostra num bloco à parte, e só as que o **histórico** prova
-    vivas (`paralelas_com_historico`): entrada que em 30 dias nunca passou de 0
-    fica escondida, porque ali 0 é ausência de dado, não walk-on. O número de
-    agora não distingue os dois casos; o histórico distingue.
+10. Fila de single rider / virtual não entra em **nada** que o usuário vê
+    (`FILAS_IGNORADAS`): a API publica como atração separada e o match parcial
+    casa com a atração real. **Já foi testado exibir num bloco à parte e não dá**
+    — medido em 23/08/2026, as 19 filas paralelas somam ~18.000 leituras em 30
+    dias e nenhuma com `wait_time` acima de 0. O campo é placeholder fixo, não
+    dado que às vezes chega. O `is_open` também não serve: no Universal fica
+    preso em `true` (963/963 leituras abertas, o que nenhum parque faz) e na
+    Disney fica em ~50%, espelhando a atração-mãe. Os números estão em
+    `tests/test_filas_paralelas_reais.py`; se a API mudar, o assunto reabre.
 11. Toda chamada externa passa por `get_json` (retry, backoff, 429). Nunca chamar `requests.get` direto.
 12. Distância/tempo a pé só sai de coordenada real do `coords.json`. Atração sem coordenada aparece sem estimativa — nunca com número inventado.
 13. Coordenada de parque vinda da API passa por sanidade (`coordenadas_sanas`): o `parks.json` já entregou o Epic Universe com longitude positiva. Ponto fora da curva é isolado com aviso, nunca corrigido em silêncio.
