@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import re
 import sqlite3
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -148,6 +149,11 @@ def build_perto_payload(latitude: float, longitude: float, conn, config, park_id
             "attribution": "Powered by Queue-Times.com"}
 
 
+# Tira ?a=b&c=d de qualquer lugar da linha, parando no espaço ou nas aspas que
+# fecham a request line.
+_SEM_QUERY = re.compile(r"\?[^\s\"]*")
+
+
 class Handler(BaseHTTPRequestHandler):
     # O padrão anuncia "FilaDisneyAPI/1.0 Python/3.12.14" — versão exata do
     # interpretador de graça para quem escaneia. Aqui o banner é só o nome.
@@ -212,7 +218,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {"error": "ranking temporariamente indisponível"})
 
     def log_message(self, fmt, *args):
-        log.info("%s - %s", self.address_string(), fmt % args)
+        # O formato padrão registra a linha de request inteira, e em /perto ela
+        # traz ?lat=&lon= — a posição exata de quem está no parque indo parar no
+        # log do Docker, que guarda 30 MB e é legível por quem tiver o servidor.
+        # A rota basta para operar; a coordenada não acrescenta nada aqui.
+        log.info("%s - %s", self.address_string(), _SEM_QUERY.sub("", fmt % args))
 
 
 def main():

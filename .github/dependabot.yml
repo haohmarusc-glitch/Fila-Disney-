@@ -1,0 +1,20 @@
+# Sem isto, a versão fixada do requests e as actions do CI envelhecem em silêncio
+# — e o requirements.txt agora é lockfile com hash, que ninguém vai atualizar na
+# mão. O Dependabot abre PR, o CI roda os 333 testes e o merge é decisão humana.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"

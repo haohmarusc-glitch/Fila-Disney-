@@ -55,7 +55,26 @@ estava, exceto pela marcação de estado. O que mudou desde então:
 | M5 — CI não exercita a API | ✅ resolvido | `.github/workflows/ci.yml` importa `api_server` e `healthcheck_api` |
 | M6 — healthcheck herdado | ✅ resolvido | `healthcheck_api.py`, `b2626d7` (#49) |
 | `HTTPServer` single-thread (parte de A3) | ⏳ mantido de propósito | uma requisição por vez guarda a conexão SQLite na thread que a criou; com o cache de 60s a fila local deixou de ser o gargalo |
-| B1-B7 | ⏳ em aberto | ver seção "Baixa" |
+| B1 — `raise_for_status()` duplicado | ✅ resolvido | quem não retenta 4xx é o `break` no `except` |
+| B2 — módulo carregado duas vezes | ✅ resolvido | o `__main__` delega para `monitor.main()` |
+| B3 — `enviar_heartbeat` fora do `get_json` | ✅ resolvido | exceção escrita na regra 11 do `CLAUDE.md` |
+| B4 — GPS no log do Docker | ✅ resolvido | `log_message` corta a query string |
+| B5 — sem limite de recursos e sem alerta de disco | ✅ resolvido | `mem_limit`/`cpus` nos dois serviços; aviso no Telegram dentro da manutenção diária |
+| B6 — dependências e actions sem trava | 🟡 parcial | `requirements.txt` virou lockfile com hash (verificado para cp312/x86_64) e o Dependabot cobre pip e actions. **Falta fixar as actions por SHA** — ver nota abaixo |
+| B7 — sem `LICENSE` nem `SECURITY.md` | ✅ resolvido | MIT e política de reporte privado |
+
+**Nota sobre o B6.** As actions continuam em `@v4`/`@v5`. Fixá-las por SHA exigiria
+ler os SHAs no repositório `actions/checkout`, fora do escopo da sessão que fez
+este trabalho — e chutar um SHA quebra o CI. Para fazer, com o SHA conferido na
+própria página da release:
+
+```
+actions/checkout@<sha40>      # v4
+actions/setup-python@<sha40>  # v5
+```
+
+Depois disso o Dependabot mantém os SHAs atualizados sozinho, porque o
+`github-actions` já está no `dependabot.yml`.
 
 Também vieram de fora da auditoria, achados verificando produção: cinco atrações da
 watchlist estavam invisíveis para o bot por pontuação e símbolo de marca no nome da API

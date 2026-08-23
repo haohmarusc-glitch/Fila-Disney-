@@ -7,6 +7,12 @@ services:
     container_name: fila-disney
     restart: unless-stopped
     env_file: .env
+    # Sem teto, um vazamento aqui derruba o VPS inteiro — e neste VPS mora
+    # também o Premercado. O monitor trabalha com 7 payloads e um SQLite: em
+    # operação normal fica bem abaixo destes valores, então o limite só existe
+    # para o caso patológico.
+    mem_limit: 512m
+    cpus: 1.0
     volumes:
       - ./data:/app/data
       - ./watchlist.json:/app/watchlist.json:ro
@@ -34,6 +40,11 @@ services:
       start_period: 30s
       retries: 3
     env_file: .env
+    # A API é um HTTPServer de uma requisição por vez, lendo o mesmo SQLite:
+    # precisa de menos que o monitor. O teto também limita o estrago de um
+    # pedido malicioso que passe pelos freios.
+    mem_limit: 256m
+    cpus: 0.5
     volumes:
       - ./data:/app/data
       - ./watchlist.json:/app/watchlist.json:ro

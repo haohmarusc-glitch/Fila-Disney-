@@ -30,7 +30,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     preso em `true` (963/963 leituras abertas, o que nenhum parque faz) e na
     Disney fica em ~50%, espelhando a atração-mãe. Os números estão em
     `tests/test_filas_paralelas_reais.py`; se a API mudar, o assunto reabre.
-11. Toda chamada externa passa por `get_json` (retry, backoff, 429). Nunca chamar `requests.get` direto.
+11. Toda chamada externa passa por `get_json` (retry, backoff, 429). Nunca chamar
+    `requests.get` direto — com **uma** exceção escrita: `enviar_heartbeat`, que
+    não busca JSON e não pode ter retry. Heartbeat retentado mente sobre o ciclo
+    em que foi gerado, e um watchdog que recebe batida atrasada é pior que um que
+    não recebe nada. Exceção nova só existe se entrar nesta regra.
 12. Distância/tempo a pé só sai de coordenada real do `coords.json`. Atração sem coordenada aparece sem estimativa — nunca com número inventado.
 13. Coordenada de parque vinda da API passa por sanidade (`coordenadas_sanas`): o `parks.json` já entregou o Epic Universe com longitude positiva. Ponto fora da curva é isolado com aviso, nunca corrigido em silêncio.
 14. `last_updated` da API é levado a sério: leitura velha não alerta e não entra em ranking (`leitura_obsoleta`).
