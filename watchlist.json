@@ -127,6 +127,13 @@
     "train_ride_minutes": 4,
     "boarding_buffer_minutes": 4
   },
+  "evening_alert": {
+    "enabled": true,
+    "lookback_days": 30,
+    "min_samples": 12,
+    "min_drop_percent": 20,
+    "count": 3
+  },
   "daily_summary": {
     "enabled": true,
     "hour": "07:00",

@@ -80,6 +80,7 @@ local por distância.
 | `/ranking semana` | Atrações mais concorridas nos últimos 7 dias |
 | `/fechadas <parque>` | O que está fechado **agora**, duração observada e instabilidade |
 | `/quebras <parque>` | Quais atrações quebram **mais**, pelo histórico dos últimos 30 dias |
+| `/janela <parque>` | A hora em que a fila do parque cai, medida no histórico |
 | `/vigiar <atração>` | Alerta de uso único quando a atração reabrir |
 | `/confianca <atração>` | Compara a fila publicada com percentis equivalentes |
 | `/lotacao <parque>` | Pressão estimada pelas filas e atrações fechadas |
@@ -135,9 +136,59 @@ O cálculo inclui fila atual do Hogwarts Express, caminhada até a estação,
 embarque, viagem, caminhada no outro parque e fila da atração. A troca só é
 recomendada com economia estimada de pelo menos 15 minutos.
 
+Cada container tem o **seu** healthcheck. O do monitor olha a última coleta no
+banco; o da API bate em `GET /health` pelo `healthcheck_api.py`. Antes disso a
+API herdava o teste da imagem e aparecia como "healthy" medindo a saúde do
+monitor — inclusive com o servidor HTTP morto.
+
+O `/health` do bot também mostra o **espaço livre em disco**, não só o tamanho do
+banco. Em 23/08/2026 o disco da VPS estava em 83% por causa de 20 GB de cache de
+build do Docker, com o banco ocupando 56 MB: quem olhasse só o banco não veria o
+problema. Abaixo de 2 GB livres a linha vem com ⚠️. Para recuperar espaço de
+cache de build, `docker builder prune` — ele não toca em imagem em uso, container
+nem volume.
+
 O SQLite executa `PRAGMA optimize` diariamente, limpa logs operacionais antigos
 e preserva todo o histórico bruto durante a viagem. A retenção de 180 dias só
 passa a valer 30 dias depois do término configurado da viagem.
+
+## Janela noturna
+
+Fogos, parada e o horário do jantar esvaziam as filas por uma janela curta —
+relatos de visitantes falam em quedas de 30% a 50%. **A hora em que isso
+acontece muda por parque e por temporada**, então o monitor não crava horário
+nenhum: ele mede no próprio histórico.
+
+O cálculo é a primeira hora **depois do pico** em que a fila média do parque cai
+pelo menos 20% em relação a esse pico. Depois do pico de propósito — a manhã
+também tem fila baixa, mas ali a decisão já é outra (rope drop), e avisar "vai
+agora" às 9h não ajuda ninguém.
+
+Em dia de parque, quando essa hora chega, o aviso sai uma vez:
+
+```text
+🌙 Janela de fila curta — Disney Magic Kingdom
+🕒 20h05 no horário do parque
+
+A partir das 20h a fila média deste parque cai 42% em relação ao pico das
+14h — é o efeito de fogos, parada e jantar.
+
+Menores filas da sua watchlist agora:
+1️⃣ Space Mountain — 15 min ↓12 ✅
+2️⃣ Haunted Mansion — 20 min ✅
+```
+
+Usa a média do parque **inteiro**, não só a watchlist: o que se quer medir é o
+movimento da multidão, e a média sobre muitas atrações é mais estável. Hora com
+menos de 12 leituras é descartada, e parque sem queda relevante não gera aviso —
+o monitor prefere calar a inventar uma janela.
+
+`/janela <parque>` mostra o perfil hora a hora com o pico e a janela marcados,
+para conferir antes da viagem. Configurável em `watchlist.json`:
+
+```json
+"evening_alert": { "enabled": true, "lookback_days": 30, "min_samples": 12, "min_drop_percent": 20, "count": 3 }
+```
 
 ## Quem mais quebra: `/quebras`
 
