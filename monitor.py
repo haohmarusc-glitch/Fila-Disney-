@@ -564,13 +564,29 @@ def fila_paralela(ride_name: str) -> bool:
     return any(termo in ride_name.lower() for termo in FILAS_IGNORADAS)
 
 
+SIMBOLOS_MARCA = str.maketrans("", "", "™®℠")
+
+
+def normalizar_nome_api(nome: str) -> str:
+    """Nome comparável: sem símbolo de marca e sem espaço repetido.
+
+    A API entrega "Mario Kart™: Bowser's Challenge" e a watchlist tem o nome sem
+    o ™. O match por pedaço falhava porque o símbolo está no MEIO da string, e a
+    atração sumia inteira — sem alerta, fora do /status, do /perto e do resumo,
+    sem nenhum erro no log. "Mine-Cart Madness™" só escapava porque o ™ está no
+    fim, onde o nome da watchlist ainda é prefixo.
+    """
+    return " ".join(nome.translate(SIMBOLOS_MARCA).lower().split())
+
+
 def nome_watchlist(park_cfg: dict, ride_name: str) -> str | None:
     """Nome canônico da watchlist correspondente ao nome devolvido pela API."""
     if fila_paralela(ride_name):
         return None
-    attractions = park_cfg.get("attractions", {})
-    for watched in attractions:
-        if watched.lower() in ride_name.lower() or ride_name.lower() in watched.lower():
+    alvo = normalizar_nome_api(ride_name)
+    for watched in park_cfg.get("attractions", {}):
+        procurado = normalizar_nome_api(watched)
+        if procurado in alvo or alvo in procurado:
             return watched
     return None
 
