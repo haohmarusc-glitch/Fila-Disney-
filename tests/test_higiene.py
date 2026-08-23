@@ -125,6 +125,25 @@ class TestB6Dependencias(unittest.TestCase):
                                         (RAIZ / "requirements.txt").read_text())),
                          len(pacotes))
 
+    def test_actions_fixadas_por_sha(self):
+        """Tag é ponteiro móvel: `@v4` pode virar outro código sem diff aqui."""
+        ci = (RAIZ / ".github" / "workflows" / "ci.yml").read_text()
+        usos = re.findall(r"uses:\s*(\S+)", ci)
+        self.assertTrue(usos)
+        for uso in usos:
+            with self.subTest(uso=uso):
+                acao, _, referencia = uso.partition("@")
+                self.assertRegex(referencia, r"^[0-9a-f]{40}$",
+                                 f"{acao} está por tag, não por SHA")
+
+    def test_cada_sha_diz_qual_versao_representa(self):
+        """SHA sem comentário é ilegível: ninguém sabe se está velho."""
+        ci = (RAIZ / ".github" / "workflows" / "ci.yml").read_text()
+        for linha in ci.splitlines():
+            if "uses:" in linha and "@" in linha:
+                with self.subTest(linha=linha.strip()):
+                    self.assertRegex(linha, r"#\s*v\d")
+
     def test_dependabot_cobre_pip_e_actions(self):
         cfg = (RAIZ / ".github" / "dependabot.yml").read_text()
         self.assertIn('package-ecosystem: "pip"', cfg)
