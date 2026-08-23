@@ -37,7 +37,8 @@ jobs:
       - name: Smoke test — a imagem consegue importar tudo?
         run: |
           docker run --rm fila-disney:ci python -c "
-          import monitor, notifier, localizacao, coords, healthcheck, analyze
+          import monitor, notifier, localizacao, personagens, coords, healthcheck, analyze
+          import api_server
           assert monitor.APP_GIT_SHA == '$GITHUB_SHA'
           print('todos os módulos importam dentro da imagem')
           "
