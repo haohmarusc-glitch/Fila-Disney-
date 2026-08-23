@@ -1,5 +1,10 @@
 name: CI
 
+# Actions fixadas por SHA, nao por tag. Tag é ponteiro móvel: quem controla o
+# repositório da action pode movê-la para outro commit, e o CI passaria a rodar
+# código diferente sem nenhum diff aqui. O comentário ao lado diz qual versão o
+# SHA representa; o Dependabot (.github/dependabot.yml) mantém os dois em dia.
+
 on:
   push:
     branches: [main]
@@ -9,9 +14,9 @@ jobs:
   testes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"   # mesma do Dockerfile
 
@@ -27,7 +32,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Build da imagem
         run: docker build --build-arg APP_GIT_SHA="$GITHUB_SHA" -t fila-disney:ci .
 

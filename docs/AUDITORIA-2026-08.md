@@ -60,21 +60,22 @@ estava, exceto pela marcação de estado. O que mudou desde então:
 | B3 — `enviar_heartbeat` fora do `get_json` | ✅ resolvido | exceção escrita na regra 11 do `CLAUDE.md` |
 | B4 — GPS no log do Docker | ✅ resolvido | `log_message` corta a query string |
 | B5 — sem limite de recursos e sem alerta de disco | ✅ resolvido | `mem_limit`/`cpus` nos dois serviços; aviso no Telegram dentro da manutenção diária |
-| B6 — dependências e actions sem trava | 🟡 parcial | `requirements.txt` virou lockfile com hash (verificado para cp312/x86_64) e o Dependabot cobre pip e actions. **Falta fixar as actions por SHA** — ver nota abaixo |
+| B6 — dependências e actions sem trava | ✅ resolvido | `requirements.txt` virou lockfile com hash (verificado para cp312/x86_64); actions fixadas por SHA; Dependabot cobre pip e actions |
 | B7 — sem `LICENSE` nem `SECURITY.md` | ✅ resolvido | MIT e política de reporte privado |
 
-**Nota sobre o B6.** As actions continuam em `@v4`/`@v5`. Fixá-las por SHA exigiria
-ler os SHAs no repositório `actions/checkout`, fora do escopo da sessão que fez
-este trabalho — e chutar um SHA quebra o CI. Para fazer, com o SHA conferido na
-própria página da release:
+**SHAs usados no B6**, conferidos na API do GitHub antes de fixar — cada um foi
+resolvido a partir da tag e depois validado como commit existente no repositório
+certo:
 
-```
-actions/checkout@<sha40>      # v4
-actions/setup-python@<sha40>  # v5
-```
+| Action | Versão | SHA |
+|---|---|---|
+| `actions/checkout` | v4 | `11d5960a326750d5838078e36cf38b85af677262` |
+| `actions/setup-python` | v5 | `a26af69be951a213d495a4c3e4e4022e16d87065` |
 
-Depois disso o Dependabot mantém os SHAs atualizados sozinho, porque o
-`github-actions` já está no `dependabot.yml`.
+Tag é ponteiro móvel: quem controla o repositório da action pode movê-la para
+outro commit, e o CI passaria a rodar código diferente sem nenhum diff no
+`ci.yml`. O comentário ao lado de cada SHA diz qual versão ele representa, e o
+Dependabot mantém os dois em dia.
 
 Também vieram de fora da auditoria, achados verificando produção: cinco atrações da
 watchlist estavam invisíveis para o bot por pontuação e símbolo de marca no nome da API
