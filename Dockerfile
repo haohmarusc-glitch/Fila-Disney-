@@ -10,6 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY monitor.py notifier.py localizacao.py personagens.py analyze.py healthcheck.py healthcheck_api.py coords.py api_server.py watchlist.json ./
 # coords.json é opcional e gerado depois; o COPY não pode falhar sem ele
 COPY coords.jso[n] ./
+# mesma coisa para as durações: arquivo ausente só desativa o recurso
+COPY duracoes.jso[n] ./
 
 # Usuário não-root. O data/ é volume e precisa pertencer a ele.
 RUN useradd --create-home --uid 10001 fila \

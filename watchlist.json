@@ -6,13 +6,27 @@
   },
   "_comment": "park_days segue o Roteiro dos Parques (Opcao B, 17/08/2026) — ver docs/ROTEIRO.md. Dias sem parque (16, 18, 22-25/10) ficam fora: nesses dias o monitor so coleta historico, sem alertar.",
   "park_days": {
-    "2026-10-13": ["Disney Hollywood Studios"],
-    "2026-10-14": ["Disney Animal Kingdom"],
-    "2026-10-15": ["Epcot"],
-    "2026-10-17": ["Disney Magic Kingdom"],
-    "2026-10-19": ["Islands Of Adventure At Universal Orlando"],
-    "2026-10-20": ["Universal Studios At Universal Orlando"],
-    "2026-10-21": ["Universal Epic Universe"]
+    "2026-10-13": [
+      "Disney Hollywood Studios"
+    ],
+    "2026-10-14": [
+      "Disney Animal Kingdom"
+    ],
+    "2026-10-15": [
+      "Epcot"
+    ],
+    "2026-10-17": [
+      "Disney Magic Kingdom"
+    ],
+    "2026-10-19": [
+      "Islands Of Adventure At Universal Orlando"
+    ],
+    "2026-10-20": [
+      "Universal Studios At Universal Orlando"
+    ],
+    "2026-10-21": [
+      "Universal Epic Universe"
+    ]
   },
   "parks": {
     "Disney Magic Kingdom": {
@@ -108,7 +122,10 @@
   "alert": {
     "cooldown_minutes": 45,
     "max_staleness_minutes": 30,
-    "quiet_hours": { "start": "22:00", "end": "07:00" }
+    "quiet_hours": {
+      "start": "22:00",
+      "end": "07:00"
+    }
   },
   "top_alert": {
     "enabled": true,
@@ -145,7 +162,7 @@
       "id": "conferir-horarios-2026-10-05",
       "date": "2026-10-05",
       "hour": "09:00",
-      "text": "Semana da viagem: confirmar horarios oficiais dos 7 parques e refurbishments. Rodar tambem a verificacao de nomes da watchlist contra a API — nome de atracao muda sozinho."
+      "text": "Semana da viagem: confirmar horarios oficiais dos 7 parques e refurbishments. Rodar tambem a verificacao de nomes da watchlist contra a API — nome de atracao muda sozinho. E conferir o duracoes.json: atracao sem duracao ali aparece sem duracao no /status, que e o certo, mas o dado nao vem da API e ninguem preenche sozinho."
     },
     {
       "id": "multipass-hollywood-2026-10-10",
