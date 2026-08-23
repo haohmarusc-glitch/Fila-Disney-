@@ -770,8 +770,19 @@ data/history.db     # SQLite (criado em runtime, fora do git)
 
 ## Roadmap (backlog para Claude Code)
 
+Esta lista já ficou para trás duas vezes — o site apareceu aqui como pendente
+com ele no ar, e a reabertura idem. Feature entregue e não marcada faz alguém
+reimplementar o que já existe, então a regra é: mudou o que o bot faz, mexe aqui
+junto.
+
 - [x] Comando `/status` no bot (fila atual da watchlist sob demanda)
 - [x] Resumo diário automático às 7h com previsão do dia baseada no histórico
 - [x] Site em `filadisney.premercadosc.com`, servido pela stack do Premercado, consumindo a API deste repo (ver **Site e API HTTP**)
-- [ ] Detectar atração reaberta após "Down" (filas despencam nos primeiros minutos)
+- [x] Detectar atração reaberta após "Down" — automático na watchlist do dia com cooldown de 90 min, e sob demanda com `/vigiar` (`reopen_alert` no `watchlist.json`)
+- [x] Acesso familiar por senha (`/entrar`), com freio de tentativas e revogação
+- [x] Lembretes de prazo que o monitor não cumpre sozinho (`/lembretes`)
+- [x] Janela noturna: a hora em que a fila do parque cai, medida no histórico (`/janela`)
+- [x] Quais atrações quebram mais (`/quebras`)
+- [x] Ensaio das mensagens automáticas antes da viagem (`/teste_alertas`)
+- [x] Posição da família entre quem compartilha (`/grupo`)
 - [ ] Exportar histórico pós-viagem como dataset para portfólio
