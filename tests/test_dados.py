@@ -80,12 +80,14 @@ class TestTendencia(BaseTeste):
 
 
 class TestFuso(BaseTeste):
-    def test_offset_muda_entre_edt_e_est(self):
+    def test_hora_local_muda_entre_edt_e_est(self):
+        """A conversão é por balde, então outubro e dezembro não se misturam."""
         ny = ZoneInfo("America/New_York")
-        for data, esperado in [(dt.datetime(2026, 10, 13, 12), -4),
-                               (dt.datetime(2026, 12, 13, 12), -5)]:
-            self.monitor.now_park = lambda _c, _d=data: _d.replace(tzinfo=ny)
-            self.assertEqual(self.monitor.park_utc_offset_horas(self.config), esperado)
+        self.assertEqual(self.monitor.hora_no_parque("2026-10-13", 18, ny), 14)  # EDT
+        self.assertEqual(self.monitor.hora_no_parque("2026-12-13", 18, ny), 13)  # EST
+
+    def test_fuso_vem_do_watchlist(self):
+        self.assertEqual(str(self.monitor.fuso_do_parque(self.config)), "America/New_York")
 
     def test_timestamp_gravado_sem_offset(self):
         """Formato tem que continuar igual ao histórico já no banco."""

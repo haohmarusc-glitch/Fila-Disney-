@@ -170,6 +170,10 @@ def init_db() -> sqlite3.Connection:
     conn.execute(  # resumo e tendência varrem por parque+tempo, sem filtrar ride
         "CREATE INDEX IF NOT EXISTS idx_wait_park_ts ON wait_times (park, ts)"
     )
+    # /ranking hoje|semana e a limpeza pós-viagem filtram só por ts, sem parque:
+    # sem este índice os dois varrem a tabela inteira, que cresce ~50 mil linhas
+    # por dia e roda na mesma thread do ciclo de coleta.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_wait_ts ON wait_times (ts)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS alerts_sent (
@@ -1041,6 +1045,108 @@ def format_fechadas(conn: sqlite3.Connection, config: dict, park: str, payload: 
     return "\n".join(linhas)
 
 
+# ---------------------------------------------------------------- quebras
+
+JANELA_QUEBRAS_DIAS = 30
+MIN_CICLOS_QUEBRAS = 50   # menos que isso é amostra, não histórico
+
+# Só ciclos com o parque operando entram na conta: de madrugada o feed deixa
+# tudo fechado, e isso viraria "quebra 60% do tempo" em toda atração.
+_CICLOS_OPERANDO = """
+    SELECT ts FROM wait_times
+    WHERE park = ? AND ts >= ?
+    GROUP BY ts HAVING CAST(SUM(is_open) AS REAL) / COUNT(*) >= ?
+"""
+
+
+def ciclos_de_operacao(conn: sqlite3.Connection, park: str, corte: str) -> int:
+    return conn.execute(
+        f"SELECT COUNT(*) FROM ({_CICLOS_OPERANDO})",
+        (park, corte, FRACAO_PARQUE_OPERANDO),
+    ).fetchone()[0]
+
+
+def historico_quebras(conn: sqlite3.Connection, config: dict, park: str,
+                      dias: int = JANELA_QUEBRAS_DIAS,
+                      limite: int = 10) -> tuple[list[tuple], int]:
+    """(atração, % fechada, fechadas, leituras, pior hora local) e nº de ciclos.
+
+    Mede indisponibilidade observada, não causa: reforma programada e quebra de
+    meia hora entram igual. Serve para saber o que atacar cedo — a atração que
+    fecha com frequência não é a que se deixa para o fim do dia.
+    """
+    corte = (utc_now() - timedelta(days=dias)).isoformat()
+    fuso = fuso_do_parque(config)
+    ciclos = ciclos_de_operacao(conn, park, corte)
+    if ciclos < MIN_CICLOS_QUEBRAS:
+        return [], ciclos
+
+    rows = conn.execute(
+        f"""
+        WITH ciclos AS ({_CICLOS_OPERANDO})
+        SELECT w.ride,
+               SUM(CASE WHEN w.is_open = 0 THEN 1 ELSE 0 END),
+               COUNT(*)
+        FROM wait_times w JOIN ciclos c ON w.ts = c.ts
+        WHERE w.park = ? AND w.ts >= ?
+        GROUP BY w.ride
+        """,
+        (park, corte, FRACAO_PARQUE_OPERANDO, park, corte),
+    ).fetchall()
+
+    horas = conn.execute(
+        f"""
+        WITH ciclos AS ({_CICLOS_OPERANDO})
+        SELECT w.ride, date(w.ts), CAST(strftime('%H', w.ts) AS INTEGER), COUNT(*)
+        FROM wait_times w JOIN ciclos c ON w.ts = c.ts
+        WHERE w.park = ? AND w.ts >= ? AND w.is_open = 0
+        GROUP BY w.ride, 2, 3
+        """,
+        (park, corte, FRACAO_PARQUE_OPERANDO, park, corte),
+    ).fetchall()
+
+    por_ride: dict[str, list] = {}
+    for ride, dia, hora, n in horas:
+        por_ride.setdefault(ride, []).append((dia, hora, float(n), n))
+
+    ranking = []
+    for ride, fechadas, total in rows:
+        if fila_paralela(ride) or not total or not fechadas:
+            continue
+        agregado = agregar_por_hora_local(por_ride.get(ride, []), fuso)
+        pior = max(agregado.items(), key=lambda item: item[1][1])[0] if agregado else None
+        ranking.append((ride, 100.0 * fechadas / total, fechadas, total, pior))
+    ranking.sort(key=lambda item: (-item[1], item[0]))
+    return ranking[:limite], ciclos
+
+
+def format_quebras(conn: sqlite3.Connection, config: dict, park: str) -> str:
+    """Quais atrações quebram mais — o oposto do /fechadas, que olha o agora."""
+    ranking, ciclos = historico_quebras(conn, config, park)
+    cabecalho = [f"🔧 <b>Quem mais quebra — {notifier.esc(park)}</b>",
+                 f"Últimos {JANELA_QUEBRAS_DIAS} dias, só com o parque operando", ""]
+    if ciclos < MIN_CICLOS_QUEBRAS:
+        return "\n".join(cabecalho + [
+            f"Ainda não há histórico suficiente ({ciclos} ciclo(s) de operação). "
+            "O monitor coleta a cada 5 min; volte em alguns dias."])
+    if not ranking:
+        return "\n".join(cabecalho + [
+            f"Nenhuma atração ficou fechada em {ciclos} ciclos de operação. "
+            "Parque estável na janela."])
+
+    linhas = list(cabecalho)
+    for posicao, (ride, pct, fechadas, total, pior) in enumerate(ranking, 1):
+        quando = f" · mais às {pior:02d}h" if pior is not None else ""
+        linhas.append(
+            f"<b>{posicao}. {notifier.esc(ride)}</b> — fechada em {pct:.0f}% "
+            f"das leituras{quando}\n     {fechadas} de {total} leituras"
+        )
+    linhas += ["", f"Base: {ciclos} ciclos de operação.",
+               "Indisponibilidade observada, não causa: reforma programada conta igual.",
+               "Use /fechadas para o que está fechado agora."]
+    return "\n".join(linhas)
+
+
 def _ride_atual(payload: dict, park_cfg: dict, canonico: str) -> dict | None:
     for _land, ride in iter_rides(payload):
         if nome_watchlist(park_cfg, ride["name"]) == canonico:
@@ -1260,14 +1366,36 @@ def hhmm_em_minutos(hhmm: str) -> int:
     return int(horas) * 60 + int(minutos)
 
 
-def park_utc_offset_horas(config: dict) -> int:
-    """Offset do fuso do parque agora: -4 no EDT, -5 no EST.
+def hora_no_parque(dia_utc: str, hora_utc: int, fuso: ZoneInfo) -> int:
+    """Hora local de um balde (dia, hora) gravado em UTC.
 
-    Calculado, não fixo: o histórico é lido em hora UTC e deslocado, e em
-    novembro Orlando volta para EST — offset fixo erraria a leitura em 1h.
+    Convertido balde a balde, e não por um offset único: em 01/11/2026 Orlando
+    volta ao EST, e usar o offset de hoje para todo o histórico deslocaria em 1h
+    o que foi coletado em outubro. A `analyze.py` usa esta mesma função — a
+    regra existe uma vez só, porque foi duplicá-la que produziu o `-4` cravado.
     """
-    delta = now_park(config).utcoffset()
-    return int(delta.total_seconds() // 3600) if delta else 0
+    momento = datetime.fromisoformat(f"{dia_utc}T{hora_utc:02d}:00:00+00:00")
+    return momento.astimezone(fuso).hour
+
+
+def agregar_por_hora_local(linhas, fuso: ZoneInfo) -> dict[int, tuple[float, int]]:
+    """[(dia, hora, media, n)] -> {hora local: (média ponderada, leituras)}.
+
+    Ponderado pela contagem: dois baldes com número de leituras diferente não
+    podem pesar igual só porque caíram na mesma hora local.
+    """
+    acumulado: dict[int, tuple[float, int]] = {}
+    for dia, hora, media, n in linhas:
+        if media is None or not n:
+            continue
+        local = hora_no_parque(dia, hora, fuso)
+        soma, total = acumulado.get(local, (0.0, 0))
+        acumulado[local] = (soma + media * n, total + n)
+    return {h: (soma / total, total) for h, (soma, total) in acumulado.items()}
+
+
+def fuso_do_parque(config: dict) -> ZoneInfo:
+    return ZoneInfo(config["trip"]["timezone"])
 
 
 def resumo_enviado(conn: sqlite3.Connection, dia: str, park: str | None = None) -> bool:
@@ -1299,26 +1427,36 @@ def previsao_por_atracao(conn: sqlite3.Connection, config: dict, park_name: str)
     A média da abertura entra porque é a decisão das 7h. Só "melhor hora" tende
     a apontar o fim da noite em toda atração, o que não ajuda a montar a manhã.
     """
-    offset = park_utc_offset_horas(config)
     park_cfg = config["parks"].get(park_name, {})
+    fuso = fuso_do_parque(config)
+    # Sem recorte, a previsão agrupava o histórico inteiro do parque a cada
+    # /resumo e a cada 7h — e a tabela cresce ~50 mil linhas por dia. A janela
+    # também mantém a previsão parecida com a temporada atual.
+    dias = max(7, int(config.get("daily_summary", {}).get("lookback_days", 60)))
+    corte = (utc_now() - timedelta(days=dias)).isoformat()
     rows = conn.execute(
         """
-        SELECT ride, CAST(strftime('%H', ts) AS INTEGER) AS h, AVG(wait_time), COUNT(*)
+        SELECT ride, date(ts) AS d, CAST(strftime('%H', ts) AS INTEGER) AS h,
+               AVG(wait_time), COUNT(*)
         FROM wait_times
-        WHERE park = ? AND is_open = 1 AND wait_time IS NOT NULL
-        GROUP BY ride, h
+        WHERE park = ? AND ts >= ? AND is_open = 1 AND wait_time IS NOT NULL
+        GROUP BY ride, d, h
         """,
-        (park_name,),
+        (park_name, corte),
     ).fetchall()
 
-    por_atracao: dict[str, list[tuple[int, float, int]]] = {}
-    for ride, hora_utc, media, n in rows:
+    baldes: dict[str, list] = {}
+    for ride, dia, hora_utc, media, n in rows:
         if get_threshold(park_cfg, ride) is None:  # fora da watchlist ou single rider
             continue
-        hora = (hora_utc + offset) % 24
-        if hora not in HORAS_PARQUE:
-            continue
-        por_atracao.setdefault(ride, []).append((hora, media, n))
+        baldes.setdefault(ride, []).append((dia, hora_utc, media, n))
+
+    por_atracao: dict[str, list[tuple[int, float, int]]] = {}
+    for ride, linhas in baldes.items():
+        for hora, (media, n) in agregar_por_hora_local(linhas, fuso).items():
+            if hora not in HORAS_PARQUE:
+                continue
+            por_atracao.setdefault(ride, []).append((hora, media, n))
 
     previsao = []
     for ride, serie in por_atracao.items():
@@ -1615,7 +1753,8 @@ HELP = (
     "/ranking &lt;parque&gt; — maiores filas agora em um parque\n"
     "/ranking hoje — atrações mais concorridas hoje pelo histórico\n"
     "/ranking semana — atrações mais concorridas nos últimos 7 dias\n"
-    "/fechadas &lt;parque&gt; — quebras atuais, duração e instabilidade\n"
+    "/fechadas &lt;parque&gt; — o que está fechado AGORA, duração e instabilidade\n"
+    "/quebras &lt;parque&gt; — quais atrações quebram MAIS, pelo histórico\n"
     "/vigiar &lt;atração&gt; — avisa uma vez quando a atração reabrir\n"
     "/confianca &lt;atração&gt; — compara a fila com o histórico equivalente\n"
     "/lotacao &lt;parque&gt; — pressão estimada pelas filas e fechamentos\n"
@@ -1994,7 +2133,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         return format_confianca(conn, config, park, ride, payload)
 
     comandos_parque = ("/status", "/resumo", "/menores", "/ranking", "/teste_alertas",
-                       "/fechadas", "/lotacao", "/plano", "/chuva")
+                       "/fechadas", "/quebras", "/lotacao", "/plano", "/chuva")
     if cmd not in comandos_parque:
         return HELP
     if cmd == "/teste_alertas" and not arg:
@@ -2048,8 +2187,11 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
                     + opcoes)
         park_name = do_dia[0]
 
+    # /resumo e /quebras são histórico puro: respondem sem gastar chamada na API.
     if cmd == "/resumo":
         return format_daily_summary(conn, config, park_name)
+    if cmd == "/quebras":
+        return format_quebras(conn, config, park_name)
 
     try:
         payload = fetch_queue_times(park_ids[park_name])

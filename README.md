@@ -78,7 +78,8 @@ local por distância.
 | `/ranking <parque>` | Maiores filas agora em um parque específico |
 | `/ranking hoje` | Atrações mais concorridas hoje, pela média do histórico |
 | `/ranking semana` | Atrações mais concorridas nos últimos 7 dias |
-| `/fechadas <parque>` | Quebras atuais, duração observada e instabilidade |
+| `/fechadas <parque>` | O que está fechado **agora**, duração observada e instabilidade |
+| `/quebras <parque>` | Quais atrações quebram **mais**, pelo histórico dos últimos 30 dias |
 | `/vigiar <atração>` | Alerta de uso único quando a atração reabrir |
 | `/confianca <atração>` | Compara a fila publicada com percentis equivalentes |
 | `/lotacao <parque>` | Pressão estimada pelas filas e atrações fechadas |
@@ -137,6 +138,32 @@ recomendada com economia estimada de pelo menos 15 minutos.
 O SQLite executa `PRAGMA optimize` diariamente, limpa logs operacionais antigos
 e preserva todo o histórico bruto durante a viagem. A retenção de 180 dias só
 passa a valer 30 dias depois do término configurado da viagem.
+
+## Quem mais quebra: `/quebras`
+
+`/fechadas` responde "o que está fechado agora". `/quebras` responde a outra
+pergunta: **quais atrações fecham com mais frequência**, pelos últimos 30 dias
+do seu próprio histórico.
+
+```text
+🔧 Quem mais quebra — Disney Hollywood Studios
+Últimos 30 dias, só com o parque operando
+
+1. Slinky Dog Dash — fechada em 8% das leituras · mais às 14h
+     412 de 5.184 leituras
+```
+
+Serve para decidir a ordem do dia: atração que fecha com frequência é para
+atacar cedo, não para deixar para o fim.
+
+Só entram **ciclos com o parque operando** — pelo menos 25% das atrações
+abertas. Sem isso, o feed noturno (que deixa tudo fechado) faria toda atração
+aparecer como "quebra 60% do tempo". Abaixo de 50 ciclos o comando diz que não
+há histórico suficiente em vez de inventar um ranking.
+
+É **indisponibilidade observada, não causa**: reforma programada e pane de meia
+hora contam igual. E, como o `/resumo`, ele responde sem gastar chamada na API —
+é histórico puro.
 
 ## Alerta das menores filas
 

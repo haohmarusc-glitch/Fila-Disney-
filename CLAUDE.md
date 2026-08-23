@@ -49,7 +49,7 @@ Tabelas: `wait_times(ts, park, land, ride, wait_time, is_open)`, `alerts_sent(pa
 
 `run_cycle` devolve os payloads que buscou; o alerta de menores filas consome esse dicionário em vez de refazer o fetch. Se um parque falhou no ciclo, ele simplesmente não está no dicionário e o alerta pula a rodada.
 
-O resumo diário lê o histórico agrupando por hora UTC e desloca pelo offset do fuso calculado na hora (`park_utc_offset_horas`), nunca por offset fixo: em novembro Orlando volta ao EST e um `-4` cravado erraria tudo em 1h.
+O resumo diário lê o histórico agrupando por (dia, hora) em UTC e converte cada balde com `hora_no_parque`, nunca por um offset único: em novembro Orlando volta ao EST, e usar o offset de hoje para todo o histórico deslocaria em 1h o que foi coletado em outubro. A `analyze.py` chama a mesma função — a regra vive num lugar só, porque foi duplicá-la que produziu o `-4` cravado. A previsão também tem janela (`daily_summary.lookback_days`, 60 dias): sem ela, agrupava o histórico inteiro a cada `/resumo`.
 
 ## Comandos
 
