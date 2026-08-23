@@ -48,7 +48,10 @@ acrescentar `"2026-10-18": ["Islands Of Adventure At Universal Orlando"]` (ou US
 - Atrações que o roteiro prioriza e faltavam entraram na watchlist: Rock 'n'
   Roller Coaster e Alien Swirling Saucers (HS), Kali River Rapids (AK), Buzz
   (MK), Simpsons/E.T./Villain-Con (USF), Kong/Jurassic/Ripsaw/Doom/Hippogriff
-  (IOA), Mine-Cart Madness/Hiccup's/Le Cirque Arcanus/Constellation (EU).
+  (IOA), Mine-Cart Madness/Hiccup's/Constellation (EU).
+- **Le Cirque Arcanus saiu da watchlist** (commit `4452122`): é show com sessões,
+  não fila contínua, e a Queue-Times não publica espera para ele. Estava listado
+  acima até 23/08/2026 — o texto é que tinha ficado para trás da remoção.
 
 ## Prazos que o monitor NÃO cobre
 

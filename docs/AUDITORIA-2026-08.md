@@ -17,6 +17,50 @@
   entrega, exige e expõe) e traz um **checklist de verificação** para o que só dá para
   conferir com a página aberta. Nada abaixo afirma como o site se comporta na tela.
 
+## Errata (23/08/2026)
+
+**A API não é privada.** A seção "Site" abaixo afirmava que o container `fila-disney-api`
+"só é alcançável pelas redes Docker" por não publicar porta no host. Isso está **errado**.
+O Caddyfile do Premercado, conferido no dia 23/08 na própria VPS, tem:
+
+```
+api-filadisney.premercadosc.com {
+    reverse_proxy fila-disney-api:8080
+}
+```
+
+Ou seja: a API tem hostname próprio e responde à internet inteira. A conclusão da auditoria
+foi tirada só do `docker-compose.yml` — ausência de `ports:` diz que o Python não abre porta
+no host, **não** que ninguém publica o serviço. O Caddyfile mora na stack do Premercado e não
+foi lido na auditoria original; ler o compose de um lado e concluir sobre a exposição do
+outro foi o erro.
+
+Consequência prática: o `WEB_API_TOKEN` é a única barreira, e A3 deixou de ser questão de
+carga para ser também de superfície. Os freios de A1 (chute de token → 429) e o limite de
+ritmo autenticado foram implantados por causa disto.
+
+**Nota sobre o resto do documento.** O texto abaixo é o registro de 22/08 e ficou como
+estava, exceto pela marcação de estado. O que mudou desde então:
+
+| Item | Estado | Onde |
+|---|---|---|
+| A1 — acesso familiar sem freio | ✅ resolvido | `dd28bd4` (#43) |
+| A2 — SQLite compartilhado | ✅ resolvido | `dd28bd4` (#43) — WAL, `busy_timeout`, API somente leitura |
+| A3 — sem cache nem limite de taxa | ✅ resolvido | cache de 60s por parque + limite de ritmo autenticado |
+| A4 — atribuição fora do payload | ✅ resolvido | `attribution` no JSON do `/perto` — só as mensagens do Telegram a traziam |
+| M1 — fuso fixo na `analyze.py` | ✅ resolvido | `f40ef78` (#47) |
+| M2 — varredura de histórico | ✅ resolvido | `9ae1332` (#48) — índice em `ts` e janela na previsão |
+| M3 — retenção não alcança GPS | ✅ resolvido | expiração de 7 dias + `VACUUM` condicional |
+| M4 — documentação desatualizada | ✅ resolvido | esta errata, `CLAUDE.md`, `README.md`, `ROTEIRO.md` |
+| M5 — CI não exercita a API | ✅ resolvido | `.github/workflows/ci.yml` importa `api_server` e `healthcheck_api` |
+| M6 — healthcheck herdado | ✅ resolvido | `healthcheck_api.py`, `b2626d7` (#49) |
+| `HTTPServer` single-thread (parte de A3) | ⏳ mantido de propósito | uma requisição por vez guarda a conexão SQLite na thread que a criou; com o cache de 60s a fila local deixou de ser o gargalo |
+| B1-B7 | ⏳ em aberto | ver seção "Baixa" |
+
+Também vieram de fora da auditoria, achados verificando produção: cinco atrações da
+watchlist estavam invisíveis para o bot por pontuação e símbolo de marca no nome da API
+(`eeb190f`, `4f3c79b`) — uma por dia de parque da viagem.
+
 ## Placar
 
 | Severidade | Quantidade | Tema dominante |
@@ -213,8 +257,11 @@ rede local, mas a correção é de uma linha e elimina a inconsistência.
 
 ### O que dá para afirmar sem abrir a página
 
+> ⚠️ **Corrigido em 23/08** — ver Errata. A frase a seguir sobre alcance está errada: a API
+> tem hostname próprio (`api-filadisney.premercadosc.com`) e encara a internet.
+
 **A favor:** o serviço da API **não publica porta no host** (`docker-compose.yml` não tem
-`ports:`) — só é alcançável pelas redes Docker `default` e `premercado_default`. Isso é o
+`ports:`) — ~~só é alcançável pelas redes Docker `default` e `premercado_default`~~. Isso é o
 desenho certo: quem fala com a internet é o Caddy do Premercado, não o Python. `/perto` exige
 `Authorization: Bearer`, valida `lat`/`lon` por faixa e finitude (`api_server.py:20`), recusa
 posição fora dos parques, e responde `no-store` + `nosniff`. Erro interno vira 503 genérico,

@@ -22,6 +22,10 @@ class TestParametrosAPI(unittest.TestCase):
 
 
 class TestPayloadPerto(unittest.TestCase):
+    def setUp(self):
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
+
     @patch("api_server.localizacao.com_score", return_value=[])
     @patch("api_server.localizacao._ranking_detalhado")
     @patch("api_server.monitor.fetch_queue_times", return_value={"lands": []})
@@ -33,6 +37,15 @@ class TestPayloadPerto(unittest.TestCase):
         self.assertEqual(result["items"][0]["total"], 17)
         self.assertEqual(result["items"][0]["route_source"], "google")
 
+    @patch("api_server.localizacao.com_score", return_value=[])
+    @patch("api_server.localizacao._ranking_detalhado", return_value=[])
+    @patch("api_server.monitor.fetch_queue_times", return_value={"lands": []})
+    @patch("api_server.localizacao.parque_mais_proximo", return_value="Epcot")
+    def test_payload_carrega_a_atribuicao(self, *_mocks):
+        """Regra 2: a atribuição é exigência da API gratuita, não enfeite."""
+        result = api_server.build_perto_payload(1, 2, object(), {}, {"Epcot": 5}, {})
+        self.assertEqual(result["attribution"], "Powered by Queue-Times.com")
+
     @patch("api_server.localizacao.parque_mais_proximo", return_value=None)
     def test_recusa_local_fora_dos_parques(self, _park):
         with self.assertRaisesRegex(ValueError, "fora dos parques"):
@@ -43,9 +56,8 @@ class TestFreioDoToken(unittest.TestCase):
     """A API tem hostname próprio no Caddy: o token enfrenta a internet inteira."""
 
     def setUp(self):
-        api_server._falhas.clear()
-        api_server._bloqueado_ate = 0.0
-        self.addCleanup(api_server._falhas.clear)
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
 
     def test_token_certo_e_errado(self):
         with patch.object(api_server, "TOKEN", "segredo"):
@@ -103,8 +115,7 @@ class TestServidorHTTP(unittest.TestCase):
         cls.servidor.server_close()
 
     def setUp(self):
-        api_server._falhas.clear()
-        api_server._bloqueado_ate = 0.0
+        api_server.limpar_estado()
 
     def pedir(self, caminho, metodo="GET", token=None):
         conexao = http.client.HTTPConnection("127.0.0.1", self.porta, timeout=5)
@@ -113,6 +124,7 @@ class TestServidorHTTP(unittest.TestCase):
         resposta = conexao.getresponse()
         corpo = resposta.read()
         servidor = resposta.getheader("Server")
+        self.ultimo_retry_after = resposta.getheader("Retry-After")
         conexao.close()
         return resposta.status, corpo, servidor
 
@@ -146,6 +158,76 @@ class TestServidorHTTP(unittest.TestCase):
                 self.pedir("/perto?lat=28.4&lon=-81.5", token="Bearer errado")
             status, _corpo, _s = self.pedir("/perto?lat=28.4&lon=-81.5", token="Bearer errado")
             self.assertEqual(status, 429, "token sem freio é chutável pela internet")
+
+    def test_token_certo_tambem_tem_ritmo_maximo(self):
+        """Cliente com laço bugado chegava autenticado e passava direto."""
+        with patch.object(api_server, "TOKEN", "segredo"):
+            for _ in range(api_server.PERTO_MAX_JANELA):
+                self.pedir("/perto?lat=28.4&lon=-81.5", token="Bearer segredo")
+            status, _corpo, _s = self.pedir("/perto?lat=28.4&lon=-81.5",
+                                            token="Bearer segredo")
+        self.assertEqual(status, 429)
+        self.assertEqual(self.ultimo_retry_after, str(api_server.PERTO_JANELA_S),
+                         "429 sem Retry-After não diz ao cliente quando voltar")
+
+
+class TestRitmoAutenticado(unittest.TestCase):
+    def setUp(self):
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
+
+    def test_deixa_passar_ate_o_limite(self):
+        for i in range(api_server.PERTO_MAX_JANELA):
+            self.assertFalse(api_server.excedeu_ritmo(1000.0 + i / 100))
+        self.assertTrue(api_server.excedeu_ritmo(1000.0))
+
+    def test_janela_desliza(self):
+        for i in range(api_server.PERTO_MAX_JANELA):
+            api_server.excedeu_ritmo(1000.0 + i / 100)
+        self.assertFalse(
+            api_server.excedeu_ritmo(1000.0 + api_server.PERTO_JANELA_S + 1),
+            "passada a janela, a família volta a usar o site")
+
+
+class TestCacheDaQueueTimes(unittest.TestCase):
+    """Cada /perto era um GET a uma API gratuita que publica a cada ~5 min."""
+
+    def setUp(self):
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
+
+    def test_segunda_chamada_na_janela_nao_bate_na_api(self):
+        with patch("api_server.monitor.fetch_queue_times",
+                   return_value={"lands": []}) as fetch:
+            api_server.payload_do_parque(5, 1000.0)
+            api_server.payload_do_parque(5, 1000.0 + api_server.CACHE_TTL_S - 1)
+        self.assertEqual(fetch.call_count, 1)
+
+    def test_cache_expira(self):
+        with patch("api_server.monitor.fetch_queue_times",
+                   return_value={"lands": []}) as fetch:
+            api_server.payload_do_parque(5, 1000.0)
+            api_server.payload_do_parque(5, 1000.0 + api_server.CACHE_TTL_S + 1)
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_cache_e_por_parque(self):
+        with patch("api_server.monitor.fetch_queue_times",
+                   return_value={"lands": []}) as fetch:
+            api_server.payload_do_parque(5, 1000.0)
+            api_server.payload_do_parque(6, 1000.0)
+        self.assertEqual(fetch.call_count, 2, "um parque não pode responder por outro")
+
+    def test_falha_nao_vira_cache(self):
+        """Erro momentâneo não pode congelar o /perto por um minuto inteiro."""
+        with patch("api_server.monitor.fetch_queue_times",
+                   side_effect=OSError("upstream fora")):
+            with self.assertRaises(OSError):
+                api_server.payload_do_parque(5, 1000.0)
+        with patch("api_server.monitor.fetch_queue_times",
+                   return_value={"lands": []}) as fetch:
+            api_server.payload_do_parque(5, 1000.5)
+        self.assertEqual(fetch.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
