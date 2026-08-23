@@ -352,8 +352,10 @@ mensagem:
 ```
 
 Elas continuam **fora de alerta e de todo ranking** — a regra de sempre. O que
-mudou é que deixaram de ser invisíveis: o roteiro planeja single rider em Flight
-of Passage, Guardians, Tron e Tiana, e no IOA/USF não existe Express.
+mudou é que deixaram de ser invisíveis. O `docs/ROTEIRO.md` conta com single
+rider no **IOA em 19/10** ("sem Express: rope drop + single rider"), e é
+justamente lá que a API publica quatro filas, todas na watchlist: Hagrid's,
+Hulk, Forbidden Journey e Doctor Doom.
 
 O problema dessas entradas é que a API publica `0 min` quando não tem dado, e
 ausência de dado não pode virar "vai agora". O número de agora não distingue um
@@ -361,9 +363,31 @@ walk-on real de uma entrada morta — **o histórico distingue**. Só aparece a 
 que, nos últimos 30 dias, já reportou tempo maior que zero em pelo menos 12
 leituras. Numa fila assim, um `0 min` de agora é walk-on de verdade.
 
+### O que a API publica hoje
+
+Conferido na VPS em 23/08/2026 — 19 filas paralelas, 18 casando com a watchlist:
+
+| Parque | Filas | Quais |
+|---|---|---|
+| Magic Kingdom | 0 | — |
+| Epcot | 2 | Test Track, Remy's Ratatouille Adventure |
+| Hollywood Studios | 3 | Millennium Falcon, Rise of the Resistance, Rock 'n' Roller Coaster |
+| Animal Kingdom | 1 | Expedition Everest |
+| Universal Studios | 4 | Mummy, Gringotts, MEN IN BLACK (+ Fast & Furious, fora da watchlist) |
+| Islands of Adventure | 4 | Hagrid's, Hulk, Forbidden Journey, Doctor Doom |
+| Epic Universe | 5 | Stardust, Werewolf, Mario Kart, Mine-Cart, Battle at the Ministry |
+
+São exatamente as atrações que oferecem single rider de verdade — **Flight of
+Passage, Guardians, TRON e Tiana não têm essa fila**, e por isso não aparecem
+aqui nem vão aparecer no `/status`. A única que a API publica e o bot ignora é
+Fast & Furious, que não está na watchlist.
+
+O `tests/test_filas_paralelas_reais.py` guarda esses 19 nomes verbatim: nome de
+atração muda sozinho, e o casamento por normalização já falhou em silêncio antes.
+
 Consequência prática: num parque cuja API não publique single rider, ou logo
-depois de um banco novo, o bloco simplesmente não aparece. Para conferir o que a
-Queue-Times publica hoje:
+depois de um banco novo, o bloco simplesmente não aparece. Para reconferir o que
+a Queue-Times publica:
 
 ```bash
 docker compose exec -T fila-disney python -c "
