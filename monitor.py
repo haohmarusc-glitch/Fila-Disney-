@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import statistics
 import time
 import math
 import re
@@ -1374,50 +1375,90 @@ JANELA_LOOKBACK_DIAS = 30
 JANELA_MIN_AMOSTRAS = 12     # ~1h de coleta numa hora do dia
 JANELA_QUEDA_MINIMA = 20     # % abaixo do pico para valer o aviso
 JANELA_MIN_HORAS = 4         # perfil com menos horas que isso não descreve o dia
+JANELA_MIN_ATRACOES = 5      # hora com poucas atrações abertas não é o parque
 
 
 def perfil_por_hora(conn: sqlite3.Connection, config: dict, park: str,
-                    dias: int = JANELA_LOOKBACK_DIAS) -> dict[int, tuple[float, int]]:
-    """Fila média do parque inteiro por hora local, com a contagem de leituras.
+                    dias: int = JANELA_LOOKBACK_DIAS) -> dict[int, tuple[float, int, int]]:
+    """{hora local: (índice de lotação, leituras, atrações)} do parque.
 
-    O parque inteiro, e não só a watchlist: o que se quer medir é o movimento
-    da multidão, e a média sobre muitas atrações é mais estável que sobre oito.
+    O índice é a média das razões `fila da atração naquela hora / fila média da
+    própria atração`, e não a média bruta das filas. A média bruta engana por
+    dois motivos, os dois medidos no Hollywood Studios em 23/08/2026:
+
+    - cinco atrações reportam `is_open` com fila 0 as 24 horas do dia, e
+      puxavam a média para baixo justamente nas horas de menos movimento;
+    - quem está aberto muda ao longo do dia, então a média troca de base.
+
+    Normalizando cada atração contra ela mesma, 1,0 é "esta hora é como o dia
+    típico desta atração" e 0,7 é "30% abaixo do normal dela" — comparável entre
+    horas independentemente de quem está aberto.
     """
     corte = (utc_now() - timedelta(days=dias)).isoformat()
     linhas = conn.execute(
         """
-        SELECT date(ts), CAST(strftime('%H', ts) AS INTEGER), AVG(wait_time), COUNT(*)
+        SELECT ride, date(ts), CAST(strftime('%H', ts) AS INTEGER),
+               AVG(wait_time), COUNT(*)
         FROM wait_times
         WHERE park = ? AND ts >= ? AND is_open = 1 AND wait_time IS NOT NULL
-        GROUP BY 1, 2
+        GROUP BY ride, 2, 3
         """,
         (park, corte),
     ).fetchall()
-    return agregar_por_hora_local(linhas, fuso_do_parque(config))
+    fuso = fuso_do_parque(config)
+
+    baldes: dict[str, list] = {}
+    for ride, dia, hora, media, n in linhas:
+        if fila_paralela(ride):
+            continue
+        baldes.setdefault(ride, []).append((dia, hora, media, n))
+
+    acumulado: dict[int, list] = {}
+    for ride, dados in baldes.items():
+        horas = {h: v for h, v in agregar_por_hora_local(dados, fuso).items()
+                 if h in HORAS_PARQUE}
+        if len(horas) < JANELA_MIN_HORAS:
+            continue
+        leituras = sum(n for _m, n in horas.values())
+        media_da_atracao = sum(m * n for m, n in horas.values()) / leituras
+        if media_da_atracao <= 0:
+            continue  # atração que só reporta 0 não informa nada sobre lotação
+        for hora, (media, n) in horas.items():
+            razoes, total, quantas = acumulado.get(hora, ([], 0, 0))
+            acumulado[hora] = (razoes + [media / media_da_atracao], total + n, quantas + 1)
+    return {h: (sum(razoes) / len(razoes), total, quantas)
+            for h, (razoes, total, quantas) in acumulado.items() if razoes}
 
 
 def janela_noturna(conn: sqlite3.Connection, config: dict,
                    park: str) -> tuple[int, float, int] | None:
-    """(hora local, queda % em relação ao pico, hora do pico) ou None.
+    """(hora local, queda % contra a hora típica, hora do pico) ou None.
 
-    É a primeira hora DEPOIS do pico em que a fila média cai o bastante. Depois
-    do pico de propósito: a manhã também tem fila baixa, mas ali a decisão já é
-    outra (rope drop), e avisar "vai agora" às 9h não ajuda ninguém.
+    A queda é medida contra a MEDIANA das horas de operação, não contra o pico.
+    No Hollywood Studios o perfil é um platô das 10h às 20h — 21,5 min ao meio-dia
+    contra 22,3 às 19h — e o `max()` escolhia ruído, produzindo uma "queda de 26%"
+    contra um pico acidental. A mediana descreve a hora típica e não se move por
+    meio minuto de diferença.
+
+    A busca é depois do pico de propósito: a manhã também tem fila baixa, mas ali
+    a decisão já é outra (rope drop), e avisar "vai agora" às 9h não ajuda.
     """
     cfg = config.get("evening_alert", {})
     perfil = perfil_por_hora(conn, config, park, cfg.get("lookback_days", JANELA_LOOKBACK_DIAS))
     minimo = cfg.get("min_samples", JANELA_MIN_AMOSTRAS)
+    minimo_atracoes = cfg.get("min_rides", JANELA_MIN_ATRACOES)
     validos = {h: dados for h, dados in perfil.items()
-               if dados[1] >= minimo and h in HORAS_PARQUE}
+               if dados[1] >= minimo and dados[2] >= minimo_atracoes}
     if len(validos) < JANELA_MIN_HORAS:
         return None
 
-    hora_pico, (pico, _n) = max(validos.items(), key=lambda item: item[1][0])
-    if pico <= 0:
+    tipica = statistics.median(indice for indice, _n, _r in validos.values())
+    if tipica <= 0:
         return None
+    hora_pico = max(validos, key=lambda h: validos[h][0])
     queda_minima = cfg.get("min_drop_percent", JANELA_QUEDA_MINIMA)
     for hora in sorted(h for h in validos if h > hora_pico):
-        queda = (pico - validos[hora][0]) / pico * 100
+        queda = (tipica - validos[hora][0]) / tipica * 100
         if queda >= queda_minima:
             return hora, queda, hora_pico
     return None
@@ -1443,8 +1484,9 @@ def format_janela_noturna(park: str, hora: int, queda: float, hora_pico: int,
         f"🌙 <b>Janela de fila curta — {notifier.esc(park)}</b>",
         f"🕒 {agora} no horário do parque",
         "",
-        f"A partir das {hora:02d}h a fila média deste parque cai <b>{queda:.0f}%</b> "
-        f"em relação ao pico das {hora_pico:02d}h — é o efeito de fogos, parada e jantar.",
+        f"A partir das {hora:02d}h as filas deste parque ficam <b>{queda:.0f}% abaixo</b> "
+        f"de uma hora típica do dia (o pico foi às {hora_pico:02d}h) — fogos, parada e "
+        f"jantar tiram gente das filas.",
         "",
         "Menores filas da sua watchlist agora:",
     ]
@@ -1470,16 +1512,18 @@ def format_janela(conn: sqlite3.Connection, config: dict, park: str) -> str:
             "Ainda não dá para afirmar uma janela: falta histórico, ou a fila não "
             f"cai {JANELA_QUEDA_MINIMA}% depois do pico neste parque."])
     hora, queda, hora_pico = resultado
-    linhas.append(f"Pico às <b>{hora_pico:02d}h</b> · queda de <b>{queda:.0f}%</b> "
-                  f"a partir das <b>{hora:02d}h</b>")
+    linhas.append(f"Pico às <b>{hora_pico:02d}h</b> · a partir das <b>{hora:02d}h</b> as filas "
+                  f"ficam <b>{queda:.0f}%</b> abaixo da hora típica")
     linhas.append("")
+    linhas.append("Índice por hora (1,00 = hora típica de cada atração):")
     for h in sorted(perfil):
-        if h not in HORAS_PARQUE or perfil[h][1] < JANELA_MIN_AMOSTRAS:
+        indice, n, atracoes = perfil[h]
+        if n < JANELA_MIN_AMOSTRAS or atracoes < JANELA_MIN_ATRACOES:
             continue
-        media, n = perfil[h]
         marca = " 🌙" if h == hora else (" 🔺" if h == hora_pico else "")
-        linhas.append(f"{h:02d}h — {media:.0f} min (n={n}){marca}")
-    linhas += ["", "Média do parque inteiro por hora, do seu próprio histórico."]
+        linhas.append(f"{h:02d}h — {indice:.2f} ({atracoes} atrações, n={n}){marca}")
+    linhas += ["", "Cada atração é comparada com ela mesma, então o índice não muda "
+                   "só porque parte do parque fechou."]
     return "\n".join(linhas)
 
 
@@ -1513,6 +1557,8 @@ def maybe_send_evening_alert(conn: sqlite3.Connection, config: dict,
 
 JANELA_RESUMO_MINUTOS = 120  # se o container subiu tarde, o resumo ainda vale
 HORAS_PARQUE = range(8, 23)  # fora disso a média é ruído de parque fechado
+MIN_LEITURAS_HORA = 6        # hora com menos leituras que isso não opina
+FRACAO_HORA_SOLIDA = 0.5     # ...nem hora com menos da metade da mais coberta
 
 
 def hhmm_em_minutos(hhmm: str) -> int:
@@ -1615,16 +1661,25 @@ def previsao_por_atracao(conn: sqlite3.Connection, config: dict, park_name: str)
     previsao = []
     for ride, serie in por_atracao.items():
         serie.sort()  # por hora
-        primeiras = serie[:2]  # duas primeiras horas com dado = janela do rope drop
+        # A hora de fechamento tem poucas leituras e fila drenando: sem este
+        # corte, "melhor do dia" apontava 22h em atração que fecha às 21h —
+        # mandaria o grupo para um parque fechando. Metade da hora mais coberta
+        # é o bastante para separar hora de operação de sobra de fechamento.
+        n_maior = max(item[2] for item in serie)
+        solidas = [item for item in serie
+                   if item[2] >= max(MIN_LEITURAS_HORA, n_maior * FRACAO_HORA_SOLIDA)]
+        if not solidas:
+            continue
+        primeiras = solidas[:2]  # duas primeiras horas sólidas = janela do rope drop
         leituras_abertura = sum(item[2] for item in primeiras)
         abertura = (
             primeiras[0][0],
             sum(item[1] * item[2] for item in primeiras) / leituras_abertura,
         )
-        melhor = min(serie, key=lambda item: item[1])
-        pico = max(serie, key=lambda item: item[1])
+        melhor = min(solidas, key=lambda item: item[1])
+        pico = max(solidas, key=lambda item: item[1])
         previsao.append(
-            (ride, abertura, melhor[:2], pico[:2], sum(item[2] for item in serie))
+            (ride, abertura, melhor[:2], pico[:2], sum(item[2] for item in solidas))
         )
     previsao.sort(key=lambda item: item[3][1], reverse=True)
     return previsao
@@ -1807,8 +1862,13 @@ def ensaio_alertas(conn: sqlite3.Connection, config: dict, park_name: str,
 
     if ranking:
         wait, ride, threshold = ranking[0]
+        # O ensaio pega a menor fila do momento, que pode estar ACIMA do
+        # threshold: mostrar "40 min (alerta ≤ 25) vai agora" seria um alerta
+        # que a produção nunca enviaria. Nesse caso o exemplo usa a fila como
+        # limite, para o texto ficar coerente com a regra real.
+        limite = threshold if threshold and wait <= threshold else wait
         ensaio.append(("alerta de threshold",
-                       notifier.format_alert(park_name, ride, wait, threshold or wait,
+                       notifier.format_alert(park_name, ride, wait, limite,
                                              marca_tendencia(conn, park_name, ride))))
         ensaio.append(("Top-3 menores filas",
                        format_top_alert(park_name, ranking, config, conn)))

@@ -155,39 +155,60 @@ passa a valer 30 dias depois do término configurado da viagem.
 ## Janela noturna
 
 Fogos, parada e o horário do jantar esvaziam as filas por uma janela curta —
-relatos de visitantes falam em quedas de 30% a 50%. **A hora em que isso
-acontece muda por parque e por temporada**, então o monitor não crava horário
-nenhum: ele mede no próprio histórico.
+relatos de visitantes falam em quedas de 30% a 50%. **A hora muda por parque e
+por temporada**, então o monitor não crava horário nenhum: mede no próprio
+histórico.
 
-O cálculo é a primeira hora **depois do pico** em que a fila média do parque cai
-pelo menos 20% em relação a esse pico. Depois do pico de propósito — a manhã
-também tem fila baixa, mas ali a decisão já é outra (rope drop), e avisar "vai
-agora" às 9h não ajuda ninguém.
+### Índice, não média de minutos
 
-Em dia de parque, quando essa hora chega, o aviso sai uma vez:
+O que ele compara **não** é a fila média em minutos, e sim um índice: para cada
+atração, `fila naquela hora ÷ fila média da própria atração`; o índice da hora é
+a média dessas razões. `1,00` é "hora típica", `0,75` é "25% abaixo do normal".
+
+A média bruta de minutos engana, e os dois motivos foram medidos no Hollywood
+Studios em 23/08/2026:
+
+- **cinco atrações reportam `is_open` com fila 0 as 24 horas do dia** — elas
+  puxavam a média para baixo justamente nas horas de menos movimento;
+- **quem está aberto muda ao longo do dia**, então a média troca de base.
+
+Atração cujo histórico é sempre 0 fica de fora do índice: ela não diz nada sobre
+lotação.
+
+### Contra a hora típica, não contra o pico
+
+A queda é medida contra a **mediana** das horas de operação. O perfil real do
+Hollywood Studios é um platô das 10h às 20h — 21,5 min ao meio-dia contra 22,3
+às 19h — e usar o máximo fazia o `max()` escolher ruído: meio minuto de
+diferença elegia um "pico das 19h" e produzia uma falsa "queda de 26%". A
+mediana descreve a hora típica e não se move por isso.
+
+A busca é depois do pico de propósito: a manhã também tem fila baixa, mas ali a
+decisão já é outra (rope drop), e avisar "vai agora" às 9h não ajuda ninguém.
+
+### O aviso
+
+Em dia de parque, quando essa hora chega, sai uma vez:
 
 ```text
 🌙 Janela de fila curta — Disney Magic Kingdom
 🕒 20h05 no horário do parque
 
-A partir das 20h a fila média deste parque cai 42% em relação ao pico das
-14h — é o efeito de fogos, parada e jantar.
+A partir das 20h as filas deste parque ficam 22% abaixo de uma hora típica do
+dia (o pico foi às 14h) — fogos, parada e jantar tiram gente das filas.
 
 Menores filas da sua watchlist agora:
 1️⃣ Space Mountain — 15 min ↓12 ✅
 2️⃣ Haunted Mansion — 20 min ✅
 ```
 
-Usa a média do parque **inteiro**, não só a watchlist: o que se quer medir é o
-movimento da multidão, e a média sobre muitas atrações é mais estável. Hora com
-menos de 12 leituras é descartada, e parque sem queda relevante não gera aviso —
-o monitor prefere calar a inventar uma janela.
-
-`/janela <parque>` mostra o perfil hora a hora com o pico e a janela marcados,
-para conferir antes da viagem. Configurável em `watchlist.json`:
+Hora com menos de 12 leituras ou menos de 5 atrações é descartada, e parque sem
+queda relevante **não gera aviso** — o monitor prefere calar a inventar uma
+janela. `/janela <parque>` mostra o índice hora a hora com pico e janela
+marcados, para conferir antes da viagem.
 
 ```json
-"evening_alert": { "enabled": true, "lookback_days": 30, "min_samples": 12, "min_drop_percent": 20, "count": 3 }
+"evening_alert": { "enabled": true, "lookback_days": 30, "min_samples": 12, "min_rides": 5, "min_drop_percent": 20, "count": 3 }
 ```
 
 ## Quem mais quebra: `/quebras`
@@ -563,6 +584,12 @@ docker compose exec fila-disney python analyze.py "Epcot" "Frozen"     # histogr
 ```
 
 Use isso para decidir onde vale pagar Lightning Lane e onde resolve com rope drop ou fim de tarde.
+
+O resumo das 7h descarta horas com poucas leituras — menos de 6, ou menos da
+metade da hora mais coberta daquela atração. Sem esse corte, "melhor do dia"
+apontava **22h** em atração que fecha às 21h: a fila drena no fechamento e as
+poucas leituras restantes viravam o mínimo do dia, mandando o grupo para um
+parque fechando.
 
 A conversão para o horário do parque é feita balde a balde, pela data de cada
 leitura, e não por um offset fixo: em 01/11/2026 Orlando volta ao EST, e um
