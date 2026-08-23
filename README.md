@@ -86,6 +86,7 @@ local por distância.
 | `/chuva` | Opções internas confirmadas por fila + caminhada |
 | `/parques` | Lista os parques que o monitor resolveu na API |
 | `/perto` (ou `/agora`) | Melhor atração agora por **fila + caminhada**, a partir da sua localização |
+| `/lembretes` | Prazos que ainda vão chegar (Lightning Lane, conferências) |
 | `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
 | `/teste_alertas <parque>` | Envia ao chat real os três formatos com prefixo **TESTE**, sem cooldown |
 | `/entrar <senha>` | Libera este chat para uso familiar (5 tentativas por hora) |
@@ -176,6 +177,38 @@ Ele exercita o formato do alerta de threshold, o Top-3 e o resumo das 7h. Todas
 as mensagens começam com `TESTE`. O ensaio não grava em `alerts_sent`,
 `top_alert` nem `daily_summary`, portanto pode ser repetido sem alterar cooldown
 ou bloquear disparos reais.
+
+## Lembretes de prazo
+
+O monitor sabe a fila, mas quem perde a janela das 7h para comprar o Lightning
+Lane Multi-Pass paga em fila o dia inteiro. Esses prazos ficam em
+`watchlist.json`, em `reminders`, e chegam sozinhos no horário marcado:
+
+```json
+"reminders": [
+  {
+    "id": "multipass-hollywood-2026-10-10",
+    "date": "2026-10-10",
+    "hour": "07:00",
+    "text": "Abre AGORA a compra do Multi-Pass do Hollywood Studios (dia 13/10)."
+  }
+]
+```
+
+O `id` é a chave de "já enviei" — **nunca reaproveite um id em lembrete novo**, e
+não conte com a posição na lista: reordenar não pode fazer o já enviado sair de
+novo. Sem `id`, sem `text` ou com data fora do formato ISO, o monitor recusa
+subir e diz qual entrada está errada.
+
+Vale a mesma janela do resumo das 7h: se o container subir até 2h depois da hora
+marcada, o lembrete ainda sai; depois disso, não. Nunca sai duas vezes. Não
+depende de parque nem da API — funciona igual em dia de coleta.
+
+`/lembretes` lista os que ainda vão chegar, com a contagem de dias.
+
+Os prazos já cadastrados vieram do `docs/ROTEIRO.md`: conferência de horários e
+refurbishments em 05/10, Multi-Pass do Hollywood Studios em 10/10 e do Magic
+Kingdom em 14/10.
 
 ## Uptime Kuma
 
@@ -445,6 +478,11 @@ docker compose exec fila-disney python analyze.py "Epcot" "Frozen"     # histogr
 ```
 
 Use isso para decidir onde vale pagar Lightning Lane e onde resolve com rope drop ou fim de tarde.
+
+A conversão para o horário do parque é feita balde a balde, pela data de cada
+leitura, e não por um offset fixo: em 01/11/2026 Orlando volta ao EST, e um
+`-4` cravado deslocaria em 1h todo o histórico de outubro assim que a análise
+fosse rodada em novembro.
 
 ## O que este projeto NÃO faz
 

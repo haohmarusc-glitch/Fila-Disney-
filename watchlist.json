@@ -132,6 +132,27 @@
     "hour": "07:00",
     "only_park_days": true
   },
+  "_comment_reminders": "Prazos que o monitor nao consegue cumprir sozinho, listados em docs/ROTEIRO.md. O id e a chave de 'ja enviei': nunca reaproveite um id em lembrete novo.",
+  "reminders": [
+    {
+      "id": "conferir-horarios-2026-10-05",
+      "date": "2026-10-05",
+      "hour": "09:00",
+      "text": "Semana da viagem: confirmar horarios oficiais dos 7 parques e refurbishments. Rodar tambem a verificacao de nomes da watchlist contra a API — nome de atracao muda sozinho."
+    },
+    {
+      "id": "multipass-hollywood-2026-10-10",
+      "date": "2026-10-10",
+      "hour": "07:00",
+      "text": "Abre AGORA a compra do Lightning Lane Multi-Pass do Hollywood Studios (dia 13/10). E manual, no My Disney Experience, e as melhores janelas somem cedo."
+    },
+    {
+      "id": "multipass-magic-kingdom-2026-10-14",
+      "date": "2026-10-14",
+      "hour": "07:00",
+      "text": "Abre AGORA a compra do Lightning Lane Multi-Pass do Magic Kingdom (dia 17/10), mais os Single Pass de Tron e Tiana. Sabado de fall break: e o dia mais concorrido da viagem."
+    }
+  ],
   "database": {
     "raw_retention_days": 180
   }

@@ -90,6 +90,27 @@ def validar_config(config: dict) -> list[str]:
     hora_resumo = config.get("daily_summary", {}).get("hour")
     if hora_resumo is not None and not re.fullmatch(r"\d{2}:\d{2}", hora_resumo):
         problemas.append(f"daily_summary.hour = {hora_resumo!r} não está em HH:MM")
+    # Lembrete sem id nunca seria marcado como enviado e repetiria a cada ciclo
+    # dentro da janela; id repetido faria o segundo nunca sair.
+    vistos = set()
+    for i, lembrete in enumerate(config.get("reminders", [])):
+        onde = f"reminders[{i}]"
+        lembrete_id = lembrete.get("id")
+        if not lembrete_id:
+            problemas.append(f"{onde} sem 'id' — sem ele o lembrete repetiria a cada ciclo")
+        elif lembrete_id in vistos:
+            problemas.append(f"{onde}: id {lembrete_id!r} repetido")
+        else:
+            vistos.add(lembrete_id)
+        try:
+            date.fromisoformat(lembrete.get("date", ""))
+        except ValueError:
+            problemas.append(f"{onde}.date = {lembrete.get('date')!r} não é uma data ISO")
+        hora = lembrete.get("hour")
+        if hora is not None and not re.fullmatch(r"\d{2}:\d{2}", hora):
+            problemas.append(f"{onde}.hour = {hora!r} não está em HH:MM")
+        if not lembrete.get("text"):
+            problemas.append(f"{onde} sem 'text' — a mensagem chegaria vazia")
     return problemas
 
 
@@ -279,6 +300,10 @@ def init_db() -> sqlite3.Connection:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS unauthorized_notices ("
         "chat_id TEXT PRIMARY KEY, notified_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS reminders_sent ("
+        "id TEXT PRIMARY KEY, sent_at TEXT NOT NULL)"
     )
     if notifier.CHAT_ID:
         principal = str(notifier.CHAT_ID)
@@ -1388,6 +1413,75 @@ def maybe_send_daily_summary(conn: sqlite3.Connection, config: dict, park_ids: d
             log.info("Resumo diário enviado (%s / %s)", dia, park)
 
 
+# ---------------------------------------------------------------- lembretes
+
+def lembrete_enviado(conn: sqlite3.Connection, lembrete_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM reminders_sent WHERE id = ? LIMIT 1", (lembrete_id,)
+    ).fetchone() is not None
+
+
+def marcar_lembrete_enviado(conn: sqlite3.Connection, lembrete_id: str) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO reminders_sent (id, sent_at) VALUES (?, ?)",
+        (lembrete_id, utc_now().isoformat()),
+    )
+    conn.commit()
+
+
+def format_lembretes(config: dict) -> str:
+    """Lembretes que ainda vão acontecer, para conferir sem esperar o dia."""
+    hoje = now_park(config).date()
+    futuros = []
+    for lembrete in config.get("reminders", []):
+        try:
+            data = date.fromisoformat(lembrete["date"])
+        except (KeyError, ValueError):
+            continue
+        if data >= hoje:
+            futuros.append((data, lembrete))
+    if not futuros:
+        return "⏰ <b>Lembretes</b>\n\nNenhum lembrete pendente."
+    futuros.sort(key=lambda item: (item[0], item[1].get("hour", "07:00")))
+    linhas = ["⏰ <b>Lembretes pendentes</b>", ""]
+    for data, lembrete in futuros:
+        faltam = (data - hoje).days
+        quando = "hoje" if faltam == 0 else ("amanhã" if faltam == 1 else f"em {faltam} dias")
+        linhas.append(
+            f"📅 <b>{data.strftime('%d/%m')}</b> {lembrete.get('hour', '07:00')} · {quando}\n"
+            f"     {notifier.esc(lembrete.get('text', ''))}"
+        )
+    return "\n".join(linhas)
+
+
+def maybe_send_reminders(conn: sqlite3.Connection, config: dict) -> None:
+    """Prazos com data marcada — Lightning Lane, conferências de véspera.
+
+    O monitor sabe a fila, mas quem perde a janela das 7h para comprar o
+    Multi-Pass paga em fila o dia inteiro. Só depende do relógio: nenhuma
+    chamada de API, nenhum parque envolvido, funciona em dia de coleta também.
+    """
+    agora = now_park(config)
+    hoje = agora.date().isoformat()
+    minutos_agora = agora.hour * 60 + agora.minute
+    for lembrete in config.get("reminders", []):
+        if lembrete.get("date") != hoje:
+            continue
+        # A chave é o id do config, não a posição na lista: reordenar ou
+        # acrescentar lembrete não pode fazer o já enviado sair de novo.
+        lembrete_id = lembrete.get("id")
+        if not lembrete_id or lembrete_enviado(conn, lembrete_id):
+            continue
+        alvo = hhmm_em_minutos(lembrete.get("hour", "07:00"))
+        if not alvo <= minutos_agora < alvo + JANELA_RESUMO_MINUTOS:
+            continue
+        texto = (f"⏰ <b>Lembrete — {agora.strftime('%d/%m')}</b>\n\n"
+                 f"{notifier.esc(lembrete.get('text', ''))}")
+        if notifier.send(texto):
+            marcar_lembrete_enviado(conn, lembrete_id)
+            log.info("Lembrete enviado: %s", lembrete_id)
+
+
 def enviar_teste_alertas(conn: sqlite3.Connection, config: dict, park_name: str,
                          payload: dict, chat_id=None) -> None:
     """Envia os três formatos reais sem registrar cooldown ou resumo enviado."""
@@ -1533,6 +1627,7 @@ HELP = (
     "/perto — melhor atração agora considerando fila + caminhada\n"
     "/personagens_perto — encontros abertos perto da sua localização\n"
     "/alerta_personagens on|off — liga ou desliga avisos por proximidade\n"
+    "/lembretes — prazos que ainda vão chegar (Lightning Lane, conferências)\n"
     "/health — estado do monitor (coleta, banco, parques)\n"
     "/teste_alertas &lt;parque&gt; — envia os três alertas com prefixo de teste\n"
     "/teste_park_to_park — simula no Telegram uma recomendação entre parques\n"
@@ -1841,6 +1936,8 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
             return (f"Chats liberados:\n{lista}\n\n"
                     "Use <code>/revogar &lt;chat_id&gt;</code>.")
         return revogar_acesso(conn, arg, chat_id)
+    if cmd == "/lembretes":
+        return format_lembretes(config)
     if cmd == "/health":
         return format_health(conn, config, park_ids)
     if cmd == "/teste_park_to_park":
@@ -2240,6 +2337,10 @@ def main() -> None:
             maybe_send_daily_summary(conn, config, park_ids)
         except Exception:  # noqa: BLE001 — resumo quebrado não pode parar a coleta
             log.exception("Erro no resumo diário")
+        try:
+            maybe_send_reminders(conn, config)
+        except Exception:  # noqa: BLE001 — lembrete quebrado não para a coleta
+            log.exception("Erro no envio de lembretes")
         try:
             maybe_maintain_db(conn, config)
         except Exception:  # noqa: BLE001 — manutenção nunca derruba o monitor
