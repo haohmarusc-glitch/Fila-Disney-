@@ -1,10 +1,20 @@
 """Nomes reais do Queue-Times contra a watchlist.
 
-Os nomes abaixo foram copiados da resposta de produção de
-`https://queue-times.com/parks/334/queue_times.json` em 23/08/2026. O símbolo de
-marca no MEIO do nome ("Mario Kart™: Bowser's Challenge") quebrava o match por
-pedaço e a atração sumia inteira — sem alerta, fora do /status e do /perto, sem
-nenhum erro aparecer. Faltavam 59 dias para o dia do Epic Universe.
+Todos os nomes deste arquivo foram copiados da resposta de produção da API em
+23/08/2026 — nada aqui é inventado. Cinco atrações estavam invisíveis para o
+bot, cada uma por um motivo diferente de pontuação, e nenhuma gerava erro:
+nome não casado é indistinguível de atração fora da watchlist.
+
+    Mario Kart™: Bowser's Challenge      ™ no meio, antes dos dois-pontos
+    Buzz Lightyear’s Space Ranger Spin   apóstrofo curvo, não o reto
+    Rock ’n’ Roller Coaster Starring…    idem, dois deles
+    TRANSFORMERS™ The Ride-3D            ™, sem dois-pontos, hífen no 3D
+    Soarin' Across America               o nome mudou de verdade
+
+As quatro primeiras a normalização resolve. A última não: a watchlist passou a
+guardar só "Soarin'", que sobrevive à próxima troca de filme.
+
+Faltavam 50 dias para a viagem, e as cinco caíam em quatro dias de parque.
 """
 import unittest
 
@@ -98,6 +108,66 @@ class TestSimboloDeMarca(BaseTeste):
         for nome in ("Fyre Drill", "Bowser Jr. Challenge", "Yoshi's Adventure™"):
             with self.subTest(nome=nome):
                 self.assertIsNone(self.monitor.nome_watchlist(self.park_cfg, nome))
+
+
+# Nomes reais dos outros parques, colhidos da mesma resposta de produção. Cada
+# um quebrava por um motivo diferente: apóstrofo curvo, símbolo de marca no meio
+# do nome, e pontuação que a API simplesmente não usa.
+OUTROS_PARQUES = {
+    "Disney Magic Kingdom": [
+        ("Buzz Lightyear\u2019s Space Ranger Spin", "Buzz Lightyear's Space Ranger Spin"),
+    ],
+    "Disney Hollywood Studios": [
+        ("Rock \u2019n\u2019 Roller Coaster Starring The Muppets", "Rock 'n' Roller Coaster"),
+    ],
+    "Universal Studios At Universal Orlando": [
+        ("TRANSFORMERS\u2122 The Ride-3D", "Transformers: The Ride 3D"),
+    ],
+    "Epcot": [
+        # O nome mudou de verdade: "Around the World" virou "Across America".
+        # Nenhuma normalização resolveria — a watchlist é que passou a guardar
+        # só "Soarin'", que sobrevive à próxima troca de filme.
+        ("Soarin' Across America", "Soarin'"),
+    ],
+}
+
+
+class TestNomesDosOutrosParques(BaseTeste):
+    def test_cada_nome_real_casa_com_a_watchlist(self):
+        for parque, casos in OUTROS_PARQUES.items():
+            park_cfg = self.config["parks"][parque]
+            for nome_api, esperado in casos:
+                with self.subTest(parque=parque, api=nome_api):
+                    self.assertEqual(
+                        self.monitor.nome_watchlist(park_cfg, nome_api), esperado)
+
+    def test_single_rider_do_rock_n_roller_continua_fora(self):
+        park_cfg = self.config["parks"]["Disney Hollywood Studios"]
+        self.assertIsNone(self.monitor.nome_watchlist(
+            park_cfg, "Rock 'n' Roller Coaster Starring Aerosmith Single Rider"))
+
+    def test_marca_nao_vira_letra_na_normalizacao(self):
+        # NFKD decompoe "\u2122" em "TM" e grudaria as letras no nome. Se um dia
+        # alguem trocar NFD por NFKD, este teste cai.
+        self.assertEqual(
+            self.monitor.normalizar_nome_api("TRANSFORMERS\u2122 The Ride-3D"),
+            "transformers the ride 3d")
+
+    def test_apostrofo_curvo_e_reto_dao_o_mesmo_resultado(self):
+        self.assertEqual(
+            self.monitor.normalizar_nome_api("Rock \u2019n\u2019 Roller Coaster"),
+            self.monitor.normalizar_nome_api("Rock 'n' Roller Coaster"))
+
+    def test_nomes_diferentes_nao_colidem(self):
+        # A normalização apaga pontuação; não pode fazer atrações distintas
+        # casarem entre si.
+        mk = self.config["parks"]["Disney Magic Kingdom"]
+        self.assertEqual(
+            self.monitor.nome_watchlist(mk, "Space Mountain"), "Space Mountain")
+        self.assertEqual(
+            self.monitor.nome_watchlist(mk, "Big Thunder Mountain Railroad"),
+            "Big Thunder Mountain Railroad")
+        self.assertIsNone(self.monitor.nome_watchlist(mk, "Dumbo the Flying Elephant"))
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ import sqlite3
 import time
 import math
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -564,19 +565,28 @@ def fila_paralela(ride_name: str) -> bool:
     return any(termo in ride_name.lower() for termo in FILAS_IGNORADAS)
 
 
-SIMBOLOS_MARCA = str.maketrans("", "", "™®℠")
+_SO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 
 
 def normalizar_nome_api(nome: str) -> str:
-    """Nome comparável: sem símbolo de marca e sem espaço repetido.
+    """Nome comparável: só letras e números, minúsculo, espaço simples.
 
-    A API entrega "Mario Kart™: Bowser's Challenge" e a watchlist tem o nome sem
-    o ™. O match por pedaço falhava porque o símbolo está no MEIO da string, e a
-    atração sumia inteira — sem alerta, fora do /status, do /perto e do resumo,
-    sem nenhum erro no log. "Mine-Cart Madness™" só escapava porque o ™ está no
-    fim, onde o nome da watchlist ainda é prefixo.
+    O match por pedaço comparava os nomes crus e a atração sumia inteira quando
+    a pontuação divergia — sem alerta, fora do /status, do /perto e do resumo, e
+    sem nenhum erro no log, porque nome não casado é indistinguível de atração
+    fora da watchlist. Casos reais colhidos da API em 23/08/2026:
+
+        Mario Kart™: Bowser's Challenge     ™ no meio, antes dos dois-pontos
+        Buzz Lightyear’s Space Ranger Spin  apóstrofo curvo, não o reto
+        Rock ’n’ Roller Coaster Starring…   idem, dois deles
+        TRANSFORMERS™ The Ride-3D           ™, sem dois-pontos, hífen no 3D
+
+    NFD e não NFKD de propósito: a decomposição de compatibilidade transforma
+    "™" em "TM" e grudaria as letras no nome ("transformerstm").
     """
-    return " ".join(nome.translate(SIMBOLOS_MARCA).lower().split())
+    texto = unicodedata.normalize("NFD", nome.lower())
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return _SO_ALFANUMERICO.sub(" ", texto).strip()
 
 
 def nome_watchlist(park_cfg: dict, ride_name: str) -> str | None:
