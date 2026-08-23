@@ -88,6 +88,9 @@ local por distância.
 | `/perto` (ou `/agora`) | Melhor atração agora por **fila + caminhada**, a partir da sua localização |
 | `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
 | `/teste_alertas <parque>` | Envia ao chat real os três formatos com prefixo **TESTE**, sem cooldown |
+| `/entrar <senha>` | Libera este chat para uso familiar (5 tentativas por hora) |
+| `/sair` | Remove este chat da lista de liberados |
+| `/revogar <chat_id>` | Só no chat principal: tira o acesso de outro chat |
 | `/help` | Ajuda |
 
 O `/status` consulta a API na hora — não devolve o último ciclo gravado. A
@@ -382,6 +385,28 @@ e testes voltam para quem executou o comando. Sem essa variável, o acesso
 continua restrito ao chat principal. Comandos mandados enquanto o container
 estava fora do ar são descartados na subida, para o bot não despejar respostas
 atrasadas de uma vez.
+
+Qualquer pessoa que descubra o nome do bot consegue falar com ele, então o
+`/entrar` tem freio: **5 erros por chat em 60 minutos** e aquele chat para de ser
+testado até a janela passar — a senha certa também não passa durante o bloqueio,
+que é o que impede acertar por insistência. Cada erro responde quantas
+tentativas sobraram, e todas ficam registradas em `auth_attempts`. Acertar zera o
+histórico, para quem errou de dedo antes não ficar penalizado.
+
+Chat não autorizado recebe o aviso de acesso restrito **uma vez a cada 24h**, não
+a cada mensagem: responder sempre confirma que o bot existe e transforma spam de
+estranho em mensagem enviada.
+
+Para tirar um acesso concedido:
+
+| Comando | Quem pode | O que faz |
+|---|---|---|
+| `/sair` | qualquer chat liberado | remove o próprio chat da lista |
+| `/revogar` | só o chat principal | lista os chats liberados |
+| `/revogar <chat_id>` | só o chat principal | tira o acesso daquele chat |
+
+O chat do `TELEGRAM_CHAT_ID` não pode ser revogado por comando — ele vem do
+`.env` e é reinserido a cada subida.
 
 ## Configuração (`watchlist.json`)
 

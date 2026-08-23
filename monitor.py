@@ -104,9 +104,32 @@ def utc_now() -> datetime:
 
 # ---------------------------------------------------------------- db
 
+def aplicar_pragmas(conn: sqlite3.Connection) -> None:
+    """WAL e espera por lock: dois processos dividem este banco.
+
+    Sem WAL o container da API e o do monitor se bloqueiam — a manutenção
+    diária apaga em lote e, durante isso, o site responderia 503. O
+    busy_timeout dá 5s de paciência em vez de estourar na hora.
+    """
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+
+
+def conectar_somente_leitura() -> sqlite3.Connection:
+    """Conexão de leitura para quem não é o monitor (a API do site).
+
+    Só o monitor cria e escreve no banco; abrir em modo `ro` garante isso no
+    nível do SQLite, em vez de confiar que o código não vai escrever.
+    """
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
 def init_db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
+    aplicar_pragmas(conn)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS wait_times (
@@ -239,6 +262,22 @@ def init_db() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS character_last_checks ("
         "chat_id TEXT PRIMARY KEY, latitude REAL NOT NULL, longitude REAL NOT NULL, "
         "checked_at TEXT NOT NULL)"
+    )
+    # Só as tentativas ERRADAS de /entrar: acerto limpa a conta do chat, então
+    # guardar sucesso aqui seria uma linha inserida e apagada no mesmo passo.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS auth_attempts ("
+        "chat_id TEXT NOT NULL, attempted_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_auth_attempts_chat_ts "
+        "ON auth_attempts (chat_id, attempted_at)"
+    )
+    # Quem já foi avisado que o acesso é restrito não precisa ser avisado de novo:
+    # responder a cada mensagem de estranho é ruído e confirma que o bot existe.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS unauthorized_notices ("
+        "chat_id TEXT PRIMARY KEY, notified_at TEXT NOT NULL)"
     )
     if notifier.CHAT_ID:
         principal = str(notifier.CHAT_ID)
@@ -1360,17 +1399,91 @@ def chat_autorizado(conn: sqlite3.Connection, chat_id) -> bool:
     ).fetchone() is not None
 
 
+# O bot é alcançável por qualquer pessoa que descubra o nome dele. Sem freio, a
+# senha familiar é chutável na velocidade que o Telegram aceitar.
+ENTRAR_TENTATIVAS_MAX = 5
+ENTRAR_JANELA_MINUTOS = 60
+# Responder a cada mensagem de estranho confirma o bot e vira ruído: avisa uma vez.
+AVISO_RESTRITO_HORAS = 24
+
+
+def tentativas_entrar_recentes(conn: sqlite3.Connection, chat_id,
+                               janela_min: int = ENTRAR_JANELA_MINUTOS) -> int:
+    corte = (utc_now() - timedelta(minutes=janela_min)).isoformat()
+    return conn.execute(
+        "SELECT COUNT(*) FROM auth_attempts "
+        "WHERE chat_id = ? AND attempted_at >= ?",
+        (str(chat_id), corte),
+    ).fetchone()[0]
+
+
+def registrar_erro_entrar(conn: sqlite3.Connection, chat_id) -> None:
+    conn.execute(
+        "INSERT INTO auth_attempts (chat_id, attempted_at) VALUES (?, ?)",
+        (str(chat_id), utc_now().isoformat()),
+    )
+    conn.commit()
+
+
+def entrar_bloqueado(conn: sqlite3.Connection, chat_id) -> bool:
+    return tentativas_entrar_recentes(conn, chat_id) >= ENTRAR_TENTATIVAS_MAX
+
+
 def autenticar_familiar(conn: sqlite3.Connection, chat_id, senha: str) -> str:
     if not FAMILY_ACCESS_PASSWORD:
         return "O acesso familiar ainda não foi configurado pelo administrador."
+    if entrar_bloqueado(conn, chat_id):
+        log.warning("Chat %s bloqueado por excesso de tentativas de /entrar", chat_id)
+        return f"🚫 Muitas tentativas. Tente de novo em {ENTRAR_JANELA_MINUTOS} minutos."
     if not hmac.compare_digest(senha, FAMILY_ACCESS_PASSWORD):
-        return "Senha familiar incorreta."
+        registrar_erro_entrar(conn, chat_id)
+        restantes = max(0, ENTRAR_TENTATIVAS_MAX - tentativas_entrar_recentes(conn, chat_id))
+        log.warning("Senha familiar incorreta do chat %s (%d tentativa(s) restante(s))",
+                    chat_id, restantes)
+        return f"Senha familiar incorreta. Tentativas restantes: {restantes}."
+    # Acerto zera o histórico: o freio existe contra quem chuta, não contra quem
+    # errou de dedo antes de acertar.
+    conn.execute("DELETE FROM auth_attempts WHERE chat_id = ?", (str(chat_id),))
     conn.execute(
         "INSERT OR REPLACE INTO authorized_chats (chat_id, authorized_at) VALUES (?, ?)",
         (str(chat_id), utc_now().isoformat()),
     )
     conn.commit()
+    log.info("Acesso familiar liberado para o chat %s", chat_id)
     return "✅ Acesso familiar liberado. Use /help para ver os comandos."
+
+
+def revogar_acesso(conn: sqlite3.Connection, alvo, solicitante) -> str:
+    """Tira um chat da lista. O chat principal do .env não pode ser revogado."""
+    alvo = str(alvo)
+    if notifier.CHAT_ID and alvo == str(notifier.CHAT_ID):
+        return ("O chat principal vem do <code>.env</code> e não pode ser revogado "
+                "por comando.")
+    apagados = conn.execute(
+        "DELETE FROM authorized_chats WHERE chat_id = ?", (alvo,)
+    ).rowcount
+    conn.commit()
+    if not apagados:
+        return f"O chat <code>{notifier.esc(alvo)}</code> não estava liberado."
+    log.info("Acesso revogado do chat %s (pedido por %s)", alvo, solicitante)
+    return f"🔒 Acesso revogado do chat <code>{notifier.esc(alvo)}</code>."
+
+
+def deve_avisar_nao_autorizado(conn: sqlite3.Connection, chat_id) -> bool:
+    """True só no primeiro contato (ou depois de 24h) — evita virar eco de spam."""
+    corte = (utc_now() - timedelta(hours=AVISO_RESTRITO_HORAS)).isoformat()
+    recente = conn.execute(
+        "SELECT 1 FROM unauthorized_notices WHERE chat_id = ? AND notified_at >= ?",
+        (str(chat_id), corte),
+    ).fetchone()
+    if recente:
+        return False
+    conn.execute(
+        "INSERT OR REPLACE INTO unauthorized_notices (chat_id, notified_at) VALUES (?, ?)",
+        (str(chat_id), utc_now().isoformat()),
+    )
+    conn.commit()
+    return True
 
 HELP = (
     "🎢 <b>Monitor de filas</b>\n\n"
@@ -1398,6 +1511,8 @@ HELP = (
     "/teste_alertas &lt;parque&gt; — envia os três alertas com prefixo de teste\n"
     "/teste_park_to_park — simula no Telegram uma recomendação entre parques\n"
     "/entrar &lt;senha&gt; — libera este chat para uso familiar\n"
+    "/sair — remove este chat da lista de liberados\n"
+    "/revogar &lt;chat_id&gt; — só no chat principal: tira o acesso de outro chat\n"
     "/help — esta mensagem\n\n"
     "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
     "Powered by Queue-Times.com"
@@ -1687,6 +1802,19 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         except requests.RequestException:
             return "Não consegui consultar os personagens agora. Tente novamente em 1 min."
         return format_personagens_proximos(park, items, raio)
+    if cmd == "/sair":
+        return revogar_acesso(conn, chat_id, chat_id)
+    if cmd == "/revogar":
+        if not notifier.is_authorized(chat_id):
+            return "Só o chat principal pode revogar o acesso de outro chat."
+        if not arg:
+            liberados = conn.execute(
+                "SELECT chat_id FROM authorized_chats ORDER BY authorized_at"
+            ).fetchall()
+            lista = "\n".join(f"• <code>{notifier.esc(c[0])}</code>" for c in liberados)
+            return (f"Chats liberados:\n{lista}\n\n"
+                    "Use <code>/revogar &lt;chat_id&gt;</code>.")
+        return revogar_acesso(conn, arg, chat_id)
     if cmd == "/health":
         return format_health(conn, config, park_ids)
     if cmd == "/teste_park_to_park":
@@ -1849,10 +1977,11 @@ def serve_commands(offset: int | None, conn: sqlite3.Connection, config: dict,
             continue
         if not chat_autorizado(conn, chat_id):
             log.warning("Comando ignorado de chat não autorizado: %s", chat_id)
-            notifier.send(
-                "🔒 Acesso restrito à família. Use <code>/entrar SUA_SENHA</code>.",
-                chat_id=chat_id,
-            )
+            if deve_avisar_nao_autorizado(conn, chat_id):
+                notifier.send(
+                    "🔒 Acesso restrito à família. Use <code>/entrar SUA_SENHA</code>.",
+                    chat_id=chat_id,
+                )
             continue
 
         if location_data:
@@ -1998,7 +2127,8 @@ def maybe_maintain_db(conn: sqlite3.Connection, config: dict) -> None:
     apagadas = 0
     corte_logs = (utc_now() - timedelta(days=90)).isoformat()
     for tabela, coluna in (("reopen_alerts", "sent_at"), ("route_rejections", "ts"),
-                           ("alerts_sent", "sent_at")):
+                           ("alerts_sent", "sent_at"), ("auth_attempts", "attempted_at"),
+                           ("unauthorized_notices", "notified_at")):
         apagadas += conn.execute(
             f"DELETE FROM {tabela} WHERE {coluna} < ?", (corte_logs,)
         ).rowcount
