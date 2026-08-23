@@ -88,6 +88,8 @@ local por distância.
 | `/chuva` | Opções internas confirmadas por fila + caminhada |
 | `/parques` | Lista os parques que o monitor resolveu na API |
 | `/perto` (ou `/agora`) | Melhor atração agora por **fila + caminhada**, a partir da sua localização |
+| `/grupo` | Onde está a família — só entre quem compartilha |
+| `/grupo on` / `/grupo off` | Entra ou sai do compartilhamento de posição |
 | `/lembretes` | Prazos que ainda vão chegar (Lightning Lane, conferências) |
 | `/health` | Estado do monitor: última coleta, parques resolvidos, tamanho do histórico |
 | `/teste_alertas <parque>` | Ensaia **todas** as mensagens automáticas, marcadas como **TESTE**, sem gravar nada |
@@ -106,10 +108,12 @@ O `/perto` identifica o parque pelo **contorno formado pelas atrações** no
 `coords.json`, com margem curta para GPS e entradas. Isso evita que Yacht Club,
 Pop Century e parques aquáticos sejam confundidos com um parque temático.
 
-Filas de **single rider** e virtuais ficam fora do alerta e do `/status`: a API
-publica cada uma como atração separada, o nome casa por match parcial com a
+Filas de **single rider** e virtuais nunca alertam e nunca entram em ranking: a
+API publica cada uma como atração separada, o nome casa por match parcial com a
 atração de verdade e o tempo vem 0 quando não há dado — o que viraria alerta
-falso de "0 min, vai agora". Elas continuam sendo gravadas no histórico.
+falso de "0 min, vai agora". Elas aparecem num bloco à parte do `/status`, e só
+quando o histórico prova que a API publica dado real ali — ver
+**Single rider: visível, nunca alertando**.
 
 ## Inteligência operacional
 
@@ -336,6 +340,102 @@ warning, mas nunca interrompe a coleta.
 
 Como o Kuma está na mesma VPS, esse monitor detecta falha do processo ou da
 coleta, mas não queda completa da máquina ou do provedor.
+
+## Single rider: visível, nunca alertando
+
+O `/status` mostra as filas de single rider num bloco separado, no fim da
+mensagem:
+
+```
+🎟 Single rider — fila à parte, nunca alerta:
+     Test Track — 15 min
+```
+
+Elas continuam **fora de alerta e de todo ranking** — a regra de sempre. O que
+mudou é que deixaram de ser invisíveis. O `docs/ROTEIRO.md` conta com single
+rider no **IOA em 19/10** ("sem Express: rope drop + single rider"), e é
+justamente lá que a API publica quatro filas, todas na watchlist: Hagrid's,
+Hulk, Forbidden Journey e Doctor Doom.
+
+O problema dessas entradas é que a API publica `0 min` quando não tem dado, e
+ausência de dado não pode virar "vai agora". O número de agora não distingue um
+walk-on real de uma entrada morta — **o histórico distingue**. Só aparece a fila
+que, nos últimos 30 dias, já reportou tempo maior que zero em pelo menos 12
+leituras. Numa fila assim, um `0 min` de agora é walk-on de verdade.
+
+### O que a API publica hoje
+
+Conferido na VPS em 23/08/2026 — 19 filas paralelas, 18 casando com a watchlist:
+
+| Parque | Filas | Quais |
+|---|---|---|
+| Magic Kingdom | 0 | — |
+| Epcot | 2 | Test Track, Remy's Ratatouille Adventure |
+| Hollywood Studios | 3 | Millennium Falcon, Rise of the Resistance, Rock 'n' Roller Coaster |
+| Animal Kingdom | 1 | Expedition Everest |
+| Universal Studios | 4 | Mummy, Gringotts, MEN IN BLACK (+ Fast & Furious, fora da watchlist) |
+| Islands of Adventure | 4 | Hagrid's, Hulk, Forbidden Journey, Doctor Doom |
+| Epic Universe | 5 | Stardust, Werewolf, Mario Kart, Mine-Cart, Battle at the Ministry |
+
+São exatamente as atrações que oferecem single rider de verdade — **Flight of
+Passage, Guardians, TRON e Tiana não têm essa fila**, e por isso não aparecem
+aqui nem vão aparecer no `/status`. A única que a API publica e o bot ignora é
+Fast & Furious, que não está na watchlist.
+
+O `tests/test_filas_paralelas_reais.py` guarda esses 19 nomes verbatim: nome de
+atração muda sozinho, e o casamento por normalização já falhou em silêncio antes.
+
+Consequência prática: num parque cuja API não publique single rider, ou logo
+depois de um banco novo, o bloco simplesmente não aparece. Para reconferir o que
+a Queue-Times publica:
+
+```bash
+docker compose exec -T fila-disney python -c "
+import monitor
+for nome, pid in monitor.resolve_park_ids(list(monitor.load_config()['parks'])).items():
+    filas = [r['name'] for _l, r in monitor.iter_rides(monitor.fetch_queue_times(pid))
+             if monitor.fila_paralela(r['name'])]
+    print(f'{nome}: {len(filas)}')
+    for f in filas: print('   ', f)
+"
+```
+
+## Grupo: `/grupo`
+
+Onde está a família, entre quem escolheu compartilhar:
+
+```
+👨‍👩‍👧 Grupo — onde está todo mundo
+
+📍 Pedro — Epcot
+     perto de Test Track · 248 m de você · agora
+📍 Fernanda — Epcot
+     perto de Guardians of the Galaxy: Cosmic Rewind · 532 m de você · há 38 min
+```
+
+| Comando | O que faz |
+|---|---|
+| `/grupo on` | entra no compartilhamento |
+| `/grupo` | mostra onde está todo mundo |
+| `/grupo off` | sai |
+
+É GPS de gente real num chat, então o desenho é conservador de propósito:
+
+- **Opt-in explícito.** Ninguém compartilha por padrão; ausência de linha no
+  banco é "não".
+- **Ver exige compartilhar.** Sem essa simetria o comando vira janela de mão
+  única para quem não se expõe.
+- **Sai referência, não coordenada.** Parque, atração a até 400 m e há quanto
+  tempo. Além dos 400 m sai só o parque — "perto de Test Track" a 900 m de Test
+  Track manda o grupo para o lado errado. Coordenada crua num chat vira registro
+  permanente da posição exata de alguém, e não é preciso para responder "onde
+  todo mundo está".
+- **Só o que a pessoa mandou.** A mesma localização do 📎 que o `/perto` já usa —
+  o bot nunca puxa posição sozinho.
+- **Some sozinho.** Posição com mais de 3h não aparece, e a linha some do banco
+  em 7 dias.
+- **Revogar apaga junto.** `/sair` e `/revogar` levam posição, nome e
+  compartilhamento daquele chat.
 
 ## Localização: `/perto`
 

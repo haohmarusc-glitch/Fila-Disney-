@@ -93,7 +93,9 @@ class TestSimboloDeMarca(BaseTeste):
         texto = self.monitor.format_status(
             PARQUE, payload_com(EPIC_UNIVERSE), self.config)
         self.assertIn("Mario Kart", texto)
-        self.assertNotIn("Single Rider", texto, "fila paralela não entra no /status")
+        # O bloco de single rider do /status exige conn com histórico; aqui não
+        # há, então nem o bloco nem o nome cru da API podem aparecer.
+        self.assertNotIn("Single Rider", texto, "nome cru da API não vai para a tela")
 
     def test_normalizacao_nao_junta_atracoes_diferentes(self):
         # Stardust Racers e Constellation Carousel não podem casar entre si só
