@@ -114,6 +114,60 @@ def esperar_banco(espera_s: int = ESPERA_BANCO_S) -> None:
         time.sleep(2)
 
 
+def _rotulo_do_chat(conn, chat_id) -> str:
+    row = conn.execute(
+        "SELECT nome FROM chat_names WHERE chat_id = ?", (str(chat_id),)).fetchone()
+    return row[0] if row else "familiar"
+
+
+def build_vigias_payload(conn, config: dict) -> dict:
+    """As vigias de fila ativas, com a fila atual e o alvo — somente leitura.
+
+    O site é o painel; criar e cancelar continua no Telegram, porque o alerta
+    precisa de um chat de destino e o site tem um token só para a família toda.
+    A identidade de quem vigia sai como o nome do `chat_names` quando existe —
+    nunca o chat_id, que não é dado de tela.
+
+    A fila atual vem do BANCO (última leitura do ciclo), não da Queue-Times:
+    este endpoint não gasta chamada externa e envelhece no máximo 5 min, que é
+    o próprio passo do monitor.
+    """
+    vigias = []
+    rows = conn.execute(
+        "SELECT chat_id, park, ride, limite_min, limite_pct, criado_em "
+        "FROM fila_watches ORDER BY park, ride").fetchall()
+    for chat_id, park, ride, limite_min, limite_pct, criado_em in rows:
+        atual = conn.execute(
+            "SELECT wait_time, is_open, ts FROM wait_times "
+            "WHERE park = ? AND ride = ? ORDER BY ts DESC LIMIT 1",
+            (park, ride)).fetchone()
+        fila = atual[0] if atual else None
+        alvo_min = limite_min
+        tipico = None
+        if limite_pct is not None and fila is not None:
+            perfil = localizacao.perfil_historico(conn, config, park, ride, fila)
+            if perfil and perfil.get("mediana"):
+                tipico = round(perfil["mediana"])
+                alvo_min = round(perfil["mediana"] * limite_pct / 100)
+        vigias.append({
+            "park": park,
+            "ride": ride,
+            # nome_do_chat cai em "chat <id>" quando não há rótulo — bom no
+            # Telegram, vazamento na web. Aqui: nome ou o genérico "familiar".
+            "quem": _rotulo_do_chat(conn, chat_id),
+            "limite_min": limite_min,
+            "limite_pct": limite_pct,
+            "alvo_min": alvo_min,       # None no modo % sem histórico: sem chute
+            "tipico_min": tipico,
+            "fila_agora": fila,         # None é None — nunca vira 0 (regra 15)
+            "aberta": bool(atual[1]) if atual else None,
+            "criado_em": criado_em,
+        })
+    return {"vigias": vigias,
+            "max_por_chat": monitor.MAX_VIGIAS_FILA_POR_CHAT,
+            "attribution": "Powered by Queue-Times.com"}
+
+
 def _number(query: dict, key: str, low: float, high: float) -> float:
     try:
         value = float(query[key][0])
@@ -189,7 +243,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/health":
             return self._send(200, {"ok": True, "service": "fila-disney-api"})
-        if parsed.path != "/perto":
+        if parsed.path not in ("/perto", "/vigias"):
             return self._send(404, {"error": "rota não encontrada"})
         agora = time.monotonic()
         if bloqueado(agora):
@@ -204,6 +258,13 @@ class Handler(BaseHTTPRequestHandler):
                         PERTO_MAX_JANELA, PERTO_JANELA_S)
             return self._send(429, {"error": "muitos pedidos; tente em instantes"},
                               {"Retry-After": str(PERTO_JANELA_S)})
+        if parsed.path == "/vigias":
+            try:
+                return self._send(200, build_vigias_payload(
+                    self.server.conn, self.server.config))
+            except Exception:
+                log.exception("Falha em /vigias")
+                return self._send(503, {"error": "vigias temporariamente indisponíveis"})
         try:
             query = parse_qs(parsed.query)
             lat = _number(query, "lat", -90, 90)
