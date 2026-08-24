@@ -13,6 +13,55 @@
       }
     }
   },
+  "_veiculo_regra": "Tempo DENTRO do veiculo, em minutos — a outra medida, em secao propria e rotulada, nunca no mesmo campo que o total. Fonte: infobox da Wikipedia, colhido em 24/08/2026 (31 atracoes; a colecao esta no historico do git). Serve para decompor o total na tela: pre-show/embarque = rides - veiculo, os dois com fonte. Atracao sem as duas medidas fica sem pre. O coletor do TouringPlans nao toca nesta secao.",
+  "_veiculo_fontes": "Excecao documentada: Star Wars Rise of the Resistance tem veiculo = 7 vindo do TouringPlans (o proprio _ajustes explica que os 7 dele cobrem so o trecho do veiculo) — o 18 da Wikipedia era o total divulgado na abertura.",
+  "veiculo": {
+    "Disney Magic Kingdom": {
+      "Big Thunder Mountain Railroad": 3,
+      "Seven Dwarfs Mine Train": 3,
+      "Pirates of the Caribbean": 9,
+      "TRON Lightcycle / Run": 1,
+      "Space Mountain": 3
+    },
+    "Epcot": {
+      "Guardians of the Galaxy: Cosmic Rewind": 3,
+      "Remy's Ratatouille Adventure": 5,
+      "Test Track": 5,
+      "Mission: SPACE": 6,
+      "Frozen Ever After": 5,
+      "Soarin'": 5
+    },
+    "Disney Hollywood Studios": {
+      "Slinky Dog Dash": 2,
+      "Star Wars: Rise of the Resistance": 7,
+      "Rock 'n' Roller Coaster": 1
+    },
+    "Disney Animal Kingdom": {
+      "Avatar Flight of Passage": 4,
+      "Na'vi River Journey": 6,
+      "Expedition Everest": 3,
+      "Kilimanjaro Safaris": 21,
+      "Kali River Rapids": 5
+    },
+    "Universal Studios At Universal Orlando": {
+      "Harry Potter and the Escape from Gringotts": 5,
+      "Transformers: The Ride 3D": 5,
+      "MEN IN BLACK Alien Attack": 5,
+      "The Simpsons Ride": 5,
+      "E.T. Adventure": 5
+    },
+    "Islands Of Adventure At Universal Orlando": {
+      "The Incredible Hulk Coaster": 2,
+      "Skull Island: Reign of Kong": 6,
+      "Ripsaw Falls": 6,
+      "Harry Potter and the Forbidden Journey": 4,
+      "The Amazing Adventures of Spider-Man": 5,
+      "Flight of the Hippogriff": 1
+    },
+    "Universal Epic Universe": {
+      "Mario Kart: Bowser's Challenge": 5
+    }
+  },
   "rides": {
     "Disney Magic Kingdom": {
       "Big Thunder Mountain Railroad": 7,

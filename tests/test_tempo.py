@@ -299,3 +299,53 @@ class TestCabeAntesDeFechar(BaseTeste):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPreShow(unittest.TestCase):
+    """Pré-show/embarque = total (TouringPlans) menos veículo (Wikipédia).
+
+    Duas medidas com fonte, em seções rotuladas — nunca no mesmo campo. O pré
+    só aparece quando as duas existem e a diferença passa de ruído.
+    """
+
+    DURACOES = {"Disney Hollywood Studios": {"Star Wars: Rise of the Resistance": 18,
+                                             "Slinky Dog Dash": 3},
+                "Disney Animal Kingdom": {"Kilimanjaro Safaris": 20}}
+    VEICULOS = {"Disney Hollywood Studios": {"Star Wars: Rise of the Resistance": 7},
+                "Disney Animal Kingdom": {"Kilimanjaro Safaris": 21}}
+
+    def _pre(self, park, ride):
+        import monitor
+        return monitor.pre_da_atracao(self.DURACOES, self.VEICULOS, park, ride)
+
+    def test_total_menos_veiculo(self):
+        self.assertEqual(self._pre("Disney Hollywood Studios",
+                                   "Star Wars: Rise of the Resistance"), 11)
+
+    def test_sem_veiculo_nao_ha_pre(self):
+        """Slinky tem total mas não tem ciclo medido: sem pré, nunca estimado."""
+        self.assertIsNone(self._pre("Disney Hollywood Studios", "Slinky Dog Dash"))
+
+    def test_diferenca_negativa_e_divergencia_de_fonte_nao_pre(self):
+        """Kilimanjaro: 20 de total contra 21 de ciclo. As fontes divergem na
+        folga; inventar um pré aqui seria pior que calar."""
+        self.assertIsNone(self._pre("Disney Animal Kingdom", "Kilimanjaro Safaris"))
+
+    def test_diferenca_de_um_minuto_e_ruido(self):
+        import monitor
+        self.assertIsNone(monitor.pre_da_atracao(
+            {"P": {"A": 4}}, {"P": {"A": 3}}, "P", "A"))
+
+    def test_secao_veiculo_do_arquivo_e_valida(self):
+        """Toda chave da seção `veiculo` aponta atração real da watchlist."""
+        import json
+        import monitor
+        dados = json.load(open("duracoes.json"))
+        watchlist = monitor.load_config()["parks"]
+        self.assertTrue(dados.get("veiculo"), "a seção precisa existir")
+        for parque, itens in dados["veiculo"].items():
+            for atracao, minutos in itens.items():
+                with self.subTest(atracao=atracao):
+                    self.assertIn(atracao, watchlist[parque]["attractions"])
+                    self.assertIsInstance(minutos, int)
+                    self.assertGreater(minutos, 0)
