@@ -378,3 +378,49 @@ class TestNomeDaApiVersusArquivo(BaseTeste):
 
     def test_nome_igual_ao_canonico_continua_funcionando(self):
         self.assertIn("atração ~15 min", self._status("Tower of Terror"))
+
+
+class TestContextoNoMenores(BaseTeste):
+    """A duração entra no /menores como contexto, nunca como critério.
+
+    "10 min de fila" muda de sentido conforme sejam 10 por um passeio de 20 min
+    ou 10 por 90 segundos — sem o parêntese o ranking escondia a diferença. A
+    ORDEM continua sendo a fila (regra 12: duração não ordena nada).
+    """
+
+    def _menores(self, filas, duracoes_arquivo):
+        import json
+        self.monitor.DURACOES_PATH.write_text(json.dumps(
+            {"rides": {"Disney Animal Kingdom": duracoes_arquivo}, "veiculo": {}}),
+            encoding="utf-8")
+        payload = {"lands": [{"name": "L", "rides": [
+            {"id": i, "name": n, "is_open": True, "wait_time": w,
+             "last_updated": self.monitor.utc_now().isoformat()}
+            for i, (n, w) in enumerate(filas.items())]}]}
+        return self.monitor.format_menores("Disney Animal Kingdom", payload,
+                                           self.config, 10)
+
+    def test_duracao_aparece_entre_parenteses(self):
+        texto = self._menores({"Kilimanjaro Safaris": 30},
+                              {"Kilimanjaro Safaris": 20})
+        self.assertIn("(~20 min de atração)", texto)
+
+    def test_a_ordem_continua_sendo_a_fila(self):
+        """O passeio de 20 min NÃO sobe por causa da duração."""
+        texto = self._menores(
+            {"Kilimanjaro Safaris": 30, "TriceraTop Spin": 10},
+            {"Kilimanjaro Safaris": 20})
+        self.assertLess(texto.index("TriceraTop"), texto.index("Kilimanjaro"))
+
+    def test_sem_duracao_nao_ha_parenteses(self):
+        """Regra 15: sem o dado, sem contexto — nunca "~0 min"."""
+        texto = self._menores({"TriceraTop Spin": 10}, {})
+        self.assertNotIn("min de atração", texto)
+        self.assertNotIn("~0", texto)
+
+    def test_nome_decorado_da_api_acha_a_duracao(self):
+        """Mesma lição do /status: a API decora, o arquivo guarda o canônico."""
+        texto = self._menores(
+            {"Expedition Everest - Legend of the Forbidden Mountain": 25},
+            {"Expedition Everest": 4})
+        self.assertIn("(~4 min de atração)", texto)
