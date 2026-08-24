@@ -249,13 +249,16 @@ main { flex: 1; }
   cursor: pointer;
 }
 .filas-live { margin-top: 10px; border-top: 1px solid var(--borda); padding-top: 8px; }
-.filas-live .linha {
+/* `.linha` era só do bloco da aba Roteiro. A aba Parques reusou a classe e as
+   duas colunas saíram coladas — "Avatar Flight of Passagefechada". O estilo
+   agora é da classe, não do lugar onde ela aparece. */
+.linha {
   display: flex; justify-content: space-between; gap: 8px;
   font-size: .84rem;
   padding: 4px 0;
 }
-.filas-live .linha span:last-child { flex: none; font-weight: 700; }
-.filas-live .meta { font-size: .78rem; color: var(--texto-suave); margin-bottom: 4px; }
+.linha span:last-child { flex: none; font-weight: 700; }
+.meta { font-size: .78rem; color: var(--texto-suave); margin-bottom: 4px; }
 .fila-ok { color: var(--verde-texto); }
 .fila-alta { color: var(--vermelho-texto); }
 

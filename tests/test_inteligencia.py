@@ -80,6 +80,32 @@ class TestNovosComandos(BaseTeste):
         self.assertIn("Lotação estimada", r)
         self.assertIn("não é contagem de pessoas", r)
 
+    def test_parque_fechado_nao_vira_lotacao_leve(self):
+        """Visto na VPS em 24/08 às 19h43: o Animal Kingdom já tinha fechado e
+        o site anunciava "lotação leve". Show e trilha publicam 0 permanente e
+        continuam is_open, então a média das "abertas" dava 0 — que o
+        formatador lê como parque vazio, e não como parque fechado.
+        """
+        shows = ["Festival of the Lion King", "Feathered Friends in Flight!"]
+        base = dt.datetime(2026, 10, 6, 18)
+        for nome in shows:
+            for leitura in range(self.monitor.MIN_LEITURAS_PLACEHOLDER):
+                self.gravar(PARK, nome, 0, base + dt.timedelta(minutes=5 * leitura))
+        # Tudo fechado menos os shows: é o parque depois do último ciclo.
+        self.p = payload(
+            [{"name": nome, "wait_time": 0, "is_open": True} for nome in shows]
+            + [{"name": "Slinky Dog Dash", "wait_time": 0, "is_open": False}])
+        self.requests.roteador = lambda _url: Resposta(self.p)
+        r = self.cmd("/lotacao Hollywood")
+        self.assertIn("sem filas atuais suficientes", r)
+        self.assertNotIn("leve", r)
+
+    def test_lotacao_real_continua_sendo_calculada(self):
+        """A correção não pode calar o comando quando há fila de verdade."""
+        r = self.cmd("/lotacao Hollywood")
+        self.assertIn("Lotação estimada", r)
+        self.assertNotIn("sem filas atuais suficientes", r)
+
     def test_chuva_so_mostra_lista_conservadora(self):
         r = self.cmd("/chuva Hollywood")
         self.assertIn("Mickey", r)

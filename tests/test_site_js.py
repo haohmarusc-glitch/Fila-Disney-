@@ -17,6 +17,7 @@ pulado onde ele não existir, nunca falso-verde.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -230,6 +231,68 @@ class TestHtmlDoTelegram(unittest.TestCase):
     def test_texto_sem_tag_nenhuma_passa_inteiro(self):
         r = self.converter("Nenhuma atração aberta agora.")
         self.assertIn("Nenhuma atração aberta agora.", r["texto"])
+
+@unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
+class TestCorDaFila(unittest.TestCase):
+    """A cor diz "pode ir agora"; fechada não pode ficar verde.
+
+    Visto no celular em 24/08: o Animal Kingdom fechado listava
+    "Avatar Flight of Passage — fechada" em VERDE. A atração fechada publica
+    wait 0, 0 passa em qualquer threshold, e a função de cor não sabia se a
+    atração estava aberta.
+    """
+
+    def linha(self, **item):
+        base = {"ride": "Avatar Flight of Passage", "wait": 0, "threshold": 60,
+                "aberta": False, "obsoleta": False, "duracao_min": None,
+                "pre_min": None}
+        base.update(item)
+        return render({"aba": "parques", "respostas": {
+            "/comandos": {"comandos": [], "parques": ["Disney Animal Kingdom"]},
+            "/parque": {"park": "Disney Animal Kingdom", "horario": None,
+                        "lotacao": None, "items": [base], "outras": [], "shows": [],
+                        "attribution": "Powered by Queue-Times.com"}}})
+
+    def test_fechada_nao_recebe_cor_de_fila_boa(self):
+        tela = self.linha()
+        self.assertIn("fechada", tela["parques"])
+        self.assertNotIn("fila-ok", tela["classes"])
+
+    def test_aberta_dentro_do_limite_fica_verde(self):
+        tela = self.linha(aberta=True, wait=20)
+        self.assertIn("fila-ok", tela["classes"])
+
+    def test_aberta_acima_do_limite_fica_vermelha(self):
+        tela = self.linha(aberta=True, wait=90)
+        self.assertIn("fila-alta", tela["classes"])
+
+
+class TestEstiloCompartilhado(unittest.TestCase):
+    """Classe de layout não pode ficar presa ao lugar onde nasceu.
+
+    A `.linha` foi escrita como `.filas-live .linha`, para a aba Roteiro. A aba
+    Parques reusou a classe e as duas colunas saíram coladas na tela —
+    "Avatar Flight of Passagefechada". Não é bug de lógica e o harness não
+    avalia CSS, então o que dá para afirmar aqui é o seletor.
+    """
+
+    def css(self) -> str:
+        with open("site/styles.css", encoding="utf-8") as f:
+            return f.read()
+
+    def test_classes_de_layout_valem_em_qualquer_aba(self):
+        css = self.css()
+        for classe in (".linha", ".meta"):
+            with self.subTest(classe=classe):
+                # A REGRA BASE, não uma variante: `.linha span:last-child`
+                # existir não garante que `.linha` sozinha tenha o flex.
+                # `assertTrue` e não `assertRegex` porque este despeja o
+                # styles.css inteiro na falha e esconde a mensagem.
+                self.assertTrue(
+                    re.search(rf"(?m)^\{classe}\s*\{{", css),
+                    f"{classe} só existe aninhada — quem reusar a classe fora do "
+                    f"bloco original perde o estilo em silêncio")
+
 
 if __name__ == "__main__":
     unittest.main()

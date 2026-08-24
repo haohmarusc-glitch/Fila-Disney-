@@ -1722,9 +1722,16 @@ def calcular_lotacao(conn: sqlite3.Connection, config: dict, park: str,
     histórico da mesma hora/dia é curto — sem base de comparação não há
     "cheio" nem "leve", só a média publicada.
     """
+    # Show e trilha publicam 0 permanente e continuam `is_open` com o parque
+    # fechado — no Animal Kingdom de 24/08, às 19h43, sobravam quatro delas e a
+    # média dava 0, o que o formatador anunciava como "lotação leve" num parque
+    # que já tinha fechado. Sem elas a lista fica vazia e o caminho de `None`
+    # ("sem filas atuais suficientes") diz a verdade. Mesmo detector do /menores.
+    sem_fila = atracoes_sem_fila_medida(conn, park) if conn is not None else set()
     atuais = [int(r["wait_time"]) for _l, r in iter_rides(payload)
               if r.get("is_open") and r.get("wait_time") is not None
-              and not fila_paralela(r["name"]) and not leitura_obsoleta(r)]
+              and not fila_paralela(r["name"]) and not leitura_obsoleta(r)
+              and r["name"] not in sem_fila]
     fechadas = sum(1 for _l, r in iter_rides(payload)
                    if not r.get("is_open") and not fila_paralela(r["name"]))
     if not atuais:
