@@ -197,6 +197,175 @@ async function carregarVigias() {
   }
 }
 
+/* ----------------------------------------------------------- parques */
+
+// As tags que o Telegram aceita e o projeto usa. Tudo fora daqui perde a tag e
+// mantém só o texto.
+const TAGS_TELEGRAM = new Set(["b", "strong", "i", "em", "u", "ins", "s",
+                               "strike", "del", "code", "pre", "a", "br"]);
+const ENTIDADES = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", apos: "'", nbsp: " " };
+
+function desescapar(txt) {
+  return txt.replace(/&(#?\w+);/g, (inteiro, nome) =>
+    Object.prototype.hasOwnProperty.call(ENTIDADES, nome) ? ENTIDADES[nome] : inteiro);
+}
+
+/* Converte o HTML do Telegram em nós de verdade, SEM innerHTML.
+ *
+ * O texto vem do nosso próprio formatador e todo nome de atração já passou
+ * pelo `notifier.esc` (regra 8), mas construir a árvore à mão em vez de
+ * confiar nisso é o que torna impossível um `&` mal escapado virar execução.
+ * Tag desconhecida perde a marcação e preserva o texto — some o negrito, nunca
+ * a informação. */
+function doTelegram(html) {
+  const raiz = { filhos: [] };
+  const pilha = [raiz];
+  const padrao = /<(\/?)([a-zA-Z-]+)((?:\s[^>]*)?)>/g;
+  let cursor = 0;
+  let achado;
+  const empurraTexto = (bruto) => {
+    if (bruto) pilha[pilha.length - 1].filhos.push({ texto: desescapar(bruto) });
+  };
+  while ((achado = padrao.exec(html)) !== null) {
+    empurraTexto(html.slice(cursor, achado.index));
+    cursor = padrao.lastIndex;
+    const [, fecha, nomeBruto, atributos] = achado;
+    const nome = nomeBruto.toLowerCase();
+    if (!TAGS_TELEGRAM.has(nome)) continue; // desconhecida: texto segue, tag some
+    if (nome === "br") {
+      pilha[pilha.length - 1].filhos.push({ texto: "\n" });
+    } else if (fecha) {
+      if (pilha.length > 1) pilha.pop();
+    } else {
+      const no = { tag: nome, filhos: [] };
+      if (nome === "a") {
+        const href = /href\s*=\s*"([^"]*)"/i.exec(atributos || "");
+        // Só http(s): corta javascript: e data: na origem.
+        if (href && /^https?:\/\//i.test(href[1])) no.href = desescapar(href[1]);
+      }
+      pilha[pilha.length - 1].filhos.push(no);
+      pilha.push(no);
+    }
+  }
+  empurraTexto(html.slice(cursor));
+
+  const montar = (no, destino) => {
+    for (const filho of no.filhos) {
+      if (filho.texto !== undefined) {
+        destino.appendChild(texto("span", null, filho.texto));
+        continue;
+      }
+      const elemento = texto(filho.tag, null);
+      if (filho.tag === "a" && filho.href) {
+        elemento.href = filho.href;
+        elemento.target = "_blank";
+        elemento.rel = "noopener";
+      }
+      montar(filho, elemento);
+      destino.appendChild(elemento);
+    }
+  };
+  const bloco = texto("div", "telegram");
+  montar(raiz, bloco);
+  return bloco;
+}
+
+let parqueAtivo = null;
+let comandosCache = null;
+
+function linhaAtracao(item, mostraFila) {
+  const linha = texto("div", "linha");
+  linha.appendChild(texto("span", null, item.ride));
+  if (!mostraFila) {
+    // Show, trilha, exposição: a fila é 0 permanente, então some o número.
+    // "0 min" diria que não há espera onde não há medição (regra 15).
+    linha.appendChild(texto("span", item.aberta ? "fila-ok" : "",
+                            item.aberta ? "em cartaz" : "fechada"));
+    return linha;
+  }
+  const valor = !item.aberta ? "fechada" : item.wait === null ? "—" : `${item.wait} min`;
+  linha.appendChild(texto("span", classeDaFila(item.wait, item.threshold),
+                          item.obsoleta ? `${valor} ⏳` : valor));
+  return linha;
+}
+
+function secao(titulo, itens, mostraFila) {
+  if (!itens.length) return null;
+  const bloco = texto("section", "grupo");
+  bloco.appendChild(texto("h2", "grupo-titulo", titulo));
+  for (const item of itens) bloco.appendChild(linhaAtracao(item, mostraFila));
+  return bloco;
+}
+
+async function rodarComando(cmd, botao, destino) {
+  const anterior = botao.textContent;
+  botao.disabled = true;
+  botao.textContent = "…";
+  try {
+    const dados = await api(
+      `/comando?cmd=${encodeURIComponent(cmd)}&parque=${encodeURIComponent(parqueAtivo)}`);
+    destino.replaceChildren(doTelegram(dados.texto));
+    marcaAtualizado();
+  } catch (erro) {
+    destino.replaceChildren(texto("div", "erro", mensagemDeErro(erro)));
+  } finally {
+    botao.disabled = false;
+    botao.textContent = anterior;
+  }
+}
+
+async function carregarParques() {
+  const destino = el("parques-conteudo");
+  try {
+    if (!comandosCache) comandosCache = await api("/comandos");
+    if (!parqueAtivo) parqueAtivo = comandosCache.parques[0];
+
+    const tudo = texto("div", null);
+    const seletor = texto("div", "escolha");
+    for (const nome of comandosCache.parques) {
+      const b = texto("button", nome === parqueAtivo ? "chip ativo" : "chip", nome);
+      b.addEventListener("click", () => { parqueAtivo = nome; carregarParques(); });
+      seletor.appendChild(b);
+    }
+    tudo.appendChild(seletor);
+
+    const dados = await api(`/parque?nome=${encodeURIComponent(parqueAtivo)}`);
+    el("subtitulo").textContent = dados.park;
+    el("atribuicao").textContent = dados.attribution;
+
+    const meta = [];
+    if (dados.horario) {
+      meta.push(`opera ~${String(dados.horario.abre).padStart(2, "0")}h–`
+        + `${String(dados.horario.fecha).padStart(2, "0")}h pelo histórico`);
+    }
+    if (dados.lotacao && dados.lotacao.nivel) meta.push(`lotação ${dados.lotacao.nivel}`);
+    if (dados.lotacao && dados.lotacao.fechadas) meta.push(`${dados.lotacao.fechadas} fechada(s)`);
+    if (meta.length) tudo.appendChild(texto("p", "meta", meta.join(" · ")));
+
+    const botoes = texto("div", "escolha comandos");
+    const saida = texto("div", "saida-comando");
+    for (const item of comandosCache.comandos) {
+      const b = texto("button", "chip", item.rotulo);
+      b.addEventListener("click", () => rodarComando(item.cmd, b, saida));
+      botoes.appendChild(b);
+    }
+    tudo.appendChild(botoes);
+    tudo.appendChild(saida);
+
+    for (const bloco of [
+      secao("Na watchlist", dados.items, true),
+      secao("Outras atrações", dados.outras || [], true),
+      secao("Shows e sem fila", dados.shows || [], false),
+    ]) {
+      if (bloco) tudo.appendChild(bloco);
+    }
+    destino.replaceChildren(tudo);
+    marcaAtualizado();
+  } catch (erro) {
+    destino.replaceChildren(texto("div", "erro", mensagemDeErro(erro)));
+  }
+}
+
 /* ------------------------------------------------------------ roteiro */
 
 const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun",
@@ -323,6 +492,7 @@ async function carregarRoteiro() {
 
 function recarregar() {
   if (abaAtiva === "perto") carregarPerto();
+  else if (abaAtiva === "parques") carregarParques();
   else if (abaAtiva === "roteiro") carregarRoteiro();
   else carregarVigias();
 }
@@ -336,9 +506,9 @@ function trocarAba(nome) {
   abaAtiva = nome;
   document.querySelectorAll(".aba").forEach((aba) =>
     aba.classList.toggle("ativa", aba.dataset.aba === nome));
-  el("painel-perto").classList.toggle("oculto", nome !== "perto");
-  el("painel-roteiro").classList.toggle("oculto", nome !== "roteiro");
-  el("painel-vigias").classList.toggle("oculto", nome !== "vigias");
+  for (const painel of ["perto", "parques", "roteiro", "vigias"]) {
+    el(`painel-${painel}`).classList.toggle("oculto", nome !== painel);
+  }
   try { localStorage.setItem("aba", nome); } catch { /* modo privado: segue sem lembrar */ }
   recarregar();
   agendar();

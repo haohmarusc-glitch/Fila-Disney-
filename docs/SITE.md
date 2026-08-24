@@ -14,8 +14,18 @@ versionado e sob o mesmo Caddy da VPS.
   `/api/*` ao container `fila-disney-api` — sem CORS, sem segundo hostname.
   O `api-filadisney.premercadosc.com` continua existindo e serve o mesmo
   container; pode ser aposentado quando nada mais o usar.
-- **Abas**: "Melhores agora" (GPS do navegador → `/api/perto`) e "Vigias"
-  (`/api/vigias`, painel somente-leitura — criar/cancelar é no Telegram).
+- **Abas**: "Melhores agora" (GPS do navegador → `/api/perto`), "Parques"
+  (escolhe o parque sem GPS e roda os comandos), "Roteiro" (os 14 dias com as
+  filas ao vivo) e "Vigias" (`/api/vigias`, painel somente-leitura —
+  criar/cancelar é no Telegram).
+- **Aba Parques**: mostra o parque em três blocos — a watchlist, as outras
+  atrações com fila, e "Shows e sem fila". Este último sai **sem número**: a
+  Queue-Times publica `wait_time` 0 para show, trilha e marco, e escrever
+  "0 min" diria que não há espera onde não há medição. Quem separa é o
+  histórico (`atracoes_sem_fila_medida`), o mesmo detector do `/menores`.
+  Abaixo, os 11 comandos do Telegram como botões; o texto que aparece é o
+  mesmo que chega no chat, convertido por uma lista fechada de tags — nunca
+  por `innerHTML`.
 - **Token**: `site/config.js`, copiado do `config.example.js`, com o mesmo
   `WEB_API_TOKEN` do `.env`. Não é versionado; fica visível a quem abrir o
   site, o que é o desenho — a página é da família, atrás do token.

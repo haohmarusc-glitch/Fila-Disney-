@@ -258,3 +258,69 @@ main { flex: 1; }
 .filas-live .meta { font-size: .78rem; color: var(--texto-suave); margin-bottom: 4px; }
 .fila-ok { color: var(--verde-texto); }
 .fila-alta { color: var(--vermelho-texto); }
+
+/* --------------------------------------------------- aba Parques */
+
+/* Barra de escolha: parques em cima, comandos embaixo. Rola na horizontal
+   porque são 7 parques e 11 comandos — quebrar em três linhas empurraria a
+   lista de filas para fora da tela do celular. */
+.escolha {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+  scrollbar-width: none;
+}
+.escolha::-webkit-scrollbar { display: none; }
+.escolha.comandos { margin-top: 14px; }
+
+.chip {
+  flex: 0 0 auto;
+  padding: 7px 13px;
+  font: inherit;
+  font-size: .85rem;
+  color: var(--texto-suave);
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chip.ativa {
+  color: #fff;
+  background: var(--acento);
+  border-color: var(--acento);
+}
+.chip:disabled { opacity: .55; cursor: default; }
+
+.grupo { margin-top: 18px; }
+.grupo-titulo {
+  font-size: .78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--texto-suave);
+  margin-bottom: 6px;
+}
+
+/* Saída de comando: o mesmo texto que chega no Telegram. `pre-wrap` porque os
+   formatadores separam blocos com \n e quebram linha de propósito. */
+.saida-comando:empty { display: none; }
+.telegram {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: .9rem;
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 4px;
+  overflow-x: auto;
+}
+.telegram code {
+  font-size: .85em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--fundo);
+}
+.telegram a { color: var(--acento); }

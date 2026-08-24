@@ -149,14 +149,122 @@ def build_parque_payload(busca: str, conn, config: dict, park_ids: dict) -> dict
         })
     itens.sort(key=lambda i: (not i["aberta"], i["wait"] if i["wait"] is not None else 999,
                               i["ride"]))
+    # `items` continua sendo só a watchlist porque a aba Roteiro depende disso:
+    # ali o assunto é o plano do dia, não o inventário do parque. As duas
+    # listas abaixo são o resto, separadas pelo mesmo critério do /menores.
+    #
+    # `shows` são as atrações cujo wait_time é placeholder — show, trilha,
+    # exposição, o Tree of Life. Vão SEM número: a fila delas é 0 permanente e
+    # escrever "0 min" seria dizer que não há espera onde não há medição
+    # (regra 15). Ficam de fora do ranking por fila, e visíveis à parte porque
+    # continuam sendo programa do dia.
+    placeholders = monitor.atracoes_sem_fila_medida(conn, park)
+    outras, shows = [], []
+    for _land, ride in monitor.iter_rides(payload):
+        nome = ride["name"]
+        if monitor.fila_paralela(nome):
+            continue  # regra 10: single rider não aparece em nada
+        if monitor.nome_watchlist(park_cfg, nome) is not None:
+            continue  # já está em `items`
+        destino = shows if nome in placeholders else outras
+        registro = {"ride": nome, "aberta": bool(ride.get("is_open"))}
+        if destino is outras:
+            registro["wait"] = ride.get("wait_time")
+            registro["obsoleta"] = monitor.leitura_obsoleta(ride, limite_obsoleto)
+        destino.append(registro)
+    outras.sort(key=lambda i: (not i["aberta"],
+                               i["wait"] if i["wait"] is not None else 999, i["ride"]))
+    shows.sort(key=lambda i: (not i["aberta"], i["ride"]))
     horario = monitor.horario_operacao(conn, config, park)
     return {
         "park": park,
         "horario": {"abre": horario[0], "fecha": horario[1]} if horario else None,
         "lotacao": monitor.calcular_lotacao(conn, config, park, payload),
         "items": itens,
+        "outras": outras,
+        "shows": shows,
         "attribution": "Powered by Queue-Times.com",
     }
+
+
+# Os comandos de parque do Telegram que o site pode executar. É uma whitelist
+# fechada, não uma passagem genérica para `responder_comando`: aquele caminho
+# atende também /vigiar, /entrar e /revogar, que escrevem no banco e precisam
+# de um chat de destino que o site não tem (o token é da família inteira, não
+# de uma pessoa).
+#
+# O /teste_alertas do Telegram ficou de fora de propósito, e é o único dos 12:
+# ele não formata nada — dispara alertas de verdade para os chats e devolve
+# None. Um botão desses no celular manda mensagem para todo mundo por engano,
+# e a API é somente leitura por desenho.
+#
+# Cada entrada diz como chamar o formatador, porque as assinaturas divergem:
+# alguns querem o payload da Queue-Times, outros só o histórico do banco.
+COMANDOS_SITE = {
+    "status":    {"payload": True,  "rotulo": "Status"},
+    "menores":   {"payload": True,  "rotulo": "Menores filas"},
+    "fechadas":  {"payload": True,  "rotulo": "Fechadas"},
+    "lotacao":   {"payload": True,  "rotulo": "Lotação"},
+    "novidades": {"payload": True,  "rotulo": "Novidades"},
+    "ranking":   {"payload": True,  "rotulo": "Maiores filas"},
+    "plano":     {"payload": True,  "rotulo": "Plano"},
+    "chuva":     {"payload": True,  "rotulo": "Chuva"},
+    "resumo":    {"payload": False, "rotulo": "Resumo"},
+    "janela":    {"payload": False, "rotulo": "Janela"},
+    "quebras":   {"payload": False, "rotulo": "Quebras"},
+}
+
+
+def executar_comando(cmd: str, busca: str, conn, config: dict, park_ids: dict,
+                     coords: dict) -> dict:
+    """Roda um comando de leitura e devolve o MESMO texto que o Telegram manda.
+
+    Uma fonte de verdade só: o site não reimplementa os formatadores, chama os
+    do monitor. Foi duplicar regra que produziu o offset -4 cravado do resumo
+    diário, e um /menores com critério próprio na web divergiria do Telegram
+    exatamente no dia em que os dois fossem comparados dentro do parque.
+
+    O texto sai em HTML do Telegram (`<b>`, `<code>`, `<a>`), que o site
+    renderiza por uma lista fechada de tags — não com innerHTML.
+    """
+    if cmd not in COMANDOS_SITE:
+        raise ValueError(f"comando não disponível no site: {cmd!r}")
+    matches = monitor.match_parks(busca, park_ids)
+    if not matches:
+        raise ValueError(f"parque não encontrado: {busca!r}")
+    if len(matches) > 1:
+        raise ValueError("busca ambígua: " + ", ".join(sorted(matches)))
+    park = matches[0]
+    payload = (payload_do_parque(park_ids[park], time.monotonic())
+               if COMANDOS_SITE[cmd]["payload"] else None)
+
+    if cmd == "status":
+        texto = monitor.format_status(park, payload, config, conn)
+    elif cmd == "menores":
+        limite = config.get("top_alert", {}).get("list_size", 10)
+        texto = monitor.format_menores(park, payload, config, limite, conn)
+    elif cmd == "fechadas":
+        texto = monitor.format_fechadas(conn, config, park, payload)
+    elif cmd == "lotacao":
+        texto = monitor.format_lotacao(conn, config, park, payload)
+    elif cmd == "novidades":
+        texto = monitor.format_novidades(config, park, payload)
+    elif cmd == "ranking":
+        ranking = [(wait, ride, park)
+                   for wait, ride in monitor.maiores_filas(payload, config, 10)]
+        texto = monitor.format_ranking_atual(ranking, config)
+    elif cmd == "plano":
+        texto = monitor.format_plano(conn, config, park, payload, coords or {})
+    elif cmd == "chuva":
+        texto = monitor.format_chuva(conn, config, park, payload, coords or {})
+    elif cmd == "resumo":
+        texto = monitor.format_daily_summary(conn, config, park)
+    elif cmd == "janela":
+        texto = monitor.format_janela(conn, config, park)
+    else:  # quebras
+        texto = monitor.format_quebras(conn, config, park)
+    return {"comando": cmd, "parque": park, "texto": texto,
+            "attribution": "Powered by Queue-Times.com"}
 
 
 def _rotulo_do_chat(conn, chat_id) -> str:
@@ -304,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/health":
             return self._send(200, {"ok": True, "service": "fila-disney-api"})
-        if parsed.path not in ("/perto", "/vigias", "/parque"):
+        if parsed.path not in ("/perto", "/vigias", "/parque", "/comando", "/comandos"):
             return self._send(404, {"error": "rota não encontrada"})
         agora = time.monotonic()
         if bloqueado(agora):
@@ -329,6 +437,26 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 log.exception("Falha em /parque")
                 return self._send(503, {"error": "filas temporariamente indisponíveis"})
+        if parsed.path == "/comandos":
+            # O site desenha os botões a partir daqui: comando novo na API
+            # aparece na tela sem mexer no JavaScript.
+            return self._send(200, {
+                "comandos": [{"cmd": c, "rotulo": COMANDOS_SITE[c]["rotulo"]}
+                             for c in COMANDOS_SITE],
+                "parques": sorted(self.server.park_ids)})
+        if parsed.path == "/comando":
+            try:
+                query = parse_qs(parsed.query)
+                cmd = (query.get("cmd") or [""])[0]
+                nome = (query.get("parque") or [""])[0]
+                return self._send(200, executar_comando(
+                    cmd, nome, self.server.conn, self.server.config,
+                    self.server.park_ids, self.server.coords))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            except Exception:
+                log.exception("Falha no comando %r", parsed.query)
+                return self._send(503, {"error": "comando indisponível agora"})
         if parsed.path == "/vigias":
             try:
                 return self._send(200, build_vigias_payload(

@@ -219,6 +219,19 @@ class TestServidorHTTP(unittest.TestCase):
         conexao.close()
         return resposta.status, corpo, servidor
 
+    def test_rotas_de_comando_exigem_token(self):
+        """Elas rodam formatadores e leem o banco: ficar fora da autenticação
+        entregaria o histórico da família a quem achasse o hostname."""
+        with patch.object(api_server, "TOKEN", "segredo"):
+            for rota in ("/comandos", "/comando?cmd=status&parque=Epcot"):
+                with self.subTest(rota=rota):
+                    self.assertEqual(self.pedir(rota)[0], 401)
+
+    def test_rota_inexistente_continua_404(self):
+        with patch.object(api_server, "TOKEN", "segredo"):
+            self.assertEqual(
+                self.pedir("/comandox", token="Bearer segredo")[0], 404)
+
     def test_health_e_publico(self):
         status, corpo, _ = self.pedir("/health")
         self.assertEqual(status, 200)
@@ -484,3 +497,105 @@ class TestParquePayload(unittest.TestCase):
         nomes = [i["ride"] for i in self._payload()["items"]]
         self.assertEqual(nomes[0], "Kilimanjaro Safaris")
         self.assertEqual(nomes[-1], "Kali River Rapids")
+
+
+class TestComandosDoSite(unittest.TestCase):
+    """Os botões do site rodam os MESMOS formatadores do Telegram."""
+
+    def setUp(self):
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
+
+    def test_teste_alertas_nao_e_exposto(self):
+        """É o único dos 12 comandos de parque que ESCREVE: dispara alertas
+        para os chats e devolve None. A API é somente leitura por desenho, e
+        um botão desses manda mensagem para a família toda por engano."""
+        self.assertNotIn("teste_alertas", api_server.COMANDOS_SITE)
+
+    def test_so_expoe_comando_de_leitura(self):
+        """A whitelist é fechada: /vigiar, /entrar e /revogar escrevem no banco
+        e precisam de um chat de destino que o site não tem."""
+        for escrita in ("vigiar", "entrar", "sair", "revogar", "grupo"):
+            self.assertNotIn(escrita, api_server.COMANDOS_SITE)
+
+    def test_todo_comando_exposto_tem_rotulo(self):
+        """O site desenha os botões a partir do /comandos — entrada sem rótulo
+        viraria botão sem texto."""
+        for cmd, cfg in api_server.COMANDOS_SITE.items():
+            with self.subTest(cmd=cmd):
+                self.assertTrue(cfg["rotulo"].strip())
+                self.assertIn("payload", cfg)
+
+    def test_comando_desconhecido_e_recusado(self):
+        with self.assertRaisesRegex(ValueError, "não disponível"):
+            api_server.executar_comando("rm", "Epcot", None, {}, {"Epcot": 5}, {})
+
+    def test_parque_inexistente_e_recusado(self):
+        with self.assertRaisesRegex(ValueError, "não encontrado"):
+            api_server.executar_comando("status", "Narnia", None, {}, {"Epcot": 5}, {})
+
+    @patch("api_server.monitor.format_menores", return_value="<b>ok</b>")
+    @patch("api_server.monitor.fetch_queue_times", return_value={"lands": []})
+    def test_devolve_o_texto_do_formatador(self, _fetch, formatador):
+        r = api_server.executar_comando("menores", "epcot", None, {}, {"Epcot": 5}, {})
+        self.assertEqual(r["texto"], "<b>ok</b>")
+        self.assertEqual(r["parque"], "Epcot")
+        self.assertEqual(r["comando"], "menores")
+        self.assertTrue(formatador.called)
+
+    @patch("api_server.monitor.format_janela", return_value="janela")
+    @patch("api_server.monitor.fetch_queue_times")
+    def test_comando_de_historico_nao_gasta_chamada_externa(self, fetch, _fmt):
+        """/janela, /resumo e /quebras saem do banco. Buscar a Queue-Times para
+        eles seria pedido de rede à toa numa API que a família recarrega."""
+        api_server.executar_comando("janela", "Epcot", None, {}, {"Epcot": 5}, {})
+        self.assertFalse(fetch.called)
+
+
+class TestParquePayloadCompleto(unittest.TestCase):
+    """O /parque separa watchlist, outras atrações e shows."""
+
+    def setUp(self):
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
+
+    def payload(self):
+        return {"lands": [{"rides": [
+            {"name": "Test Track", "is_open": True, "wait_time": 40},
+            {"name": "Spaceship Earth", "is_open": True, "wait_time": 15},
+            {"name": "Awesome Planet", "is_open": True, "wait_time": 0},
+            {"name": "Test Track Single Rider", "is_open": True, "wait_time": 0},
+        ]}]}
+
+    def montar(self):
+        config = {"parks": {"Epcot": {"attractions": {"Test Track": 30}}},
+                  "alert": {"max_staleness_minutes": 20}}
+        leituras = [("Epcot", "Awesome Planet", 0)
+                    for _ in range(monitor.MIN_LEITURAS_PLACEHOLDER)]
+        with patch("api_server.monitor.fetch_queue_times", return_value=self.payload()), \
+             patch("api_server.monitor.horario_operacao", return_value=None), \
+             patch("api_server.monitor.calcular_lotacao", return_value=None):
+            return api_server.build_parque_payload(
+                "Epcot", banco(leituras), config, {"Epcot": 5})
+
+    def test_watchlist_fica_em_items(self):
+        r = self.montar()
+        self.assertEqual([i["ride"] for i in r["items"]], ["Test Track"])
+
+    def test_fora_da_watchlist_com_fila_vai_para_outras(self):
+        r = self.montar()
+        self.assertEqual([i["ride"] for i in r["outras"]], ["Spaceship Earth"])
+
+    def test_placeholder_vai_para_shows_e_sem_o_campo_wait(self):
+        """Show sai sem `wait` de propósito: o 0 dele é ausência de medição,
+        não fila curta, e um campo numérico convidaria a tela a exibi-lo."""
+        r = self.montar()
+        self.assertEqual([i["ride"] for i in r["shows"]], ["Awesome Planet"])
+        self.assertNotIn("wait", r["shows"][0])
+        self.assertTrue(r["shows"][0]["aberta"])
+
+    def test_fila_paralela_nao_aparece_em_lugar_nenhum(self):
+        """Regra 10: single rider não entra em nada que o usuário vê."""
+        r = self.montar()
+        todos = [i["ride"] for i in r["items"] + r["outras"] + r["shows"]]
+        self.assertNotIn("Test Track Single Rider", todos)
