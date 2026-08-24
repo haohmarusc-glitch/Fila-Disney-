@@ -733,19 +733,43 @@ def marca_tendencia(conn: sqlite3.Connection | None, park: str, ride: str) -> st
 
 # ---------------------------------------------------------------- menores filas
 
+# Abaixo disso o histórico não prova nada: atração recém-aparecida na API tem
+# poucas leituras e máximo 0 sem ser placeholder — esconder ela do ranking seria
+# punir a novidade. 500 leituras são ~42 h de coleta contínua.
+MIN_LEITURAS_PLACEHOLDER = 500
+
+
+def atracoes_sem_fila_medida(conn: sqlite3.Connection, park: str) -> set[str]:
+    """Atrações cujo `wait_time` é placeholder: máximo 0 em amostra grande.
+
+    Primeiro teste de mesa (24/08/2026): o /menores do Animal Kingdom gastou as
+    dez linhas com trilha, exposição e show a 0 min — Tree of Life com 1.226
+    leituras e máximo 0. É o mesmo padrão das filas paralelas da regra 10, mas
+    aqui o nome não denuncia, então quem decide é o histórico. Se a atração um
+    dia publicar fila de verdade, o MAX sobe e ela volta sozinha ao ranking.
+    """
+    return {ride for (ride,) in conn.execute(
+        "SELECT ride FROM wait_times WHERE park = ? AND wait_time IS NOT NULL "
+        "GROUP BY ride HAVING COUNT(*) >= ? AND MAX(wait_time) = 0",
+        (park, MIN_LEITURAS_PLACEHOLDER))}
+
+
 def menores_filas(payload: dict, config: dict, park_name: str, limite: int,
-                  apenas_watchlist: bool) -> list[tuple[int, str, int | None]]:
+                  apenas_watchlist: bool,
+                  excluir: set[str] | None = None) -> list[tuple[int, str, int | None]]:
     """(espera, atração, threshold) das menores filas abertas, da menor para a maior.
 
     Filas paralelas ficam de fora: reportam 0 min sem dado e ocupariam o topo do
-    ranking inteiro, que é justamente o que o comando existe para mostrar.
+    ranking inteiro, que é justamente o que o comando existe para mostrar. O
+    `excluir` recebe as placeholder medidas pelo histórico — mesma praga, outro
+    detector.
     """
     park_cfg = config["parks"].get(park_name, {})
     limite_obsoleto = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
     abertas = []
     for _land, ride in iter_rides(payload):
         nome = ride["name"]
-        if fila_paralela(nome):
+        if fila_paralela(nome) or nome in (excluir or ()):
             continue
         if not ride.get("is_open"):
             continue
@@ -762,9 +786,12 @@ def menores_filas(payload: dict, config: dict, park_name: str, limite: int,
     return abertas[:limite]
 
 
-def format_menores(park_name: str, payload: dict, config: dict, limite: int) -> str:
+def format_menores(park_name: str, payload: dict, config: dict, limite: int,
+                   conn: sqlite3.Connection | None = None) -> str:
     """Ranking das menores filas do parque inteiro — inclui o que não é watchlist."""
-    ranking = menores_filas(payload, config, park_name, limite, apenas_watchlist=False)
+    sem_fila = atracoes_sem_fila_medida(conn, park_name) if conn is not None else set()
+    ranking = menores_filas(payload, config, park_name, limite,
+                            apenas_watchlist=False, excluir=sem_fila)
     if not ranking:
         return f"📉 <b>{notifier.esc(park_name)}</b>\n\nNenhuma atração aberta agora."
 
@@ -2989,7 +3016,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
 
     if cmd == "/menores":
         limite = config.get("top_alert", {}).get("list_size", 10)
-        return format_menores(park_name, payload, config, limite)
+        return format_menores(park_name, payload, config, limite, conn)
     if cmd == "/teste_alertas":
         enviar_teste_alertas(conn, config, park_name, payload, chat_id)
         return None
