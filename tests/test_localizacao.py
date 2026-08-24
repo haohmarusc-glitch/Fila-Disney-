@@ -388,6 +388,24 @@ class TestMensagemPerto(BaseTeste):
         self.assertIn("rota Google", texto)
         self.assertIn("qualidade da fila", texto)
 
+    def test_cada_colocado_com_coordenada_vira_link_de_rota(self):
+        """Rota por colocado, não só para o campeão.
+
+        Achado de uso em 24/08/2026: quem escolhia o 2º lugar — porque o 1º era
+        o que tinha acabado de fazer — ficava sem mapa. O nome de cada linha é
+        o link, com a coordenada DAQUELA atração como destino.
+        """
+        texto = self.loc.format_perto(
+            PORTAO, "Disney Hollywood Studios", self.payload, self.config, COORDS)
+        rides = COORDS["rides"]["Disney Hollywood Studios"]
+        for nome in ("Toy Story Mania!", "Tower of Terror"):
+            with self.subTest(nome=nome):
+                lat, lon = rides[nome]
+                self.assertIn(f"destination={lat},{lon}", texto,
+                              "cada atração aponta para a própria coordenada")
+        self.assertGreaterEqual(texto.count("google.com/maps/dir"), 3,
+                                "dois nomes linkados + a rota do rodapé")
+
     def test_sem_coords_json_orienta_rodar_o_script(self):
         r = self.monitor.responder_localizacao(
             *PORTAO, self.conn, self.config, self.parques, {"parks": {}, "rides": {}})
