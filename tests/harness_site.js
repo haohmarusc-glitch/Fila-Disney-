@@ -51,6 +51,13 @@ function acharPorTexto(no, alvo) {
   return null;
 }
 
+/* Todas as classes usadas na árvore — é como o teste afirma que "fechada" não
+ * saiu pintada de verde, já que a cor mora na classe e não no texto. */
+function classesDe(no) {
+  if (!no) return [];
+  return [no.className, ...no.children.flatMap(classesDe)].filter(Boolean);
+}
+
 /* Serializa a árvore com as tags, para o teste ver que <b> virou <b> e que
  * <script> não virou nada. */
 function estruturaDe(no) {
@@ -129,6 +136,7 @@ function textoDe(no) {
   console.log(JSON.stringify({
     perto: textoDe(elementos["perto-conteudo"]),
     parques: textoDe(elementos["parques-conteudo"]),
+    classes: classesDe(elementos["parques-conteudo"]),
     vigias: textoDe(elementos["vigias-conteudo"]),
     subtitulo: elementos["subtitulo"] ? elementos["subtitulo"].textContent : "",
   }));

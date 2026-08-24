@@ -284,7 +284,7 @@ function linhaAtracao(item, mostraFila) {
     return linha;
   }
   const valor = !item.aberta ? "fechada" : item.wait === null ? "—" : `${item.wait} min`;
-  linha.appendChild(texto("span", classeDaFila(item.wait, item.threshold),
+  linha.appendChild(texto("span", classeDaFila(item),
                           item.obsoleta ? `${valor} ⏳` : valor));
   return linha;
 }
@@ -381,9 +381,14 @@ function hojeNoParque() {
   }).format(new Date());
 }
 
-function classeDaFila(wait, threshold) {
-  if (wait === null || threshold === null || threshold === undefined) return "";
-  return wait <= threshold ? "fila-ok" : "fila-alta";
+/* Cor da fila. Recebe o item inteiro porque `aberta` faz parte da decisão:
+ * atração fechada publica wait 0, que passa em qualquer threshold, e pintar
+ * "fechada" de verde dizia "pode ir agora" sobre um brinquedo parado. */
+function classeDaFila(item) {
+  if (item.aberta === false) return "";
+  if (item.wait === null || item.wait === undefined) return "";
+  if (item.threshold === null || item.threshold === undefined) return "";
+  return item.wait <= item.threshold ? "fila-ok" : "fila-alta";
 }
 
 async function abrirFilasDoDia(dia, container, botao) {
@@ -407,7 +412,7 @@ async function abrirFilasDoDia(dia, container, botao) {
       const valor = !item.aberta ? "fechada"
         : item.wait === null ? "—"
         : `${item.wait} min`;
-      linha.appendChild(texto("span", classeDaFila(item.wait, item.threshold),
+      linha.appendChild(texto("span", classeDaFila(item),
                               item.obsoleta ? `${valor} ⏳` : valor));
       bloco.appendChild(linha);
     }
