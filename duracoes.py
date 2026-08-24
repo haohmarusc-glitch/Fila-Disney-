@@ -102,6 +102,27 @@ PARQUES_WIKI = {
 }
 
 
+# Rede de segurança independente do parser. Se o infobox cita mais de um destes,
+# a duração solta não diz de qual instalação ela é — e o parser pode ter falhado
+# em enxergar as chaves `park2`, `park3` que separariam.
+RESORTS = (
+    "disneyland park", "disneyland resort", "magic kingdom", "tokyo disneyland",
+    "tokyo disneysea", "disneyland paris", "walt disney studios park",
+    "shanghai disneyland", "hong kong disneyland", "disney california adventure",
+    "epcot", "hollywood studios", "animal kingdom",
+    "universal studios hollywood", "universal studios florida",
+    "universal studios japan", "universal studios singapore",
+    "universal studios beijing", "islands of adventure", "epic universe",
+)
+
+
+def resorts_citados(wikitexto: str) -> set[str]:
+    """Resorts nomeados na região do infobox."""
+    texto = wikitexto.lower()
+    fim = texto.find("\n}}")
+    return {nome for nome in RESORTS if nome in texto[:fim if fim > 0 else 4000]}
+
+
 def parametros_do_infobox(wikitexto: str) -> dict[str, str]:
     """{chave: valor} do primeiro infobox. Chaves em minúsculo, sem espaço."""
     # Busca sem caso: a Wikipédia aceita {{infobox}} e {{Infobox}}, e o
@@ -136,10 +157,13 @@ def duracao_para_o_parque(wikitexto: str, parque: str) -> int | None:
     instalacoes = {m.group(1): valor for chave, valor in params.items()
                    if (m := re.fullmatch(r"park(\d*)", chave)) and valor}
     if len(instalacoes) <= 1:
-        # Sem segunda instalação não há ambiguidade possível, então vale o
-        # texto inteiro como rede: `Na'vi River Journey` e `Kali River Rapids`
-        # traziam duração pela varredura antiga e a perderam quando o parser
-        # passou a olhar só o primeiro infobox. Um parque, um número.
+        # "Uma instalação" pode significar duas coisas: o artigo é de um parque
+        # só, ou o parser não enxergou as chaves que separam os outros. O
+        # segundo caso trouxe o Pirates de volta com 16 min — o número da
+        # Disneyland — quando esta função passou a aceitar a duração solta.
+        # Por isso a checagem por NOME é rede independente do parser.
+        if len(resorts_citados(wikitexto)) > 1:
+            raise Ambigua(sorted(resorts_citados(wikitexto)))
         return (minutos_do_texto(params.get("duration", ""))
                 or minutos_do_texto(campo_duration(wikitexto) or ""))
 

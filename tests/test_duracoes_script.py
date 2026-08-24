@@ -224,6 +224,50 @@ class TestUmParqueUsaOTextoInteiro(unittest.TestCase):
             duracoes.duracao_para_o_parque(texto, "Disney Magic Kingdom")
 
 
+class TestRedeIndependenteDoParser(unittest.TestCase):
+    """A checagem por NOME existe porque o parser pode falhar em separar.
+
+    Regressão medida em 24/08/2026: a rede "uma instalação, sem ambiguidade"
+    trouxe o Pirates de volta com 16 min — o número da Disneyland. "Uma
+    instalação" significa duas coisas diferentes: artigo de um parque só, ou
+    parser que não enxergou as chaves `park2`. Só a primeira é segura.
+    """
+
+    SEM_CHAVES = """{{Infobox attraction
+| name = Pirates of the Caribbean
+| location = Disneyland Park, Magic Kingdom, Tokyo Disneyland
+| duration = 15:30
+}}"""
+    COM_CHAVES = """{{Infobox attraction
+| park = Disneyland Park
+| duration = 15:30
+| park2 = Magic Kingdom
+| duration2 = 8:30
+}}"""
+    UM_PARQUE = """{{infobox attraction
+| park = Disney's Animal Kingdom
+| duration = 6 minutes
+}}"""
+
+    def test_varios_resorts_sem_chave_park2_e_recusado(self):
+        """Sem as chaves numeradas, a duração solta não diz de qual parque é."""
+        with self.assertRaises(duracoes.Ambigua):
+            duracoes.duracao_para_o_parque(self.SEM_CHAVES, "Disney Magic Kingdom")
+
+    def test_com_chave_numerada_pega_a_do_parque_certo(self):
+        self.assertEqual(
+            duracoes.duracao_para_o_parque(self.COM_CHAVES, "Disney Magic Kingdom"), 9)
+
+    def test_um_resort_so_continua_passando(self):
+        self.assertEqual(
+            duracoes.duracao_para_o_parque(self.UM_PARQUE, "Disney Animal Kingdom"), 6)
+
+    def test_resorts_citados_olha_so_o_infobox(self):
+        """O corpo do artigo cita outros parques o tempo todo; o infobox, não."""
+        texto = self.UM_PARQUE + "\n\nVersões parecidas existem na Disneyland Paris."
+        self.assertEqual(duracoes.resorts_citados(texto), {"animal kingdom"})
+
+
 class TestParametrosDoInfobox(unittest.TestCase):
     def test_le_chave_e_valor(self):
         params = duracoes.parametros_do_infobox(
