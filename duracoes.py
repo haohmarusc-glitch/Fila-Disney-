@@ -60,6 +60,19 @@ BASE = "https://touringplans.com"
 PAUSA_ENTRE_PAGINAS_S = 2
 DURACOES_PATH = monitor.DURACOES_PATH
 
+# Quantas atrações cada página listava em 24/08/2026. Não é meta a bater — é
+# alarme de regressão do parser: menos que isso significa regex comendo
+# entrada, não parque encolhendo. Margem de 20% para flutuação sazonal.
+CONTAGENS_REFERENCIA = {
+    "Disney Magic Kingdom": 76,
+    "Epcot": 94,
+    "Disney Hollywood Studios": 48,
+    "Disney Animal Kingdom": 34,
+    "Universal Studios At Universal Orlando": 46,
+    "Islands Of Adventure At Universal Orlando": 34,
+    "Universal Epic Universe": 19,
+}
+
 # A chave é o nome do parque na watchlist; o valor, o caminho no site.
 PAGINAS = {
     "Disney Magic Kingdom": "/magic-kingdom/attractions/duration",
@@ -234,10 +247,13 @@ def main() -> int:
             vazias.append(parque)
             continue
 
-        if not cruas:
-            # Página que volta vazia é mudança de layout, não parque sem
-            # atração. Passar batido geraria um arquivo menor sem ninguém notar.
-            print("  ! ZERO atrações lidas — o layout da página provavelmente mudou")
+        referencia = CONTAGENS_REFERENCIA.get(parque, 0)
+        if len(cruas) < referencia * 0.8:
+            # Página que volta vazia OU muito abaixo do medido é mudança de
+            # layout, não parque encolhendo. Passar batido geraria um arquivo
+            # menor sem ninguém notar — o parser da v1 teria sido pego por isto.
+            print(f"  ! {len(cruas)} atrações lidas, referência era {referencia} — "
+                  "o layout da página provavelmente mudou")
             vazias.append(parque)
             continue
 
@@ -262,7 +278,17 @@ def main() -> int:
         for atracao in sorted(faltando):
             print(f"  – {atracao} — não veio na página")
 
-        dados["rides"][parque] = {c: m for c, (m, _) in achadas.items()}
+        colhidas = {c: m for c, (m, _) in achadas.items()}
+        # Ajuste manual vence o site, sempre. O TouringPlans erra às vezes —
+        # o Rise of the Resistance saiu com 7 min quando o número divulgado na
+        # abertura é 18 — e a correção verificada não pode evaporar na próxima
+        # coleta. Cada ajuste declara a proveniência no próprio arquivo.
+        for atracao, ajuste in dados.get("_ajustes", {}).get(parque, {}).items():
+            if atracao in colhidas and colhidas[atracao] != ajuste["minutos"]:
+                print(f"  ✎ {atracao} — site diz {colhidas[atracao]} min, "
+                      f"mantido ajuste de {ajuste['minutos']} min ({ajuste['fonte']})")
+                colhidas[atracao] = ajuste["minutos"]
+        dados["rides"][parque] = colhidas
         total += len(achadas)
         print(f"  {len(achadas)} de {len(config['parks'][parque]['attractions'])} "
               f"da watchlist ({len(cruas)} atrações na página)")
