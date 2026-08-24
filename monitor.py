@@ -774,10 +774,19 @@ def format_menores(park_name: str, payload: dict, config: dict, limite: int) -> 
         f"🕒 {agora} no horário do parque",
         "",
     ]
+    # Contexto, não critério: a duração entra entre parênteses e a ordem
+    # continua sendo a fila (regra 12 — duração não ordena nada). "10 min de
+    # fila" muda de sentido conforme sejam 10 por um passeio de 20 (Kilimanjaro)
+    # ou 10 por 90 segundos, e sem o parêntese o ranking escondia a diferença.
+    duracoes = carregar_duracoes()
+    park_cfg = config["parks"].get(park_name, {})
     for wait, ride, threshold in ranking:
         marca = "✅" if threshold is not None and wait <= threshold else "▫️"
         estrela = " ⭐" if threshold is not None else ""   # está na sua watchlist
-        linhas.append(f"{marca} <b>{wait} min</b> · {notifier.esc(ride)}{estrela}")
+        canonico = nome_watchlist(park_cfg, ride) or ride
+        minutos = duracao_da_atracao(duracoes, park_name, canonico)
+        contexto = f" (~{minutos} min de atração)" if minutos is not None else ""
+        linhas.append(f"{marca} <b>{wait} min</b> · {notifier.esc(ride)}{estrela}{contexto}")
     linhas += ["", "⭐ = está na sua watchlist", "Powered by Queue-Times.com"]
     return "\n".join(linhas)
 
