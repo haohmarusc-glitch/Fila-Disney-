@@ -106,32 +106,43 @@ class TestChamadaHTTP(unittest.TestCase):
     def test_le_a_duracao_da_pagina(self):
         self.resposta = {"query": {"pages": {"1": {"revisions": [
             {"slots": {"main": {"*": "{{Infobox\n| duration = 3 minutes\n}}"}}}]}}}}
-        self.assertEqual(duracoes.duracao_da_pagina("Space Mountain"), 3)
+        self.assertEqual(duracoes.duracao_da_pagina("Space Mountain", "Disney Magic Kingdom"), 3)
 
     def test_pagina_sem_revisao_nao_quebra(self):
         self.resposta = {"query": {"pages": {"-1": {"missing": ""}}}}
-        self.assertIsNone(duracoes.duracao_da_pagina("Inexistente"))
+        self.assertIsNone(duracoes.duracao_da_pagina("Inexistente", "Epcot"))
 
     def test_resposta_vazia_nao_quebra(self):
         self.resposta = {}
         self.assertIsNone(duracoes.buscar_pagina("Qualquer"))
-        self.assertIsNone(duracoes.duracao_da_pagina("Qualquer"))
+        self.assertIsNone(duracoes.duracao_da_pagina("Qualquer", "Epcot"))
 
 
 class TestArtigoDeVariosParques(unittest.TestCase):
     """Atração que existe em vários resorts tem UM artigo cobrindo todos.
 
-    Medido em 24/08/2026: o artigo do Pirates devolveu 16 min, que é o da
-    Disneyland — o do Magic Kingdom é bem mais curto. Duração do parque errado é
-    pior que duração nenhuma: parece certa, ninguém desconfia, e entra na conta
-    de "cabe antes de fechar".
+    Contar parques e desistir era conservador demais: descartava clone de
+    duração idêntica — Rise of the Resistance, Rock 'n' Roller Coaster, Seven
+    Dwarfs Mine Train — junto com o caso legítimo do Pirates. Na execução real
+    de 24/08/2026 isso derrubou o resultado de 34 para 15.
+
+    O infobox numera as instalações, então dá para pegar a duração DO NOSSO
+    parque. Só quando ela não existe é que a atração fica sem dado.
     """
 
     MULTI = """{{Infobox attraction
 | name = Pirates of the Caribbean
 | park = Disneyland Park
-| park2 = Magic Kingdom
 | duration = 15:30
+| park2 = Magic Kingdom
+| duration2 = 8:30
+}}"""
+    SEM_PROPRIA = """{{Infobox attraction
+| name = Pirates of the Caribbean
+| park = Disneyland Park
+| duration = 15:30
+| park2 = Magic Kingdom
+| section2 = Adventureland
 }}"""
     UNICO = """{{Infobox attraction
 | name = Test Track
@@ -139,40 +150,61 @@ class TestArtigoDeVariosParques(unittest.TestCase):
 | duration = 5 minutes
 }}"""
 
-    def setUp(self):
-        self.original = duracoes.monitor.get_json
-        self.addCleanup(setattr, duracoes.monitor, "get_json", self.original)
+    def test_pega_a_duracao_do_nosso_parque(self):
+        self.assertEqual(
+            duracoes.duracao_para_o_parque(self.MULTI, "Disney Magic Kingdom"), 9)
 
-    def responder(self, wikitexto):
-        def falso(url, *, tentativas=3):
-            return {"query": {"pages": {"1": {"revisions": [
-                {"slots": {"main": {"*": wikitexto}}}]}}}}
-        duracoes.monitor.get_json = falso
+    def test_nao_pega_a_duracao_do_parque_errado(self):
+        """15:30 é a Disneyland. Cair nela seria quase o dobro do certo."""
+        self.assertNotEqual(
+            duracoes.duracao_para_o_parque(self.MULTI, "Disney Magic Kingdom"), 16)
 
-    def test_dois_resorts_no_infobox_recusam_a_duracao(self):
-        self.responder(self.MULTI)
+    def test_parque_unico_usa_a_duracao_solta(self):
+        self.assertEqual(duracoes.duracao_para_o_parque(self.UNICO, "Epcot"), 5)
+
+    def test_sem_duracao_propria_recusa(self):
+        """A duração solta é do artigo inteiro e pode ser de outra instalação."""
         with self.assertRaises(duracoes.Ambigua):
-            duracoes.duracao_da_pagina("Pirates of the Caribbean (attraction)")
+            duracoes.duracao_para_o_parque(self.SEM_PROPRIA, "Disney Magic Kingdom")
 
-    def test_um_resort_passa(self):
-        self.responder(self.UNICO)
-        self.assertEqual(duracoes.duracao_da_pagina("Test Track"), 5)
+    def test_nosso_parque_fora_do_artigo_recusa(self):
+        with self.assertRaises(duracoes.Ambigua):
+            duracoes.duracao_para_o_parque(self.MULTI, "Epcot")
 
-    def test_a_excecao_diz_quais_parques(self):
-        self.responder(self.MULTI)
+    def test_a_excecao_diz_quais_instalacoes(self):
         try:
-            duracoes.duracao_da_pagina("Pirates of the Caribbean (attraction)")
+            duracoes.duracao_para_o_parque(self.MULTI, "Epcot")
         except duracoes.Ambigua as exc:
-            self.assertIn("disneyland park", exc.args[0])
             self.assertIn("magic kingdom", exc.args[0])
+            self.assertIn("disneyland park", exc.args[0])
         else:
             self.fail("devia ter recusado")
 
-    def test_so_olha_o_infobox_nao_o_artigo_inteiro(self):
-        """O corpo do texto cita outros parques o tempo todo; o infobox, não."""
-        texto = self.UNICO + "\n\nUma atração parecida existe na Disneyland Paris."
-        self.responder(texto)
-        self.assertEqual(duracoes.duracao_da_pagina("Test Track"), 5)
+    def test_todo_parque_da_watchlist_tem_nome_da_wikipedia(self):
+        """Faltar um aqui faz o parque inteiro cair em Ambigua sem motivo."""
+        import json
+        import pathlib
+        raiz = pathlib.Path(__file__).resolve().parent.parent
+        watchlist = json.loads((raiz / "watchlist.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(duracoes.PARQUES_WIKI), set(watchlist["parks"]))
+
+
+class TestParametrosDoInfobox(unittest.TestCase):
+    def test_le_chave_e_valor(self):
+        params = duracoes.parametros_do_infobox(
+            "{{Infobox attraction\n| name = X\n| duration = 3 minutes\n}}")
+        self.assertEqual(params["name"], "X")
+        self.assertEqual(params["duration"], "3 minutes")
+
+    def test_template_aninhado_nao_vira_chave_falsa(self):
+        """A barra dentro de {{convert|3|min}} não separa parâmetro."""
+        params = duracoes.parametros_do_infobox(
+            "{{Infobox attraction\n| duration = {{convert|3|min}}\n| name = X\n}}")
+        self.assertEqual(params["duration"], "{{convert|3|min}}")
+        self.assertEqual(params["name"], "X")
+
+    def test_texto_sem_infobox(self):
+        self.assertEqual(duracoes.parametros_do_infobox("Sem infobox aqui."), {})
 
 
 class TestCampoDuration(unittest.TestCase):
