@@ -536,3 +536,40 @@ class TestWikidata(unittest.TestCase):
     def test_item_que_o_wikidata_nao_devolveu_e_ignorado(self):
         self.resposta = {"entities": {}}
         self.assertEqual(duracoes.itens_wikidata(["Q1"]), [])
+
+
+class TestRelatorioWikidataListaTodos(unittest.TestCase):
+    """Candidato sem P2047 tambem entra no relatorio.
+
+    Sem isso, "o Wikidata nao tem" era suposicao: o item da atracao podia estar
+    fora do limite da busca, empurrado por filme homonimo — e foi filme
+    homonimo que apareceu em todas as quatro respostas da primeira rodada.
+    """
+
+    def setUp(self):
+        original = duracoes.monitor.get_json
+        self.addCleanup(setattr, duracoes.monitor, "get_json", original)
+
+        def falso_get_json(url, *, tentativas=3):
+            if "wbsearchentities" in url:
+                return {"search": [{"id": "Q1"}, {"id": "Q2"}]}
+            return {"entities": {
+                "Q1": {"labels": {"en": {"value": "Jungle Cruise"}},
+                       "descriptions": {"en": {"value": "2021 film"}},
+                       "claims": {"P2047": [{"mainsnak": {"datavalue": {"value": {
+                           "amount": "+127",
+                           "unit": "http://www.wikidata.org/entity/Q7727"}}}}]}},
+                "Q2": {"labels": {"en": {"value": "Jungle Cruise"}},
+                       "descriptions": {"en": {"value": "boat ride at Magic Kingdom"}},
+                       "claims": {}}}}
+
+        duracoes.monitor.get_json = falso_get_json
+
+    def test_o_sem_duracao_aparece_junto_do_com_duracao(self):
+        itens = duracoes.itens_wikidata(duracoes.buscar_itens_wikidata("Jungle Cruise"))
+        self.assertEqual(len(itens), 2)
+        self.assertEqual(itens[0]["duracao"].split()[0], "+127")
+        self.assertIsNone(itens[1]["duracao"])
+        # é a descrição que denuncia qual dos dois é o filme
+        self.assertIn("film", itens[0]["descricao"])
+        self.assertIn("Magic Kingdom", itens[1]["descricao"])

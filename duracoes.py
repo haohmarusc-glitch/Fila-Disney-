@@ -359,7 +359,7 @@ def relatar_campos_crus(config: dict, dados: dict) -> None:
                 print(f"     resorts citados: {', '.join(citados)}")
 
 
-def buscar_itens_wikidata(nome: str, limite: int = 5) -> list[str]:
+def buscar_itens_wikidata(nome: str, limite: int = 8) -> list[str]:
     """Q-ids candidatos para esta atração, na ordem em que o Wikidata devolve."""
     dados = consultar({"action": "wbsearchentities", "search": nome,
                        "language": "en", "type": "item", "limit": limite,
@@ -425,15 +425,17 @@ def relatar_wikidata(config: dict, dados: dict) -> None:
             except Exception as exc:  # noqa: BLE001 — uma atração não derruba o resto
                 print(f"  {atracao}\n     ! {type(exc).__name__}: {exc}")
                 continue
-            com_duracao = [item for item in itens if item["duracao"]]
-            if not com_duracao:
-                print(f"  {atracao} — nenhum dos {len(itens)} itens tem P2047")
-                continue
-            achados += 1
-            print(f"  {atracao}")
-            for item in com_duracao:
-                print(f"     {item['id']}  {item['duracao']}  {item['rotulo']}"
-                      f" — {item['descricao']}")
+            if any(item["duracao"] for item in itens):
+                achados += 1
+            print(f"  {atracao} — {len(itens)} candidato(s)")
+            # Candidato SEM duração entra no relatório de propósito. Sem ele,
+            # "o Wikidata não tem" era suposição: o item da atração podia estar
+            # fora do limite da busca, empurrado por filme homônimo. Listando
+            # todos, a ausência vira coisa verificada — e foi assim que se viu
+            # que o Jungle Cruise de 127 min era o filme de 2021.
+            for item in itens:
+                print(f"     {item['id']}  {item['duracao'] or 'sem P2047'}"
+                      f"  {item['rotulo']} — {item['descricao']}")
     print(f"\n{achados} atração(ões) com P2047 no Wikidata.")
 
 
