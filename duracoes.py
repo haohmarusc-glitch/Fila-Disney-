@@ -188,7 +188,8 @@ def duracao_para_o_parque(wikitexto: str, parque: str) -> int | None:
         if len(resorts_citados(wikitexto)) > 1:
             raise Ambigua(sorted(resorts_citados(wikitexto)))
         return (minutos_do_texto(params.get("duration", ""))
-                or minutos_do_texto(campo_duration(wikitexto) or ""))
+                or minutos_do_texto(campo_duration(wikitexto) or "")
+                or duracao_das_pistas(params))
 
     esperados = PARQUES_WIKI.get(parque, ())
     for indice, nome in instalacoes.items():
@@ -202,6 +203,25 @@ def duracao_para_o_parque(wikitexto: str, parque: str) -> int | None:
         # inteiro e pode ser de outra instalacao. E o caso do Pirates.
         break
     raise Ambigua(sorted(v.lower() for v in instalacoes.values()))
+
+
+def duracao_das_pistas(params: dict[str, str]) -> int | None:
+    """`duration1`/`duration2` sem `park1`/`park2` são pistas, não parques.
+
+    O Space Mountain do Magic Kingdom tem duas pistas, Alpha e Omega, e o
+    infobox numera as durações sem numerar parque nenhum: `duration1 = 2:30` e
+    `duration2 = 2:30`. Sem isto, o artigo CERTO devolvia None — a chave
+    `duration` pelada não existe ali, e a numerada só era lida no caminho de
+    artigo multiparque, que este não é.
+
+    Só vale quando as numeradas concordam. Divergindo, não dá para saber qual
+    o visitante vai pegar, e escolher uma seria estimativa (regra 12). Quem
+    chama já garantiu que o artigo é de um parque só.
+    """
+    minutos = {minutos_do_texto(valor) for chave, valor in params.items()
+               if re.fullmatch(r"duration\d+", chave) and valor}
+    minutos.discard(None)
+    return minutos.pop() if len(minutos) == 1 else None
 
 
 def campo_duration(wikitexto: str) -> str | None:

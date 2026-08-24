@@ -433,3 +433,38 @@ class TestPaginaFixada(unittest.TestCase):
             with self.subTest(atracao=atracao):
                 self.assertIn(parque, watchlist)
                 self.assertIn(atracao, watchlist[parque]["attractions"])
+
+
+class TestDuracaoPorPista(unittest.TestCase):
+    """`duration1`/`duration2` nem sempre são parques — no Space Mountain são pistas.
+
+    O artigo do Magic Kingdom traz `duration1 = 2:30` e `duration2 = 2:30`, as
+    pistas Alpha e Omega, sem `park1`/`park2` nenhum. O caminho de artigo
+    multiparque não roda (não há instalação numerada) e a chave `duration`
+    pelada não existe — a atração ficava sem duração tendo o número na tela.
+    """
+
+    def _duracao(self, corpo, parque="Disney Magic Kingdom"):
+        return duracoes.duracao_para_o_parque("{{Infobox\n" + corpo + "\n}}", parque)
+
+    def test_pistas_que_concordam_entregam_a_duracao(self):
+        self.assertEqual(
+            self._duracao("| park = Magic Kingdom\n"
+                          "| duration1 = 2:30\n| duration2 = 2:30"), 3)
+
+    def test_pistas_que_divergem_ficam_sem_duracao(self):
+        """Qual das duas o visitante pega? Escolher seria estimativa."""
+        self.assertIsNone(
+            self._duracao("| park = Magic Kingdom\n"
+                          "| duration1 = 2:30\n| duration2 = 8:00"))
+
+    def test_duracao_pelada_continua_tendo_prioridade(self):
+        self.assertEqual(
+            self._duracao("| park = Magic Kingdom\n"
+                          "| duration = 4 minutes\n| duration1 = 9:00"), 4)
+
+    def test_nao_vale_para_artigo_de_varios_parques(self):
+        """Ali `duration1` É de parque, e quem decide é o casamento por park1."""
+        with self.assertRaises(duracoes.Ambigua):
+            self._duracao("| park1 = Disneyland\n| duration1 = 16 minutes\n"
+                          "| park2 = Tokyo Disneyland\n| duration2 = 9 minutes")

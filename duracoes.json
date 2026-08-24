@@ -2,12 +2,14 @@
   "_comment": "Duracao das atracoes, em minutos. A Queue-Times nao publica este dado (entrega so id, name, is_open, wait_time e last_updated), entao ele mora aqui, versionado, no mesmo espirito do coords.json.",
   "_regra": "Atracao ausente daqui aparece SEM duracao, nunca com estimativa — mesma regra 12 que vale para coordenada. Valor invalido (zero, texto, nulo) e ignorado com aviso no log, porque duracao 0 seria dado inventado disfarcado.",
   "_como_preencher": "A chave e o nome CANONICO da watchlist.json, nao o nome que a API devolve. O teste tests/test_empacotamento.py recusa chave que nao exista na watchlist, entao errar o nome falha o CI em vez de sumir da tela em silencio.",
-  "_criterio_multiparque": "Quando o artigo da Wikipedia cobre varios parques, a duracao so entra em dois casos: (a) o infobox atribui o numero ao NOSSO parque — o Pirates of the Caribbean traz 'Magic Kingdom 8:30' escrito; ou (b) as instalacoes sao clones da mesma atracao, como o Seven Dwarfs Mine Train no Magic Kingdom e em Shanghai. Fora disso fica de fora, mesmo com numero na tela: faixa sem dono ('4-5 minutes' em cinco parques, no Buzz Lightyear), numero cuja fonte e de outro parque (Jungle Cruise, 7 min citando o Orange County Register) e versoes que sabidamente diferem (Tower of Terror, Revenge of the Mummy) ficam sem duracao. Preferir o vazio ao numero de outra instalacao e a regra 12.",
+  "_criterio_multiparque": "Quando o artigo da Wikipedia cobre varios parques, a duracao so entra em dois casos: (a) o infobox atribui o numero ao NOSSO parque — o Pirates of the Caribbean traz 'Magic Kingdom 8:30' escrito; ou (b) as instalacoes sao clones da mesma atracao, como o Seven Dwarfs Mine Train no Magic Kingdom e em Shanghai. Fora disso fica de fora, mesmo com numero na tela: faixa sem dono ('4-5 minutes' em cinco parques, no Buzz Lightyear), numero cuja fonte e de outro parque (Jungle Cruise, 7 min citando o Orange County Register) e versoes que sabidamente diferem (Tower of Terror, Revenge of the Mummy) e campo que nomeia as instalacoes SEM a nossa (Jurassic Park River Adventure, que traz '5:30 (Hollywood)' e '7:00 (Japan)' e nada de Islands of Adventure) ficam sem duracao. Preferir o vazio ao numero de outra instalacao e a regra 12.",
   "rides": {
     "Disney Magic Kingdom": {
       "Big Thunder Mountain Railroad": 3,
       "Seven Dwarfs Mine Train": 3,
-      "Pirates of the Caribbean": 9
+      "Pirates of the Caribbean": 9,
+      "TRON Lightcycle / Run": 1,
+      "Space Mountain": 3
     },
     "Epcot": {
       "Guardians of the Galaxy: Cosmic Rewind": 3,
