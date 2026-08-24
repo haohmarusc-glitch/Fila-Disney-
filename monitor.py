@@ -2761,7 +2761,13 @@ def format_status(park_name: str, payload: dict, config: dict,
         marca = "✅" if wait <= threshold else "▫️"
         seta = marca_tendencia(conn, park_name, ride)
         linhas.append(f"{marca} {notifier.esc(ride)} — <b>{wait} min</b>{seta} (alerta ≤ {threshold})")
-        minutos = duracao_da_atracao(duracoes, park_name, ride)
+        # O duracoes.json usa o nome CANÔNICO da watchlist; a API manda o dela,
+        # com ™ e apóstrofo curvo. O lookup cru deixava a Tower of Terror ("The
+        # Twilight Zone™ Tower of Terror" na API) sem duração na tela mesmo com
+        # os 15 min no arquivo — visto em produção em 24/08/2026. O threshold
+        # nunca teve esse bug porque o get_threshold sempre normalizou.
+        canonico = nome_watchlist(park_cfg, ride) or ride
+        minutos = duracao_da_atracao(duracoes, park_name, canonico)
         if minutos is None:
             continue
         # A duração não entra na soma que ordena nada: fila e caminhada são
@@ -2770,7 +2776,7 @@ def format_status(park_name: str, payload: dict, config: dict,
         # fila. Ela serve para saber o compromisso de tempo — e para o aviso
         # abaixo, que é decisão de verdade no fim do dia.
         detalhe = f"     🎬 atração ~{minutos} min"
-        pre = pre_da_atracao(duracoes, veiculos, park_name, ride)
+        pre = pre_da_atracao(duracoes, veiculos, park_name, canonico)
         if pre is not None:
             detalhe += f" · ~{pre} de pré-show/embarque"
         if horario and not cabe_antes_de_fechar(agora_local, horario[1], wait + minutos):

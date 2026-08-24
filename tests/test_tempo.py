@@ -349,3 +349,32 @@ class TestPreShow(unittest.TestCase):
                     self.assertIn(atracao, watchlist[parque]["attractions"])
                     self.assertIsInstance(minutos, int)
                     self.assertGreater(minutos, 0)
+
+
+class TestNomeDaApiVersusArquivo(BaseTeste):
+    """A API decora o nome; o duracoes.json guarda o canônico. Visto em produção.
+
+    Em 24/08/2026 o /status real mostrou a Tower of Terror sem a linha de
+    duração mesmo com 15 min no arquivo: a API manda "The Twilight Zone™ Tower
+    of Terror" e o lookup era cru. O threshold nunca sofreu disso porque o
+    get_threshold sempre passou pelo nome_watchlist.
+    """
+
+    def _status(self, nome_api):
+        import json
+        self.monitor.DURACOES_PATH.write_text(json.dumps({
+            "rides": {"Disney Hollywood Studios": {"Tower of Terror": 15}},
+            "veiculo": {},
+        }), encoding="utf-8")
+        payload = {"lands": [{"name": "L", "rides": [
+            {"id": 1, "name": nome_api, "is_open": True, "wait_time": 30,
+             "last_updated": self.monitor.utc_now().isoformat()}]}]}
+        return self.monitor.format_status("Disney Hollywood Studios", payload,
+                                          self.config, self.conn)
+
+    def test_nome_decorado_da_api_ainda_acha_a_duracao(self):
+        texto = self._status("The Twilight Zone™ Tower of Terror")
+        self.assertIn("atração ~15 min", texto)
+
+    def test_nome_igual_ao_canonico_continua_funcionando(self):
+        self.assertIn("atração ~15 min", self._status("Tower of Terror"))
