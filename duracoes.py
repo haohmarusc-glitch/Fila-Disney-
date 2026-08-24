@@ -1,452 +1,160 @@
 """Enriquecimento de durações — NÃO é etapa obrigatória do sistema.
 
-O banco de durações é o duracoes.json, versionado no repositório. O bot lê só
-ele; a Wikipédia existe para PREENCHER esse arquivo, não para servi-lo. Se a
-Wikipédia estiver fora, o que já está no duracoes.json continua valendo — só não
-ganha duração nova. Atração sem entrada aparece sem duração, nunca com
-estimativa (regra 12).
+O banco de durações é o `duracoes.json`, versionado no repositório. O bot lê só
+ele; o TouringPlans existe para PREENCHER esse arquivo, não para servi-lo. Se o
+site estiver fora, o que já está gravado continua valendo — só não ganha
+duração nova. Atração sem entrada aparece sem duração, nunca com estimativa
+(regra 12).
 
-A Queue-Times não publica duração: entrega `id`, `name`, `is_open`, `wait_time`
-e `last_updated`, e nada mais. A themeparks.wiki também não — conferido em
-24/08/2026, o schema de entidade tem só entityType, externalId, id, location,
-name, parentId e slug. Sobrou a Wikipédia, cujo infobox de atração traz
-`duration`.
+## Por que TouringPlans, e não a Wikipédia
 
-Uso:
+A primeira versão deste script lia o campo `duration` do infobox da Wikipédia.
+Funcionava, chegou a 31 de 54, e media a coisa ERRADA: o infobox traz o ciclo
+da atração, e o que a regra 12 pede é o compromisso de tempo. As duas coisas só
+coincidem onde não há pré-show.
+
+    Seven Dwarfs Mine Train     ciclo  3 min     total  3 min
+    TRON Lightcycle / Run       ciclo  1 min     total  1 min
+    Big Thunder Mountain        ciclo  3 min     total  7 min
+    Space Mountain              ciclo  3 min     total 10 min
+    Mario Kart                  ciclo  5 min     total 12 min
+    Mission: SPACE              ciclo  6 min     total 15 min
+
+O TouringPlans publica o total — pré-show obrigatório, a atração e a folga para
+sair — que é exatamente o número que decide "cabe antes de fechar" e o que
+aparece na tela. Onde há briefing longo, como o Mission: SPACE, a diferença é
+de 2,5x: dizer 6 min ali era subestimar em nove minutos.
+
+A troca foi em bloco, não parcial, e de propósito: misturar as duas medidas
+daria um arquivo em que `3` e `18` significam coisas diferentes e ninguém sabe
+qual é qual olhando. Pela mesma razão o coletor da Wikipédia foi REMOVIDO em
+vez de virar alternativa — ferramenta que produz dado incompatível com o
+arquivo é armadilha, não plano B. O histórico do git guarda o código, e o
+`duracoes.json:_fontes_esgotadas` guarda o que aquela investigação apurou.
+
+## Uso
+
     docker compose exec fila-disney python duracoes.py --revisar   # só relatório
     docker compose exec fila-disney python duracoes.py             # grava
-    docker compose exec fila-disney python duracoes.py --sobrescrever
-    docker compose exec fila-disney python duracoes.py --diagnostico  # infobox cru
-    docker compose exec fila-disney python duracoes.py --wikidata     # P2047
+    docker compose exec fila-disney python duracoes.py --cru       # sem mapear
 
-Cada duração encontrada vem com a página de origem no relatório, para dar para
-conferir na mão antes de aceitar. O script nunca inventa: atração cuja página
-não tenha `duration` no infobox fica de fora e é listada no fim.
-
-O Wikidata foi varrido em 24/08/2026 e não rende nada — está medido, não
-suposto. A ideia era boa: lá cada instalação é um item próprio, então a
-ambiguidade de parque que barra 8 atrações aqui não existiria. E os itens
-existem mesmo, separados por parque (`Q85465363 — Attraction in Magic Kingdom
-(WDW)`, `Q67130334 — ride at Disney's Hollywood Studios`). Só que NENHUM tem
-P2047. Das 23 pendentes: 18 com item alcançado e sem o campo, 4 sem item
-nenhum, 1 só com artigo de lista. Os únicos P2047 que apareceram eram de
-filme homônimo — o Jungle Cruise de 127 min é o longa de 2021. O `--wikidata`
-fica no script para reconferir se o Wikidata for preenchido um dia.
+O relatório mostra cada duração com o nome que veio do site ao lado do nome
+canônico, para dar para conferir o casamento antes de aceitar. Uma página que
+volte com zero atrações é ERRO em voz alta, não silêncio: é assim que mudança
+de layout aparece, em vez de virar arquivo vazio.
 """
 import argparse
 import json
 import re
 import sys
 import time
+from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlencode
 
 import monitor
 
-WIKI_API = "https://en.wikipedia.org/w/api.php"
-# O Wikidata é a segunda fonte, e existe por um motivo que o infobox não
-# resolve: lá cada INSTALAÇÃO é um item próprio. A Haunted Mansion do Magic
-# Kingdom e a da Disneyland são Q diferentes, então a duração já vem sem a
-# ambiguidade que barrou sete atrações aqui. O campo é o P2047.
-WIKIDATA_API = "https://www.wikidata.org/w/api.php"
-# Só as unidades que aparecem de verdade. O relatório imprime o Q cru junto,
-# então unidade nova aparece na tela em vez de virar conversão errada.
-UNIDADES_WIKIDATA = {"Q7727": "min", "Q11574": "s", "Q25235": "h"}
-# A Wikipédia pede uso moderado e User-Agent identificável. São ~54 atrações,
-# duas chamadas cada: com meio segundo entre elas a execução leva ~1 min e não
-# encosta em limite nenhum.
-PAUSA_ENTRE_CHAMADAS_S = 0.5
+BASE = "https://touringplans.com"
+# Uma vez só, sete páginas, com pausa: mesma postura do `coords.py` com a
+# Overpass. Isto é enriquecimento avulso, nunca dependência de runtime — o
+# `monitor.py` não conhece o TouringPlans.
+PAUSA_ENTRE_PAGINAS_S = 2
 DURACOES_PATH = monitor.DURACOES_PATH
 
-# Formatos que aparecem de verdade no infobox: "3 minutes", "2:30",
-# "1 minute, 30 seconds", "4 minutes 30 seconds", "90 seconds".
-_MIN_SEG = re.compile(r"(\d+)\s*(?:minutes?|min)\b[^0-9]{0,12}?(\d+)\s*(?:seconds?|sec)\b", re.I)
-_MM_SS = re.compile(r"\b(\d{1,3}):([0-5]\d)\b")
-_SO_MIN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:minutes?|min)\b", re.I)
-_SO_SEG = re.compile(r"(\d+)\s*(?:seconds?|sec)\b", re.I)
-_SO_NUMERO = re.compile(r"\s*(\d+(?:\.\d+)?)\s*")
-
-
-def minutos_do_texto(texto: str) -> int | None:
-    """Converte o campo `duration` do infobox em minutos inteiros.
-
-    Devolve None quando não reconhece, e isso é melhor que chutar: atração
-    sem duração aparece sem duração, nunca com estimativa (regra 12).
-    """
-    if not texto:
-        return None
-    # `{{convert|3|min}}` e `{{nowrap|2:30}}` são comuns no infobox. Trocar
-    # chave e barra por espaço deixa os números legíveis pelos padrões abaixo.
-    texto = re.sub(r"[{}|]", " ", texto)
-    texto = re.sub(r"<[^>]+>", " ", texto)
-    texto = texto.replace("[[", " ").replace("]]", " ").replace("'", " ")
-    casado = _MIN_SEG.search(texto)
-    if casado:
-        segundos = int(casado.group(1)) * 60 + int(casado.group(2))
-    elif _MM_SS.search(texto):
-        m, s = _MM_SS.search(texto).groups()
-        segundos = int(m) * 60 + int(s)
-    elif _SO_MIN.search(texto):
-        segundos = float(_SO_MIN.search(texto).group(1)) * 60
-    elif _SO_SEG.search(texto):
-        segundos = int(_SO_SEG.search(texto).group(1))
-    elif _SO_NUMERO.fullmatch(texto):
-        # Campo `duration` com numero pelado e minuto por convencao do infobox
-        # — o MEN IN BLACK traz "5.00" e nada mais. So vale para o campo
-        # INTEIRO: numero solto no meio de frase pode ser altura, ano ou
-        # capacidade, e virar duracao seria o palpite que a regra 12 proibe.
-        segundos = float(_SO_NUMERO.fullmatch(texto).group(1)) * 60
-    else:
-        return None
-    if segundos <= 0:
-        return None
-    # Meio a meio arredonda para CIMA. O round() do Python usa arredondamento
-    # bancário: round(2.5) devolve 2, e "2:30" viraria 2 min. Subestimar o
-    # compromisso de tempo é o erro que atrapalha quem está decidindo se cabe
-    # antes de fechar.
-    return max(1, int(segundos / 60 + 0.5))
-
-
-# Atração que existe em vários resorts tem UM artigo na Wikipédia cobrindo
-# todos. O infobox numera as instalações — `park2 = Magic Kingdom` vem com
-# `duration2` — então dá para pegar a duração DO NOSSO parque em vez de recusar
-# o artigo inteiro. Contar parques e desistir descartava clone de duração
-# idêntica (Rise of the Resistance, Rock 'n' Roller Coaster, Seven Dwarfs Mine
-# Train) junto com o caso legítimo do Pirates, que tem 16 min na Disneyland e
-# bem menos no Magic Kingdom.
-#
-# Os nomes da watchlist não são os da Wikipédia: aqui é "Disney Hollywood
-# Studios", lá é "Disney's Hollywood Studios"; aqui "Universal Studios At
-# Universal Orlando", lá "Universal Studios Florida".
-PARQUES_WIKI = {
-    "Disney Magic Kingdom": ("magic kingdom",),
-    "Epcot": ("epcot",),
-    "Disney Hollywood Studios": ("hollywood studios",),
-    "Disney Animal Kingdom": ("animal kingdom",),
-    "Universal Studios At Universal Orlando": ("universal studios florida",),
-    "Islands Of Adventure At Universal Orlando": ("islands of adventure",),
-    "Universal Epic Universe": ("epic universe",),
+# A chave é o nome do parque na watchlist; o valor, o caminho no site.
+PAGINAS = {
+    "Disney Magic Kingdom": "/magic-kingdom/attractions/duration",
+    "Epcot": "/epcot/attractions/duration",
+    "Disney Hollywood Studios": "/hollywood-studios/attractions/duration",
+    "Disney Animal Kingdom": "/animal-kingdom/attractions/duration",
+    "Universal Studios At Universal Orlando":
+        "/universal-studios-florida/attractions/duration",
+    "Islands Of Adventure At Universal Orlando":
+        "/islands-of-adventure/attractions/duration",
+    "Universal Epic Universe": "/epic-universe/attractions/duration",
 }
 
-
-# Busca por nome às vezes cai no artigo errado, e aí não há parser que salve:
-# "TRON Lightcycle / Run" casa com o artigo do FILME Tron, e "Space Mountain"
-# casa com o artigo genérico que cobre cinco parques em vez do dedicado do
-# Magic Kingdom. São poucas e são estáveis — endereço de artigo, não número,
-# então fixar aqui não esbarra na regra 12.
-PAGINAS_WIKI = {
-    ("Disney Magic Kingdom", "Space Mountain"): "Space Mountain (Magic Kingdom)",
-    ("Disney Magic Kingdom", "TRON Lightcycle / Run"): "Tron Lightcycle Power Run",
-    ("Universal Studios At Universal Orlando", "Villain-Con Minion Blast"):
-        "Illumination's Villain-Con Minion Blast",
-    ("Islands Of Adventure At Universal Orlando", "Jurassic Park River Adventure"):
-        "Jurassic Park: The Ride",
-}
+# "12. Mario Kart: Bowser's Challenge in SUPER NINTENDO WORLD"
+_ITEM = re.compile(r"^\d+\.\s+(.+?)(?:\s+in\s+([A-Z][^a-z]*))?$")
+_DURACAO = re.compile(r"Duration:\s*(\d+)\s*(min|hr)", re.I)
 
 
-# Rede de segurança independente do parser. Se o infobox cita mais de um destes,
-# a duração solta não diz de qual instalação ela é — e o parser pode ter falhado
-# em enxergar as chaves `park2`, `park3` que separariam.
-RESORTS = (
-    "disneyland park", "disneyland resort", "magic kingdom", "tokyo disneyland",
-    "tokyo disneysea", "disneyland paris", "walt disney studios park",
-    "shanghai disneyland", "hong kong disneyland", "disney california adventure",
-    "epcot", "hollywood studios", "animal kingdom",
-    "universal studios hollywood", "universal studios florida",
-    "universal studios japan", "universal studios singapore",
-    "universal studios beijing", "islands of adventure", "epic universe",
-)
+class _SoTexto(HTMLParser):
+    """Extrai o texto visível. Substitui o BeautifulSoup, que seria dependência
+    nova para uma tarefa que a stdlib faz (regra 4)."""
+
+    def __init__(self):
+        super().__init__()
+        self.pedacos = []
+        self._ignorar = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._ignorar += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style") and self._ignorar:
+            self._ignorar -= 1
+
+    def handle_data(self, data):
+        if not self._ignorar and data.strip():
+            self.pedacos.append(data.strip())
 
 
-def resorts_citados(wikitexto: str) -> set[str]:
-    """Resorts nomeados na região do infobox."""
-    texto = wikitexto.lower()
-    fim = texto.find("\n}}")
-    return {nome for nome in RESORTS if nome in texto[:fim if fim > 0 else 4000]}
+def texto_visivel(html: str) -> list[str]:
+    """Linhas de texto da página, sem marcação."""
+    parser = _SoTexto()
+    parser.feed(html)
+    return parser.pedacos
 
 
-def parametros_do_infobox(wikitexto: str) -> dict[str, str]:
-    """{chave: valor} do primeiro infobox. Chaves em minúsculo, sem espaço."""
-    # Busca sem caso: a Wikipédia aceita {{infobox}} e {{Infobox}}, e o
-    # find() sensível a maiúscula devolvia {} para os artigos em minúscula.
-    inicio = wikitexto.lower().find("{{infobox")
-    if inicio < 0:
-        return {}
-    profundidade, fim = 0, len(wikitexto)
-    for i in range(inicio, len(wikitexto) - 1):
-        if wikitexto[i:i + 2] == "{{":
-            profundidade += 1
-        elif wikitexto[i:i + 2] == "}}":
-            profundidade -= 1
-            if profundidade == 0:
-                fim = i
-                break
-    corpo = wikitexto[inicio:fim]
-    saida = {}
-    # A quebra de linha antes do | separa parametro de topo; o | dentro de
-    # {{convert|...}} fica na mesma linha e nao vira chave falsa.
-    for pedaco in re.split(r"\n\s*\|", corpo)[1:]:
-        if "=" not in pedaco:
+def minutos(quantidade: str, unidade: str) -> int:
+    return int(quantidade) * (60 if unidade.lower() == "hr" else 1)
+
+
+def duracoes_da_pagina(html: str) -> dict[str, int]:
+    """{nome no site: minutos}. Nome sem duração logo abaixo é descartado."""
+    encontradas = {}
+    atual = None
+    for linha in texto_visivel(html):
+        casado = _DURACAO.search(linha)
+        if casado and atual:
+            encontradas[atual] = minutos(*casado.groups())
+            atual = None
             continue
-        chave, _, valor = pedaco.partition("=")
-        saida[chave.strip().lower()] = valor.strip()
-    return saida
+        item = _ITEM.match(linha)
+        if item:
+            atual = item.group(1).strip()
+    return encontradas
 
 
-def duracao_para_o_parque(wikitexto: str, parque: str) -> int | None:
-    """Duração da instalação DESTE parque, ou levanta Ambigua."""
-    params = parametros_do_infobox(wikitexto)
-    instalacoes = {m.group(1): valor for chave, valor in params.items()
-                   if (m := re.fullmatch(r"park(\d*)", chave)) and valor}
-    if len(instalacoes) <= 1:
-        # "Uma instalação" pode significar duas coisas: o artigo é de um parque
-        # só, ou o parser não enxergou as chaves que separam os outros. O
-        # segundo caso trouxe o Pirates de volta com 16 min — o número da
-        # Disneyland — quando esta função passou a aceitar a duração solta.
-        # Por isso a checagem por NOME é rede independente do parser.
-        if len(resorts_citados(wikitexto)) > 1:
-            raise Ambigua(sorted(resorts_citados(wikitexto)))
-        return (minutos_do_texto(params.get("duration", ""))
-                or minutos_do_texto(campo_duration(wikitexto) or "")
-                or duracao_das_pistas(params))
+def mapear_para_watchlist(cruas: dict[str, int], park_cfg: dict) -> tuple[dict, list]:
+    """Casa os nomes do site com os canônicos da watchlist.
 
-    esperados = PARQUES_WIKI.get(parque, ())
-    for indice, nome in instalacoes.items():
-        nome = nome.lower()
-        if not any(alvo in nome for alvo in esperados):
-            continue
-        propria = params.get(f"duration{indice}")
-        if propria:
-            return minutos_do_texto(propria)
-        # Parque achado, mas sem duração própria: a duração solta e do artigo
-        # inteiro e pode ser de outra instalacao. E o caso do Pirates.
-        break
-    raise Ambigua(sorted(v.lower() for v in instalacoes.values()))
-
-
-def duracao_das_pistas(params: dict[str, str]) -> int | None:
-    """`duration1`/`duration2` sem `park1`/`park2` são pistas, não parques.
-
-    O Space Mountain do Magic Kingdom tem duas pistas, Alpha e Omega, e o
-    infobox numera as durações sem numerar parque nenhum: `duration1 = 2:30` e
-    `duration2 = 2:30`. Sem isto, o artigo CERTO devolvia None — a chave
-    `duration` pelada não existe ali, e a numerada só era lida no caminho de
-    artigo multiparque, que este não é.
-
-    Só vale quando as numeradas concordam. Divergindo, não dá para saber qual
-    o visitante vai pegar, e escolher uma seria estimativa (regra 12). Quem
-    chama já garantiu que o artigo é de um parque só.
+    Devolve (durações, conflitos). Duas entradas do site podem cair na mesma
+    atração — "Mission: SPACE Green" e "Mission: SPACE Orange" são uma linha só
+    na watchlist. Concordando, entra; divergindo, fica de fora e é reportado,
+    porque não dá para saber qual das duas o visitante vai pegar. É a mesma
+    regra que valia para as pistas Alpha e Omega do Space Mountain.
     """
-    minutos = {minutos_do_texto(valor) for chave, valor in params.items()
-               if re.fullmatch(r"duration\d+", chave) and valor}
-    minutos.discard(None)
-    return minutos.pop() if len(minutos) == 1 else None
+    candidatos: dict[str, dict[str, int]] = {}
+    for nome_site, minutos_ in cruas.items():
+        canonico = monitor.nome_watchlist(park_cfg, nome_site)
+        if canonico:
+            candidatos.setdefault(canonico, {})[nome_site] = minutos_
+
+    duracoes, conflitos = {}, []
+    for canonico, achados in candidatos.items():
+        valores = set(achados.values())
+        if len(valores) == 1:
+            duracoes[canonico] = (valores.pop(), sorted(achados)[0])
+        else:
+            conflitos.append((canonico, achados))
+    return duracoes, conflitos
 
 
-def campo_duration(wikitexto: str) -> str | None:
-    """Extrai o valor de `duration` do infobox, parando na próxima chave."""
-    # O fim do valor é a próxima chave, o fecho do template — ou o fim do
-    # texto, que faltava e fazia o campo sumir quando era o último do infobox.
-    # O `(?!\s*\|)` e o que impede campo VAZIO de engolir o campo seguinte. Sem
-    # ele, `| duration =` seguido de `| restriction_in = 52` capturava a linha
-    # do restriction inteira — visto no Space Mountain, no Doctor Doom's
-    # Fearfall e no Monsters Unchained. Nenhum virou numero errado por sorte
-    # (nenhum trazia "minutes"), mas ler o campo errado e bug, nao estilo.
-    casado = re.search(r"\|\s*duration\s*=[ \t]*(?!\s*\|)(.+?)(?=\n\s*\||\n\}\}|\Z)",
-                       wikitexto, re.S | re.I)
-    return casado.group(1).strip() if casado else None
-
-
-class Ambigua(Exception):
-    """O artigo cobre mais de um resort: a duração do infobox não diz qual."""
-
-
-def consultar(parametros: dict, base: str = WIKI_API) -> dict:
-    """GET na API da Wikipédia pelo `get_json` do monitor (regra 11).
-
-    A query vai montada na URL porque `get_json(url, *, tentativas)` não recebe
-    `params` — chamá-lo com esse argumento levantava TypeError em toda atração,
-    e o `except` largo abaixo rotulava isso como "falha de rede". Erro de
-    programação disfarçado de problema externo é o pior tipo de log.
-    """
-    return monitor.get_json(f"{base}?{urlencode(parametros)}")
-
-
-def buscar_pagina(nome: str, parque: str | None = None) -> str | None:
-    """Título da página mais provável para esta atração, ou None.
-
-    O título tem que compartilhar o nome da atração depois de normalizado — sem
-    isso a busca devolveria o artigo do filme, do personagem ou de uma atração
-    homônima em outro parque, e a duração entraria errada sem ninguém notar.
-    """
-    if fixado := PAGINAS_WIKI.get((parque, nome)):
-        return fixado
-    dados = consultar({"action": "query", "list": "search", "srlimit": 5,
-                       "srsearch": f"{nome} attraction", "format": "json"})
-    alvo = monitor.normalizar_nome_api(nome)
-    for item in dados.get("query", {}).get("search", []):
-        titulo = monitor.normalizar_nome_api(item["title"])
-        if titulo in alvo or alvo in titulo:
-            return item["title"]
-    return None
-
-
-def duracao_da_pagina(titulo: str, parque: str) -> int | None:
-    dados = consultar({"action": "query", "prop": "revisions", "rvprop": "content",
-                       "rvslots": "main", "titles": titulo, "format": "json"})
-    for pagina in dados.get("query", {}).get("pages", {}).values():
-        try:
-            texto = pagina["revisions"][0]["slots"]["main"]["*"]
-        except (KeyError, IndexError, TypeError):
-            continue
-        return duracao_para_o_parque(texto, parque)
-    return None
-
-
-def campos_crus(titulo: str, parque: str) -> dict:
-    """Campos do infobox que decidem a duração, sem interpretar nada.
-
-    O parser é conservador de propósito com artigo que cobre vários parques:
-    recusa em vez de arriscar o número da outra instalação — foi o Pirates,
-    16 min na Disneyland contra bem menos no Magic Kingdom, que ensinou isso.
-    Só que recusar joga fora junto o clone idêntico, onde a atração é a mesma
-    nos dois parques e a duração única vale para o nosso.
-
-    Distinguir os dois casos é leitura, não heurística. Este modo põe o texto
-    cru na tela para alguém decidir; o número continua vindo do infobox, nunca
-    de estimativa (regra 12).
-    """
-    dados = consultar({"action": "query", "prop": "revisions", "rvprop": "content",
-                       "rvslots": "main", "titles": titulo, "format": "json"})
-    for pagina in dados.get("query", {}).get("pages", {}).values():
-        try:
-            texto = pagina["revisions"][0]["slots"]["main"]["*"]
-        except (KeyError, IndexError, TypeError):
-            continue
-        params = parametros_do_infobox(texto)
-        duracoes = {c: v for c, v in params.items()
-                    if re.fullmatch(r"duration\d*", c) and v}
-        if not duracoes and (solto := campo_duration(texto)):
-            duracoes["duration (fora do infobox)"] = solto
-        return {
-            "parques_do_infobox": {c: v for c, v in params.items()
-                                   if re.fullmatch(r"park\d*", c) and v},
-            "duracoes": duracoes,
-            "resorts_citados": sorted(resorts_citados(texto)),
-        }
-    return {}
-
-
-def relatar_campos_crus(config: dict, dados: dict) -> None:
-    """Imprime o infobox cru de cada atração que ainda está sem duração."""
-    for parque, cfg in config["parks"].items():
-        atuais = dados["rides"].get(parque, {})
-        pendentes = [a for a in cfg.get("attractions", {}) if a not in atuais]
-        if not pendentes:
-            continue
-        print(f"\n=== {parque}")
-        for atracao in pendentes:
-            try:
-                titulo = buscar_pagina(atracao, parque)
-                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
-                campos = campos_crus(titulo, parque) if titulo else {}
-                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
-            except Exception as exc:  # noqa: BLE001 — uma atração não derruba o resto
-                print(f"  {atracao}\n     ! {type(exc).__name__}: {exc}")
-                continue
-            if not titulo:
-                print(f"  {atracao}\n     página não encontrada")
-                continue
-            print(f"  {atracao}  [{titulo}]")
-            if not campos.get("duracoes"):
-                print("     sem duration no infobox")
-            for chave, valor in campos.get("duracoes", {}).items():
-                print(f"     {chave} = {valor}")
-            for chave, valor in campos.get("parques_do_infobox", {}).items():
-                print(f"     {chave} = {valor}")
-            citados = campos.get("resorts_citados", [])
-            if len(citados) > 1:
-                print(f"     resorts citados: {', '.join(citados)}")
-
-
-def buscar_itens_wikidata(nome: str, limite: int = 8) -> list[str]:
-    """Q-ids candidatos para esta atração, na ordem em que o Wikidata devolve."""
-    dados = consultar({"action": "wbsearchentities", "search": nome,
-                       "language": "en", "type": "item", "limit": limite,
-                       "format": "json"}, WIKIDATA_API)
-    return [item["id"] for item in dados.get("search", [])]
-
-
-def duracao_do_item(entidade: dict) -> str | None:
-    """Valor CRU do P2047, com a unidade junto. Não converte: quem lê decide.
-
-    Converter aqui repetiria o erro que o `--diagnostico` existiu para corrigir
-    — decidir sozinho o que só dá para decidir olhando. E a unidade importa:
-    "+3" pode ser 3 minutos ou 3 segundos, e o Q vem colado justamente por isso.
-    """
-    for reivindicacao in entidade.get("claims", {}).get("P2047", []):
-        valor = (reivindicacao.get("mainsnak", {}).get("datavalue") or {}).get("value")
-        if not isinstance(valor, dict):
-            continue
-        unidade = str(valor.get("unit", "")).rsplit("/", 1)[-1]
-        return f"{valor.get('amount', '?')} {UNIDADES_WIKIDATA.get(unidade, '')}({unidade})"
-    return None
-
-
-def itens_wikidata(ids: list[str]) -> list[dict]:
-    """Rótulo, descrição e duração de cada item. A descrição é o que diz o parque.
-
-    O Wikidata descreve atração como "dark ride at Magic Kingdom" ou "roller
-    coaster at Universal's Islands of Adventure" — é ela que separa a nossa
-    instalação da homônima em Tóquio, sem depender de casar nome.
-    """
-    if not ids:
-        return []
-    dados = consultar({"action": "wbgetentities", "ids": "|".join(ids),
-                       "props": "labels|descriptions|claims", "languages": "en",
-                       "format": "json"}, WIKIDATA_API)
-    saida = []
-    for qid in ids:
-        entidade = dados.get("entities", {}).get(qid)
-        if not entidade:
-            continue
-        saida.append({
-            "id": qid,
-            "rotulo": entidade.get("labels", {}).get("en", {}).get("value", ""),
-            "descricao": entidade.get("descriptions", {}).get("en", {}).get("value", ""),
-            "duracao": duracao_do_item(entidade),
-        })
-    return saida
-
-
-def relatar_wikidata(config: dict, dados: dict) -> None:
-    """Sonda o Wikidata para cada atração ainda sem duração. Não grava nada."""
-    achados = 0
-    for parque, cfg in config["parks"].items():
-        atuais = dados["rides"].get(parque, {})
-        pendentes = [a for a in cfg.get("attractions", {}) if a not in atuais]
-        if not pendentes:
-            continue
-        print(f"\n=== {parque}")
-        for atracao in pendentes:
-            try:
-                itens = itens_wikidata(buscar_itens_wikidata(atracao))
-                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
-            except Exception as exc:  # noqa: BLE001 — uma atração não derruba o resto
-                print(f"  {atracao}\n     ! {type(exc).__name__}: {exc}")
-                continue
-            if any(item["duracao"] for item in itens):
-                achados += 1
-            print(f"  {atracao} — {len(itens)} candidato(s)")
-            # Candidato SEM duração entra no relatório de propósito. Sem ele,
-            # "o Wikidata não tem" era suposição: o item da atração podia estar
-            # fora do limite da busca, empurrado por filme homônimo. Listando
-            # todos, a ausência vira coisa verificada — e foi assim que se viu
-            # que o Jungle Cruise de 127 min era o filme de 2021.
-            for item in itens:
-                print(f"     {item['id']}  {item['duracao'] or 'sem P2047'}"
-                      f"  {item['rotulo']} — {item['descricao']}")
-    print(f"\n{achados} atração(ões) com P2047 no Wikidata.")
+def coletar(parque: str, caminho: str) -> dict[str, int]:
+    """Durações cruas de uma página, pelo `get_texto` do monitor (regra 11)."""
+    return duracoes_da_pagina(monitor.get_texto(BASE + caminho))
 
 
 def carregar_arquivo() -> dict:
@@ -460,79 +168,81 @@ def carregar_arquivo() -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--revisar", action="store_true", help="só relatório, não grava")
-    ap.add_argument("--sobrescrever", action="store_true",
-                    help="substitui durações já preenchidas")
-    ap.add_argument("--diagnostico", action="store_true",
-                    help="mostra o infobox cru do que ficou sem duração; não grava")
-    ap.add_argument("--wikidata", action="store_true",
-                    help="sonda o Wikidata (P2047) para o que ficou sem duração; não grava")
+    ap.add_argument("--cru", action="store_true",
+                    help="mostra o que veio do site sem mapear para a watchlist")
     args = ap.parse_args()
 
     config = monitor.load_config()
     dados = carregar_arquivo()
     dados.setdefault("rides", {})
-    achadas, faltando = 0, []
+    total, vazias = 0, []
 
-    if args.wikidata:
-        relatar_wikidata(config, dados)
-        print("\n--wikidata: nada gravado.")
-        return 0
-
-    if args.diagnostico:
-        relatar_campos_crus(config, dados)
-        print("\n--diagnostico: nada gravado.")
-        return 0
-
-    for parque, cfg in config["parks"].items():
-        atuais = dados["rides"].setdefault(parque, {})
+    for parque, caminho in PAGINAS.items():
         print(f"\n{parque}")
-        for atracao in cfg.get("attractions", {}):
-            if atracao in atuais and not args.sobrescrever:
-                print(f"  ✓ {atracao} — já tem {atuais[atracao]} min")
-                continue
-            try:
-                titulo = buscar_pagina(atracao, parque)
-                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
-                minutos = duracao_da_pagina(titulo, parque) if titulo else None
-                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
-            except Ambigua as exc:
-                onde = ", ".join(exc.args[0])
-                print(f"  ? {atracao} — artigo cobre vários parques ({onde})")
-                faltando.append((parque, atracao, f"ambíguo: {onde}"))
-                continue
-            except Exception as exc:  # noqa: BLE001 — uma atração não derruba o resto
-                motivo = (f"falha de rede ({type(exc).__name__})"
-                          if isinstance(exc, (OSError, ValueError))
-                          or "requests" in type(exc).__module__
-                          else f"ERRO NO SCRIPT: {type(exc).__name__}: {exc}")
-                print(f"  ! {atracao} — {motivo}")
-                faltando.append((parque, atracao, motivo))
-                continue
-            if minutos is None:
-                motivo = "sem infobox duration" if titulo else "página não encontrada"
-                print(f"  – {atracao} — {motivo}")
-                faltando.append((parque, atracao, motivo))
-                continue
-            atuais[atracao] = minutos
-            achadas += 1
-            print(f"  + {atracao} — {minutos} min (via '{titulo}')")
+        try:
+            cruas = coletar(parque, caminho)
+            time.sleep(PAUSA_ENTRE_PAGINAS_S)
+        except Exception as exc:  # noqa: BLE001 — uma página não derruba o resto
+            print(f"  ! falha: {type(exc).__name__}: {exc}")
+            vazias.append(parque)
+            continue
 
-    print(f"\n{achadas} duração(ões) nova(s); {len(faltando)} sem dado.")
-    if faltando:
-        print("Ficam SEM duração na tela, que é o comportamento correto:")
-        for parque, atracao, motivo in faltando:
-            print(f"  {parque} / {atracao} — {motivo}")
+        if not cruas:
+            # Página que volta vazia é mudança de layout, não parque sem
+            # atração. Passar batido geraria um arquivo menor sem ninguém notar.
+            print("  ! ZERO atrações lidas — o layout da página provavelmente mudou")
+            vazias.append(parque)
+            continue
+
+        if args.cru:
+            for nome, m in sorted(cruas.items(), key=lambda i: -i[1]):
+                print(f"  {m:>3} min  {nome}")
+            continue
+
+        achadas, conflitos = mapear_para_watchlist(cruas, config["parks"][parque])
+        for canonico, (m, nome_site) in sorted(achadas.items()):
+            # O nome do site vai junto quando difere: é a unica forma de conferir
+            # que "Tower of Terror" casou com a torre e nao com outra coisa.
+            origem = "" if nome_site == canonico else f"   [{nome_site}]"
+            print(f"  + {canonico} — {m} min{origem}")
+        for canonico, opcoes in conflitos:
+            detalhe = ", ".join(f"{n} = {v} min" for n, v in sorted(opcoes.items()))
+            print(f"  ? {canonico} — versões divergem, fica sem duração ({detalhe})")
+
+        faltando = [a for a in config["parks"][parque].get("attractions", {})
+                    if a not in achadas]
+        for atracao in sorted(faltando):
+            print(f"  – {atracao} — não veio na página")
+
+        dados["rides"][parque] = {c: m for c, (m, _) in achadas.items()}
+        total += len(achadas)
+        print(f"  {len(achadas)} de {len(config['parks'][parque]['attractions'])} "
+              f"da watchlist ({len(cruas)} atrações na página)")
+
+    if args.cru:
+        return 0
+
+    print(f"\n{total} de 54 durações.")
+    if vazias:
+        # Gravar com página faltando deixaria metade do arquivo em TouringPlans
+        # (total, com pré-show) e metade no que estava antes. Arquivo em que o
+        # mesmo campo significa duas coisas é pior que arquivo desatualizado:
+        # o desatualizado a gente sabe que está velho.
+        print("\nNADA GRAVADO — estas páginas não renderam:")
+        for parque in vazias:
+            print(f"  {parque}")
+        print("Gravar sem elas misturaria duas medidas no mesmo arquivo. "
+              "Resolva e rode de novo.")
+        return 1
 
     if args.revisar:
         print("\n--revisar: nada gravado.")
         return 0
     Path(DURACOES_PATH).write_text(
         json.dumps(dados, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"\nGravado em {DURACOES_PATH}")
-    print("Este arquivo é versionado: rode `git diff duracoes.json` e confira "
-          "antes de commitar.")
+    print(f"{DURACOES_PATH} gravado.")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

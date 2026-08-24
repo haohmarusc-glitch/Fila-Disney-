@@ -30,6 +30,27 @@ class TestGetJson(BaseTeste):
         self.assertEqual(self.monitor.get_json("http://x"), {"ok": 1})
         self.assertEqual(esperas, [7.0])
 
+    def test_get_texto_devolve_texto_com_o_mesmo_retry(self):
+        """Regra 11: HTML não passa pelo `get_json`, e não pode virar exceção.
+
+        O `get_texto` é o irmão, não a fuga — a regra existe pelo retry e pelo
+        429, não pelo content-type. Se ele perdesse o núcleo, uma página do
+        TouringPlans fora do ar mataria a coleta na primeira tentativa.
+        """
+        respostas = [Resposta(status=500), Resposta(texto="<html>ok</html>")]
+        self.requests.roteador = lambda url: respostas.pop(0)
+        self.assertEqual(self.monitor.get_texto("http://x"), "<html>ok</html>")
+        self.assertEqual(len(self.requests.gets), 2, "tem que ter retentado")
+
+    def test_get_texto_respeita_o_429(self):
+        esperas = []
+        self.monitor._dormir = esperas.append
+        respostas = [Resposta(status=429, headers={"Retry-After": "7"}),
+                     Resposta(texto="ok")]
+        self.requests.roteador = lambda url: respostas.pop(0)
+        self.assertEqual(self.monitor.get_texto("http://x"), "ok")
+        self.assertEqual(esperas, [7.0])
+
     def test_404_nao_retenta(self):
         self.requests.roteador = lambda url: Resposta(status=404)
         with self.assertRaises(self.requests.RequestException):

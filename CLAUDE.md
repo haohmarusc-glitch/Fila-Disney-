@@ -36,12 +36,16 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     em que foi gerado, e um watchdog que recebe batida atrasada é pior que um que
     não recebe nada. Exceção nova só existe se entrar nesta regra.
 12. Distância/tempo a pé só sai de coordenada real do `coords.json`, e duração de
-    atração só sai do `duracoes.json`. O arquivo está em 31 de 54 e as 23 que faltam
-    são ausência **medida**: a Wikipédia não publica ou não separa por parque, e o
-    Wikidata tem o item por instalação mas com o P2047 vazio (varrido em 24/08/2026,
-    números em `duracoes.json:_fontes_esgotadas`). Não vale refazer a busca — se
-    alguma fonte for preenchida, o assunto reabre. Sem o dado, a atração aparece sem a
-    estimativa — nunca com número inventado. Duração **não** entra em soma que
+    atração só sai do `duracoes.json`. A duração é o **tempo total** — pré-show
+    obrigatório, a atração e a folga para sair —, não o ciclo do brinquedo, porque
+    é o total que responde "cabe antes de fechar". Onde há pré-show os dois números
+    divergem muito: o Mission: SPACE tem 6 min de ciclo e 15 de total. Fonte é o
+    TouringPlans, via `duracoes.py`; a Wikipédia foi abandonada em 24/08/2026 por
+    medir o ciclo, e o Wikidata por ter o item mas com o P2047 vazio (números em
+    `duracoes.json:_fontes_esgotadas`). **Nunca misturar as duas medidas no mesmo
+    arquivo** — se o coletor não fechar os sete parques, ele não grava nada, de
+    propósito. Sem o dado, a atração aparece sem a estimativa — nunca com número
+    inventado. Duração **não** entra em soma que
     ordena nada: fila e caminhada são custo, duração é o que se quer, e somá-la
     poria o Kilimanjaro Safaris (22 min de passeio) atrás de um brinquedo de 90
     segundos com a mesma fila. Ela serve para dizer o compromisso de tempo e
@@ -86,11 +90,12 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `watchlist.json` — config declarativa (parques, atrações, thresholds, dias)
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
 - `coords.py` — script avulso (roda uma vez) que busca coordenadas no OpenStreetMap
-- `duracoes.py` — script avulso (roda uma vez) que busca duração no infobox da
-  Wikipédia. A Queue-Times e a themeparks.wiki não publicam esse dado
+- `duracoes.py` — script avulso (roda uma vez) que coleta duração das páginas
+  públicas "Attraction Durations" do TouringPlans. A Queue-Times e a
+  themeparks.wiki não publicam esse dado
 - `coords.json` — coordenadas por atração; opcional, só o `/perto` depende dele
-- `duracoes.json` — duração de cada atração em minutos; opcional e curado à
-  mão, porque a API não publica isso. Ausente ou incompleto = atração sem
+- `duracoes.json` — duração TOTAL de cada atração em minutos, com pré-show;
+  opcional, porque a API não publica isso. Ausente ou incompleto = atração sem
   duração na tela, nunca com estimativa
 - `data/history.db` — SQLite, volume Docker, fora do git
 
