@@ -1453,20 +1453,46 @@ def avisar_atracoes_novas(conn: sqlite3.Connection, config: dict, park: str,
         log.warning("%s: %d atração(ões) nova(s) sem aviso enviado", park, len(novas))
 
 
-def format_novidades(config: dict, park: str, payload: dict) -> str:
-    """O que a API publica e a watchlist não cobre, por fila decrescente."""
-    fora = fora_da_watchlist(config, park, payload)
-    if not fora:
+def format_novidades(config: dict, park: str, payload: dict,
+                     conn: sqlite3.Connection | None = None) -> str:
+    """O que a API publica e a watchlist não cobre, por fila decrescente.
+
+    Três destinos, não um: atração fechada publica wait 0, e listar
+    "Tree of Life — 0 min" ao lado de "Jungle Cruise — 40 min" põe no mesmo
+    plano uma fila curta de verdade, um brinquedo parado e um show que nunca
+    teve fila. Quem separa show de brinquedo é o histórico
+    (`atracoes_sem_fila_medida`), o mesmo detector do /menores; sem `conn` o
+    comando ainda funciona, só não distingue esse terceiro grupo.
+    """
+    park_cfg = config["parks"].get(park, {})
+    sem_medida = atracoes_sem_fila_medida(conn, park) if conn is not None else set()
+    com_fila, fechadas, sem_publicar, shows = [], [], [], []
+    for _land, ride in iter_rides(payload):
+        nome = ride["name"]
+        if fila_paralela(nome) or get_threshold(park_cfg, nome) is not None:
+            continue
+        if nome in sem_medida:
+            shows.append(nome)
+        elif not ride.get("is_open"):
+            fechadas.append(nome)
+        elif ride.get("wait_time") is None:
+            sem_publicar.append(nome)
+        else:
+            com_fila.append((ride["wait_time"], nome))
+    total = len(com_fila) + len(fechadas) + len(sem_publicar) + len(shows)
+    if not total:
         return (f"✅ <b>{notifier.esc(park)}</b>\n\n"
                 "Tudo que a API publica está na watchlist.")
-    com_fila = sorted(((w, n) for n, w in fora if w is not None), reverse=True)
-    sem_fila = sorted(n for n, w in fora if w is None)
     linhas = [f"🆕 <b>Fora da watchlist — {notifier.esc(park)}</b>", ""]
-    linhas += [f"• {notifier.esc(nome)} — {wait} min" for wait, nome in com_fila]
-    if sem_fila:
-        linhas += ["", "<i>Sem fila publicada agora:</i>"]
-        linhas += [f"• {notifier.esc(nome)}" for nome in sem_fila]
-    linhas += ["", f"{len(fora)} atração(ões). Para entrar em alerta e no /status, "
+    linhas += [f"• {notifier.esc(nome)} — {wait} min"
+               for wait, nome in sorted(com_fila, reverse=True)]
+    for titulo, nomes in (("Fechadas agora:", fechadas),
+                          ("Sem fila publicada agora:", sem_publicar),
+                          ("Shows e sem fila medida:", shows)):
+        if nomes:
+            linhas += ["", f"<i>{titulo}</i>"]
+            linhas += [f"• {notifier.esc(nome)}" for nome in sorted(nomes)]
+    linhas += ["", f"{total} atração(ões). Para entrar em alerta e no /status, "
                    "adicione o nome e o limite na <code>watchlist.json</code>."]
     return "\n".join(linhas)
 
@@ -3199,7 +3225,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
                    for wait, ride in maiores_filas(payload, config, 10)]
         return format_ranking_atual(ranking, config)
     if cmd == "/novidades":
-        return format_novidades(config, park_name, payload)
+        return format_novidades(config, park_name, payload, conn)
     if cmd == "/fechadas":
         return format_fechadas(conn, config, park_name, payload)
     if cmd == "/lotacao":

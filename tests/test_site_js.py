@@ -280,6 +280,25 @@ class TestEstiloCompartilhado(unittest.TestCase):
         with open("site/styles.css", encoding="utf-8") as f:
             return f.read()
 
+    def test_seletor_de_parque_quebra_em_linha(self):
+        """A primeira versão rolava na horizontal e escondia cinco dos sete
+        parques atrás de um gesto que nada anunciava — na tela apareciam só
+        dois, como se o resto não existisse. Escolher parque não pode depender
+        de descobrir que a faixa desliza."""
+        css = self.css()
+        base = re.search(r"(?ms)^\.escolha\s*\{(.*?)\}", css)
+        self.assertIsNotNone(base, ".escolha sumiu do CSS")
+        self.assertIn("flex-wrap: wrap", base.group(1))
+
+    def test_barra_de_comandos_continua_rolando(self):
+        """São onze: quebrar em linha empurraria a primeira fila para fora da
+        tela. Ali o gesto custa pouco, porque o botão importante já aparece."""
+        css = self.css()
+        comandos = re.search(r"(?ms)^\.escolha\.comandos\s*\{(.*?)\}", css)
+        self.assertIsNotNone(comandos, ".escolha.comandos sumiu do CSS")
+        self.assertIn("nowrap", comandos.group(1))
+        self.assertIn("overflow-x: auto", comandos.group(1))
+
     def test_classes_de_layout_valem_em_qualquer_aba(self):
         css = self.css()
         for classe in (".linha", ".meta"):

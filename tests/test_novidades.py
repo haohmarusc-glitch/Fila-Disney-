@@ -138,5 +138,48 @@ class TestNovidadesComando(BaseTeste):
             self.config, PARQUE, payload((CONHECIDA, 30), ("Space Mountain Single Rider", 0)))
         self.assertNotIn("Single Rider", texto)
 
+    def test_atracao_fechada_nao_e_listada_como_fila_de_zero(self):
+        """Visto no site em 24/08: o /novidades do Animal Kingdom listava as 14
+        atrações como "— 0 min", brinquedo parado e show no mesmo plano de uma
+        fila curta de verdade. Fechada agora tem seção própria e sem número."""
+        p = {"lands": [{"name": "Terra", "rides": [
+            {"id": 1, "name": "Astro Orbiter", "is_open": False, "wait_time": 0},
+            {"id": 2, "name": "Mad Tea Party", "is_open": True, "wait_time": 40},
+        ]}]}
+        texto = self.monitor.format_novidades(self.config, PARQUE, p, self.conn)
+        self.assertIn("Fechadas agora", texto)
+        self.assertIn("Mad Tea Party — 40 min", texto)
+        self.assertNotIn("Astro Orbiter — 0 min", texto)
+
+    def test_show_com_historico_de_zero_vai_para_secao_propria(self):
+        """Quem separa show de brinquedo parado é o histórico, não o nome."""
+        import datetime as dt
+        base = dt.datetime(2026, 10, 6, 18)
+        for leitura in range(self.monitor.MIN_LEITURAS_PLACEHOLDER):
+            self.gravar(PARQUE, "Tree of Life", 0,
+                        base + dt.timedelta(minutes=5 * leitura))
+        p = {"lands": [{"name": "Terra", "rides": [
+            {"id": 1, "name": "Tree of Life", "is_open": True, "wait_time": 0},
+        ]}]}
+        texto = self.monitor.format_novidades(self.config, PARQUE, p, self.conn)
+        self.assertIn("Shows e sem fila medida", texto)
+        self.assertNotIn("Tree of Life — 0 min", texto)
+
+    def test_sem_conn_o_comando_ainda_responde(self):
+        """O detector precisa do banco; sem ele o comando perde o terceiro
+        grupo, mas não pode quebrar."""
+        texto = self.monitor.format_novidades(
+            self.config, PARQUE, payload((FORA, 15)))
+        self.assertIn(FORA, texto)
+
+    def test_conta_todas_as_secoes_no_total(self):
+        p = {"lands": [{"name": "Terra", "rides": [
+            {"id": 1, "name": "Astro Orbiter", "is_open": False, "wait_time": 0},
+            {"id": 2, "name": "Mad Tea Party", "is_open": True, "wait_time": 40},
+            {"id": 3, "name": "Tiki Room", "is_open": True, "wait_time": None},
+        ]}]}
+        texto = self.monitor.format_novidades(self.config, PARQUE, p, self.conn)
+        self.assertIn("3 atração(ões)", texto)
+
     def test_esta_no_help(self):
         self.assertIn("/novidades", self.monitor.HELP)
