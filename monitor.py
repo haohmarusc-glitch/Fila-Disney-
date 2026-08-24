@@ -317,6 +317,16 @@ def init_db() -> sqlite3.Connection:
     # tela e errado para a viagem: atração que ABRIR em setembro fica invisível
     # até alguém chegar no parque. Esta tabela guarda o que a API já mostrou,
     # para distinguir "sempre existiu e não interessa" de "apareceu agora".
+    # Vigia de fila por chat: "me avisa quando o Everest baixar de 40" — ou de
+    # 50% do tipico do horario. Uma linha por (chat, atracao); avisa UMA vez e
+    # se apaga, como a vigia de reabertura. limite_min e limite_pct sao
+    # excludentes: um deles fica nulo.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS fila_watches ("
+        "chat_id TEXT NOT NULL, park TEXT NOT NULL, ride TEXT NOT NULL, "
+        "limite_min INTEGER, limite_pct INTEGER, criado_em TEXT NOT NULL, "
+        "PRIMARY KEY (chat_id, park, ride))"
+    )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS atracoes_conhecidas ("
         "park TEXT NOT NULL, ride TEXT NOT NULL, visto_em TEXT NOT NULL, "
@@ -1196,6 +1206,10 @@ def cancelar_vigia(conn: sqlite3.Connection, park: str, ride: str, chat_id=None)
         "DELETE FROM ride_watch_subscriptions WHERE chat_id = ? AND park = ? AND ride = ?",
         (chat_id, park, ride),
     ).rowcount
+    removidas += conn.execute(
+        "DELETE FROM fila_watches WHERE chat_id = ? AND park = ? AND ride = ?",
+        (chat_id, park, ride),
+    ).rowcount
     conn.commit()
     return (f"✅ Vigilância removida: {notifier.esc(ride)}."
             if removidas else f"Não havia vigilância ativa para {notifier.esc(ride)}.")
@@ -1203,17 +1217,128 @@ def cancelar_vigia(conn: sqlite3.Connection, park: str, ride: str, chat_id=None)
 
 def format_vigias(conn: sqlite3.Connection, chat_id=None) -> str:
     chat_id = str(chat_id if chat_id is not None else notifier.CHAT_ID)
-    rows = conn.execute(
+    reaberturas = conn.execute(
         "SELECT park, ride FROM ride_watch_subscriptions "
         "WHERE chat_id = ? ORDER BY park, ride", (chat_id,)
     ).fetchall()
-    if not rows:
+    filas = conn.execute(
+        "SELECT park, ride, limite_min, limite_pct FROM fila_watches "
+        "WHERE chat_id = ? ORDER BY park, ride", (chat_id,)
+    ).fetchall()
+    if not reaberturas and not filas:
         return ("👀 Nenhuma atração sendo vigiada.\n"
-                "Use <code>/vigiar &lt;atração&gt;</code>.")
-    linhas = ["👀 <b>Alertas de reabertura ativos</b>", ""]
-    linhas += [f"• {notifier.esc(ride)} — {notifier.esc(park)}" for park, ride in rows]
-    linhas += ["", "Para remover: <code>/vigiar cancelar &lt;atração&gt;</code>"]
+                "<code>/vigiar &lt;atração&gt;</code> — avisa quando reabrir\n"
+                "<code>/vigiar &lt;atração&gt; 40</code> — avisa quando a fila "
+                "cair a 40 min\n"
+                "<code>/vigiar &lt;atração&gt; 50%</code> — avisa a 50% do típico "
+                "do horário")
+    linhas = []
+    if filas:
+        linhas += [f"⏳ <b>Vigias de fila</b> ({len(filas)} de "
+                   f"{MAX_VIGIAS_FILA_POR_CHAT})", ""]
+        for park, ride, lim_min, lim_pct in filas:
+            alvo_txt = f"≤ {lim_min} min" if lim_min is not None else f"≤ {lim_pct}% do típico"
+            linhas.append(f"• {notifier.esc(ride)} — {alvo_txt} ({notifier.esc(park)})")
+        linhas.append("")
+    if reaberturas:
+        linhas += ["👀 <b>Alertas de reabertura</b>", ""]
+        linhas += [f"• {notifier.esc(ride)} — {notifier.esc(park)}"
+                   for park, ride in reaberturas]
+        linhas.append("")
+    linhas.append("Para remover: <code>/vigiar cancelar &lt;atração&gt;</code>")
     return "\n".join(linhas)
+
+
+MAX_VIGIAS_FILA_POR_CHAT = 5
+
+
+def vigiar_fila(conn: sqlite3.Connection, park: str, ride: str, limite: int,
+                percentual: bool, chat_id=None) -> str:
+    """Registra vigia de fila: avisa uma vez quando a fila cair ao limite.
+
+    Cinco por chat, no máximo: vigia é atenção, e atenção diluída em vinte
+    atrações não é atenção. Reeditar uma atração já vigiada não conta como
+    nova — troca o limite.
+    """
+    chat_id = str(chat_id if chat_id is not None else notifier.CHAT_ID)
+    ja_vigiada = conn.execute(
+        "SELECT 1 FROM fila_watches WHERE chat_id = ? AND park = ? AND ride = ?",
+        (chat_id, park, ride)).fetchone()
+    ativas = conn.execute(
+        "SELECT COUNT(*) FROM fila_watches WHERE chat_id = ?", (chat_id,)
+    ).fetchone()[0]
+    if not ja_vigiada and ativas >= MAX_VIGIAS_FILA_POR_CHAT:
+        return (f"⚠️ Você já vigia {ativas} atrações — o limite é "
+                f"{MAX_VIGIAS_FILA_POR_CHAT}.\nRemova uma com "
+                "<code>/vigiar cancelar &lt;atração&gt;</code> antes de adicionar outra.")
+    conn.execute(
+        "INSERT OR REPLACE INTO fila_watches "
+        "(chat_id, park, ride, limite_min, limite_pct, criado_em) VALUES (?, ?, ?, ?, ?, ?)",
+        (chat_id, park, ride,
+         None if percentual else limite, limite if percentual else None,
+         utc_now().isoformat()))
+    conn.commit()
+    if percentual:
+        return (f"⏳ Vou vigiar <b>{notifier.esc(ride)}</b> — {notifier.esc(park)}.\n"
+                f"Avisarei uma vez quando a fila cair a {limite}% do típico deste "
+                "horário (pelo histórico).")
+    return (f"⏳ Vou vigiar <b>{notifier.esc(ride)}</b> — {notifier.esc(park)}.\n"
+            f"Avisarei uma vez quando a fila ficar em {limite} min ou menos.")
+
+
+def interpretar_vigia(arg: str) -> tuple[str, int | None, bool]:
+    """Separa "everest 40" em (busca, limite, percentual). Sem número: reabertura."""
+    partes = arg.rsplit(maxsplit=1)
+    if len(partes) == 2:
+        casado = re.fullmatch(r"(\d{1,3})(%?)", partes[1])
+        if casado:
+            return partes[0], int(casado.group(1)), bool(casado.group(2))
+    return arg, None, False
+
+
+def maybe_alertar_fila_baixa(conn: sqlite3.Connection, config: dict, park: str,
+                             ride: dict, estado_atual: str) -> None:
+    """Dispara as vigias de fila. Uma vez por vigia; depois ela se apaga.
+
+    Leitura velha não dispara (regra 14) e fila None não é 0 (regra 15). O modo
+    percentual só dispara com histórico suficiente — sem perfil, sem alerta,
+    nunca com estimativa (regra 12).
+    """
+    if (estado_atual != "operando" or not ride.get("is_open")
+            or ride.get("wait_time") is None or leitura_obsoleta(ride)):
+        return
+    canonico = nome_watchlist(config.get("parks", {}).get(park, {}), ride["name"])
+    if canonico is None:
+        return
+    fila = ride["wait_time"]
+    vigias = conn.execute(
+        "SELECT chat_id, limite_min, limite_pct FROM fila_watches "
+        "WHERE park = ? AND ride = ?", (park, canonico)).fetchall()
+    for chat_id, limite_min, limite_pct in vigias:
+        if limite_min is not None:
+            if fila > limite_min:
+                continue
+            texto = (f"📉 <b>{notifier.esc(canonico)}</b> chegou a <b>{fila} min</b> "
+                     f"(seu limite: {limite_min}).\n{notifier.esc(park)} — "
+                     "vigia atendida e removida.")
+        else:
+            perfil = localizacao.perfil_historico(conn, config, park, canonico, fila)
+            if perfil is None or perfil.get("mediana") is None:
+                continue  # sem histórico não há "típico" — melhor calar que chutar
+            tipico = perfil["mediana"]
+            if tipico <= 0 or fila > tipico * limite_pct / 100:
+                continue
+            texto = (f"📉 <b>{notifier.esc(canonico)}</b> está em <b>{fila} min</b> — "
+                     f"{limite_pct}% ou menos do típico deste horário "
+                     f"(~{tipico:.0f} min).\n{notifier.esc(park)} — "
+                     "vigia atendida e removida.")
+        if notifier.send(texto, chat_id=chat_id):
+            conn.execute(
+                "DELETE FROM fila_watches WHERE chat_id = ? AND park = ? AND ride = ?",
+                (chat_id, park, canonico))
+            conn.commit()
+            log.info("VIGIA DE FILA: %s / %s = %s min (chat %s)",
+                     park, canonico, fila, chat_id)
 
 
 def estado_anterior(conn: sqlite3.Connection, park: str, ride: str) -> int | None:
@@ -2500,6 +2625,8 @@ HELP = (
     "/quebras &lt;parque&gt; — quais atrações quebram MAIS, pelo histórico\n"
     "/janela &lt;parque&gt; — a hora em que a fila do parque cai, pelo histórico\n"
     "/vigiar &lt;atração&gt; — avisa uma vez quando a atração reabrir\n"
+    "/vigiar &lt;atração&gt; &lt;min&gt; — avisa quando a fila cair a esse valor (ex.: 40)\n"
+    "/vigiar &lt;atração&gt; &lt;N&gt;% — avisa quando a fila cair a N% do típico do horário\n"
     "/confianca &lt;atração&gt; — compara a fila com o histórico equivalente\n"
     "/lotacao &lt;parque&gt; — pressão estimada pelas filas e fechamentos\n"
     "/plano — próximas três atrações por fila + caminhada\n"
@@ -2918,6 +3045,13 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
             return format_vigias(conn, chat_id)
         cancelar = arg.lower().startswith("cancelar ")
         busca = arg.split(maxsplit=1)[1] if cancelar else arg
+        limite, percentual = None, False
+        if not cancelar:
+            busca, limite, percentual = interpretar_vigia(busca)
+            if limite is not None and not (1 <= limite <= (99 if percentual else 240)):
+                return ("Limite fora da faixa: use 1–240 min, ou 1–99 com "
+                        "<code>%</code> (ex.: <code>/vigiar everest 40</code> ou "
+                        "<code>/vigiar everest 50%</code>).")
         matches = resolver_atracao(config, busca)
         if not matches:
             return f"Não achei atração com “{notifier.esc(busca)}”."
@@ -2925,8 +3059,11 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
             return (f"“{notifier.esc(busca)}” é ambíguo:\n"
                     + _format_opcoes_atracao(matches))
         park, ride = matches[0]
-        return (cancelar_vigia(conn, park, ride, chat_id) if cancelar
-                else vigiar_atracao(conn, park, ride, chat_id))
+        if cancelar:
+            return cancelar_vigia(conn, park, ride, chat_id)
+        if limite is not None:
+            return vigiar_fila(conn, park, ride, limite, percentual, chat_id)
+        return vigiar_atracao(conn, park, ride, chat_id)
 
     if cmd == "/confianca":
         if not arg:
@@ -3151,6 +3288,7 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
             maybe_alertar_reabertura(
                 conn, config, park_name, ride, anterior, parque_operava, estado_atual
             )
+            maybe_alertar_fila_baixa(conn, config, park_name, ride, estado_atual)
 
             # alerta somente no parque do dia, fora do quiet hours
             if quiet or park_name not in alert_parks:
