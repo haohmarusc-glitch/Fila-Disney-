@@ -231,3 +231,90 @@ class TestCacheDaQueueTimes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVigiasPayload(unittest.TestCase):
+    """O /vigias é o painel do site: leitura pura, sem identidade vazada.
+
+    O frontend mora fora do repositório (hospedagem do domínio custom), então o
+    contrato deste payload é a única interface entre os dois — mudá-lo quebra o
+    site em silêncio.
+    """
+
+    def setUp(self):
+        import importlib
+        import tempfile
+        from pathlib import Path
+        for nome in ("monitor", "localizacao"):
+            sys.modules.pop(nome, None)
+        self.monitor = importlib.import_module("monitor")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.monitor.DB_PATH = Path(tmp.name) / "h.db"
+        self.conn = self.monitor.init_db()
+        self.addCleanup(self.conn.close)
+        self.config = self.monitor.load_config()
+        api_server.monitor = self.monitor
+
+    def _vigia(self, chat="4242", limite=40, pct=None):
+        self.conn.execute(
+            "INSERT INTO fila_watches (chat_id, park, ride, limite_min, "
+            "limite_pct, criado_em) VALUES (?, 'Disney Animal Kingdom', "
+            "'Expedition Everest', ?, ?, '2026-08-24T12:00:00')",
+            (chat, limite, pct))
+        self.conn.commit()
+
+    def _fila(self, wait, aberta=1):
+        self.conn.execute(
+            "INSERT INTO wait_times (ts, park, land, ride, wait_time, is_open) "
+            "VALUES (?, 'Disney Animal Kingdom', 'L', 'Expedition Everest', ?, ?)",
+            (self.monitor.utc_now().isoformat(), wait, aberta))
+        self.conn.commit()
+
+    def test_traz_vigia_com_fila_atual_do_banco(self):
+        self._vigia(limite=40)
+        self._fila(55)
+        payload = api_server.build_vigias_payload(self.conn, self.config)
+        vigia = payload["vigias"][0]
+        self.assertEqual(vigia["fila_agora"], 55)
+        self.assertEqual(vigia["alvo_min"], 40)
+        self.assertEqual(payload["attribution"], "Powered by Queue-Times.com")
+
+    def test_chat_id_nunca_aparece(self):
+        """Na web, identidade é o nome dado — ou o genérico. Nunca o id."""
+        self._vigia(chat="998877")
+        texto = str(api_server.build_vigias_payload(self.conn, self.config))
+        self.assertNotIn("998877", texto)
+        self.assertEqual(
+            api_server.build_vigias_payload(self.conn, self.config)["vigias"][0]["quem"],
+            "familiar")
+
+    def test_nome_registrado_aparece(self):
+        self._vigia(chat="4242")
+        self.conn.execute(
+            "INSERT INTO chat_names (chat_id, nome, updated_at) "
+            "VALUES ('4242', 'Ana', '2026-08-24T12:00:00')")
+        self.conn.commit()
+        payload = api_server.build_vigias_payload(self.conn, self.config)
+        self.assertEqual(payload["vigias"][0]["quem"], "Ana")
+
+    def test_sem_leitura_a_fila_e_None_nunca_zero(self):
+        """Regra 15 vale na API também."""
+        self._vigia()
+        vigia = api_server.build_vigias_payload(self.conn, self.config)["vigias"][0]
+        self.assertIsNone(vigia["fila_agora"])
+        self.assertIsNone(vigia["aberta"])
+
+    def test_modo_pct_sem_historico_nao_inventa_alvo(self):
+        """Regra 12: sem perfil não há 'típico', e o alvo fica None."""
+        self._vigia(limite=None, pct=50)
+        self._fila(30)
+        vigia = api_server.build_vigias_payload(self.conn, self.config)["vigias"][0]
+        self.assertEqual(vigia["limite_pct"], 50)
+        self.assertIsNone(vigia["alvo_min"])
+        self.assertIsNone(vigia["tipico_min"])
+
+    def test_sem_vigias_devolve_lista_vazia(self):
+        payload = api_server.build_vigias_payload(self.conn, self.config)
+        self.assertEqual(payload["vigias"], [])
+        self.assertEqual(payload["max_por_chat"], 5)
