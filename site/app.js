@@ -120,7 +120,15 @@ async function carregarPerto() {
     const dados = await api(`/perto?lat=${posicao[0]}&lon=${posicao[1]}`);
     el("subtitulo").textContent = dados.park;
     el("atribuicao").textContent = dados.attribution;
-    destino.replaceChildren(...dados.items.map(cartaoAtracao));
+    if (!dados.items.length) {
+      // Tela em branco é o pior desfecho: parece falha de rede. Os dois
+      // motivos de lista vazia são diferentes e o texto tem que dizer qual.
+      destino.replaceChildren(texto("p", "aviso", dados.abertas
+        ? "Nenhuma atração com fila utilizável agora — as leituras deste parque estão velhas ou sem coordenada."
+        : "Parque fechado agora: nenhuma atração aberta. O ranking volta na abertura."));
+    } else {
+      destino.replaceChildren(...dados.items.map(cartaoAtracao));
+    }
     marcaAtualizado();
   } catch (erro) {
     destino.replaceChildren(texto("div", "erro", mensagemDeErro(erro)));
@@ -143,11 +151,19 @@ function cartaoVigia(vigia) {
   } else {
     alvoTxt = `alvo ≤ ${vigia.limite_min} min`;
   }
-  const filaTxt = vigia.fila_agora !== null ? `fila agora ${vigia.fila_agora} min` : "fila agora —";
+  // Atração fechada publica wait_time 0, e "fila agora 0 min" convida a
+  // caminhar até um brinquedo que não está funcionando. Pior: com limite
+  // absoluto o 0 satisfaz qualquer alvo e a barra dizia "no alvo", prometendo
+  // um alerta que o Telegram nunca manda — `maybe_alertar_fila_baixa` exige
+  // is_open. A tela agora conta a mesma história que o alerta.
+  const fechada = vigia.aberta === false;
+  const filaTxt = fechada ? "fechada agora"
+    : vigia.fila_agora !== null ? `fila agora ${vigia.fila_agora} min`
+    : "fila agora —";
   corpo.appendChild(texto("p", "vigia-alvo", `${filaTxt} · ${alvoTxt}`));
 
   // Barra: quão perto a fila está do gatilho. 100% = dispararia agora.
-  if (vigia.fila_agora !== null && vigia.alvo_min !== null) {
+  if (!fechada && vigia.fila_agora !== null && vigia.alvo_min !== null) {
     const progresso = Math.max(0, Math.min(100,
       Math.round(100 * vigia.alvo_min / Math.max(vigia.fila_agora, vigia.alvo_min))));
     const pronta = vigia.fila_agora <= vigia.alvo_min;

@@ -84,7 +84,12 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `site/` — o frontend (filadisney.premercadosc.com): três estáticos sem
   framework, servidos pelo Caddy do Premercado com `/api/*` repassado à API —
   mesmo domínio, sem CORS. O `config.js` (token) não é versionado. Instalação e
-  virada de DNS em `docs/SITE.md`
+  virada de DNS em `docs/SITE.md`. O `app.js` é testado de verdade:
+  `tests/harness_site.js` monta um DOM mínimo e roda o arquivo no `node`, que
+  o runner do CI já tem — o teste é pulado onde não houver, nunca falso-verde.
+  Existe porque dois defeitos passaram por 469 testes de Python e só
+  apareceram no celular: painel em branco com o parque fechado e vigia
+  anunciando "0 min" em atração fechada
 - `api_server.py` — API HTTP privada que serve o site (`/perto`, `/vigias`, `/health`).
   Processo separado, container `fila-disney-api`, **somente leitura** no mesmo
   SQLite. Publicada pelo Caddy do Premercado em `api-filadisney.premercadosc.com`

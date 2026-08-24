@@ -240,11 +240,18 @@ def build_perto_payload(latitude: float, longitude: float, conn, config, park_id
             "total": total, "coordinate": list(coord) if coord else None,
             "route_source": source, "quality": scores.get(name),
         })
+    # Lista vazia tem dois motivos muito diferentes — parque fechado, ou aberto
+    # sem nada elegível (leitura velha, sem coordenada) — e o site precisa
+    # dizer qual. Sem isto ele só apagava a tela, que foi o que apareceu no
+    # celular às 19h55 de 24/08: cabeçalho com o nome do parque e nada abaixo.
+    abertas = sum(1 for _l, r in monitor.iter_rides(payload)
+                  if r.get("is_open") and not monitor.fila_paralela(r["name"]))
     # Regra 2 do projeto e exigência da API gratuita: a atribuição tem que estar
     # visível. Toda mensagem do Telegram já a carrega; o JSON do site não
     # carregava nenhuma, e é a superfície mais visível do projeto. Vai no payload
     # para que a página não dependa de alguém lembrar de escrevê-la no HTML.
-    return {"park": park_name, "items": items, "source": "fila-disney-vps",
+    return {"park": park_name, "items": items, "abertas": abertas,
+            "source": "fila-disney-vps",
             "attribution": "Powered by Queue-Times.com"}
 
 
