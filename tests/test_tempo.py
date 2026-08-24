@@ -424,3 +424,59 @@ class TestContextoNoMenores(BaseTeste):
             {"Expedition Everest - Legend of the Forbidden Mountain": 25},
             {"Expedition Everest": 4})
         self.assertIn("(~4 min de atração)", texto)
+
+
+class TestPlaceholderForaDoMenores(BaseTeste):
+    """Atração que nunca teve fila não é oportunidade — é placeholder.
+
+    Primeiro teste de mesa, 24/08/2026: o /menores do Animal Kingdom gastou as
+    dez linhas com trilha e show a 0 min (Tree of Life: 1.226 leituras, máximo
+    0). Mesmo padrão da regra 10, mas o nome não denuncia — quem decide é o
+    histórico, e por isso o filtro é medido, não uma lista de nomes.
+    """
+
+    PARQUE = "Disney Animal Kingdom"
+
+    def _historico(self, ride, leituras, maximo):
+        ts = self.monitor.utc_now().isoformat()
+        self.conn.executemany(
+            "INSERT INTO wait_times (ts, park, land, ride, wait_time, is_open) "
+            "VALUES (?, ?, ?, ?, ?, 1)",
+            [(ts, self.PARQUE, "L", ride, maximo if i == 0 else 0)
+             for i in range(leituras)])
+        self.conn.commit()
+
+    def _menores(self, filas):
+        payload = {"lands": [{"name": "L", "rides": [
+            {"id": i, "name": n, "is_open": True, "wait_time": w,
+             "last_updated": self.monitor.utc_now().isoformat()}
+            for i, (n, w) in enumerate(filas.items())]}]}
+        return self.monitor.format_menores(self.PARQUE, payload, self.config,
+                                           10, self.conn)
+
+    def test_maximo_zero_em_amostra_grande_sai_do_ranking(self):
+        self._historico("Tree of Life", 600, 0)
+        self._historico("Kali River Rapids", 600, 65)
+        texto = self._menores({"Tree of Life": 0, "Kali River Rapids": 20})
+        self.assertNotIn("Tree of Life", texto)
+        self.assertIn("Kali River Rapids", texto)
+
+    def test_atracao_nova_com_poucas_leituras_fica(self):
+        """Máximo 0 com amostra pequena não prova placeholder — pode ser
+        atração recém-aberta, e escondê-la puniria a novidade."""
+        self._historico("Brinquedo Novo", 50, 0)
+        self.assertIn("Brinquedo Novo", self._menores({"Brinquedo Novo": 0}))
+
+    def test_quem_ja_teve_fila_fica_mesmo_a_zero_agora(self):
+        """Gorilla Falls a 0 min AGORA é oportunidade real: o máximo dela é 5."""
+        self._historico("Gorilla Falls Exploration Trail", 600, 5)
+        self.assertIn("Gorilla Falls",
+                      self._menores({"Gorilla Falls Exploration Trail": 0}))
+
+    def test_sem_conexao_nao_filtra_nada(self):
+        """O formatador sem conn (ensaios) degrada para o comportamento antigo."""
+        payload = {"lands": [{"name": "L", "rides": [
+            {"id": 1, "name": "Tree of Life", "is_open": True, "wait_time": 0,
+             "last_updated": self.monitor.utc_now().isoformat()}]}]}
+        texto = self.monitor.format_menores(self.PARQUE, payload, self.config, 10)
+        self.assertIn("Tree of Life", texto)
