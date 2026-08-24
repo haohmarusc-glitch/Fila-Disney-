@@ -104,7 +104,9 @@ PARQUES_WIKI = {
 
 def parametros_do_infobox(wikitexto: str) -> dict[str, str]:
     """{chave: valor} do primeiro infobox. Chaves em minúsculo, sem espaço."""
-    inicio = wikitexto.find("{{Infobox")
+    # Busca sem caso: a Wikipédia aceita {{infobox}} e {{Infobox}}, e o
+    # find() sensível a maiúscula devolvia {} para os artigos em minúscula.
+    inicio = wikitexto.lower().find("{{infobox")
     if inicio < 0:
         return {}
     profundidade, fim = 0, len(wikitexto)
@@ -134,7 +136,12 @@ def duracao_para_o_parque(wikitexto: str, parque: str) -> int | None:
     instalacoes = {m.group(1): valor for chave, valor in params.items()
                    if (m := re.fullmatch(r"park(\d*)", chave)) and valor}
     if len(instalacoes) <= 1:
-        return minutos_do_texto(params.get("duration", ""))
+        # Sem segunda instalação não há ambiguidade possível, então vale o
+        # texto inteiro como rede: `Na'vi River Journey` e `Kali River Rapids`
+        # traziam duração pela varredura antiga e a perderam quando o parser
+        # passou a olhar só o primeiro infobox. Um parque, um número.
+        return (minutos_do_texto(params.get("duration", ""))
+                or minutos_do_texto(campo_duration(wikitexto) or ""))
 
     esperados = PARQUES_WIKI.get(parque, ())
     for indice, nome in instalacoes.items():
@@ -152,7 +159,9 @@ def duracao_para_o_parque(wikitexto: str, parque: str) -> int | None:
 
 def campo_duration(wikitexto: str) -> str | None:
     """Extrai o valor de `duration` do infobox, parando na próxima chave."""
-    casado = re.search(r"\|\s*duration\s*=\s*(.+?)(?=\n\s*\||\n\}\})",
+    # O fim do valor é a próxima chave, o fecho do template — ou o fim do
+    # texto, que faltava e fazia o campo sumir quando era o último do infobox.
+    casado = re.search(r"\|\s*duration\s*=\s*(.+?)(?=\n\s*\||\n\}\}|\Z)",
                        wikitexto, re.S | re.I)
     return casado.group(1).strip() if casado else None
 
