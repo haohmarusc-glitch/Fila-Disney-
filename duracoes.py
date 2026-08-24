@@ -73,9 +73,25 @@ PAGINAS = {
     "Universal Epic Universe": "/epic-universe/attractions/duration",
 }
 
-# "12. Mario Kart: Bowser's Challenge in SUPER NINTENDO WORLD"
+# A página numera as atrações e põe rótulo e valor em LINHAS SEPARADAS. Medido
+# em 24/08/2026, no Magic Kingdom:
+#
+#     '4. Big Thunder Mountain Railroad'
+#     'in Frontierland'
+#     '(4.5/5 · 6,633 reviews)'
+#     'Tame, western-mining-themed roller coaster'
+#     'Duration:'
+#     '7 min'
+#
+# A primeira versão deste parser esperava "Duration: 7 min" grudado e voltou
+# ZERO nos sete parques. O rótulo solto não tem número e o valor solto não tem
+# rótulo — nenhum dos dois casava sozinho.
 _ITEM = re.compile(r"^\d+\.\s+(.+?)(?:\s+in\s+([A-Z][^a-z]*))?$")
-_DURACAO = re.compile(r"Duration:\s*(\d+)\s*(min|hr)", re.I)
+_ROTULO = re.compile(r"^duration:?$", re.I)
+_VALOR = re.compile(r"^(\d+)\s*(min|minutes?|hr|hours?)\b", re.I)
+# Forma grudada: não é a que o site usa hoje, mas custa uma linha aceitar as
+# duas e evita voltar aqui se alguma das sete páginas divergir.
+_DURACAO_JUNTA = re.compile(r"Duration:\s*(\d+)\s*(min|minutes?|hr|hours?)\b", re.I)
 
 
 class _SoTexto(HTMLParser):
@@ -108,15 +124,28 @@ def texto_visivel(html: str) -> list[str]:
 
 
 def minutos(quantidade: str, unidade: str) -> int:
-    return int(quantidade) * (60 if unidade.lower() == "hr" else 1)
+    """Minutos. Hora vira 60 — o Bibbidi Bobbidi Boutique aparece como 45 min,
+    mas nada garante que nenhuma página use `1 hr`."""
+    return int(quantidade) * (60 if unidade.lower().startswith("h") else 1)
 
 
 def duracoes_da_pagina(html: str) -> dict[str, int]:
-    """{nome no site: minutos}. Nome sem duração logo abaixo é descartado."""
+    """{nome no site: minutos}. Nome sem duração até a próxima atração some."""
     encontradas = {}
     atual = None
+    esperando_valor = False
     for linha in texto_visivel(html):
-        casado = _DURACAO.search(linha)
+        if esperando_valor:
+            esperando_valor = False
+            casado = _VALOR.match(linha)
+            if casado and atual:
+                encontradas[atual] = minutos(*casado.groups())
+                atual = None
+            continue
+        if _ROTULO.match(linha):
+            esperando_valor = True
+            continue
+        casado = _DURACAO_JUNTA.search(linha)
         if casado and atual:
             encontradas[atual] = minutos(*casado.groups())
             atual = None
