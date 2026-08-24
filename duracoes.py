@@ -1,0 +1,187 @@
+"""Enriquecimento de durações — NÃO é etapa obrigatória do sistema.
+
+O banco de durações é o duracoes.json, versionado no repositório. O bot lê só
+ele; a Wikipédia existe para PREENCHER esse arquivo, não para servi-lo. Se a
+Wikipédia estiver fora, o que já está no duracoes.json continua valendo — só não
+ganha duração nova. Atração sem entrada aparece sem duração, nunca com
+estimativa (regra 12).
+
+A Queue-Times não publica duração: entrega `id`, `name`, `is_open`, `wait_time`
+e `last_updated`, e nada mais. A themeparks.wiki também não — conferido em
+24/08/2026, o schema de entidade tem só entityType, externalId, id, location,
+name, parentId e slug. Sobrou a Wikipédia, cujo infobox de atração traz
+`duration`.
+
+Uso:
+    docker compose exec fila-disney python duracoes.py --revisar   # só relatório
+    docker compose exec fila-disney python duracoes.py             # grava
+    docker compose exec fila-disney python duracoes.py --sobrescrever
+
+Cada duração encontrada vem com a página de origem no relatório, para dar para
+conferir na mão antes de aceitar. O script nunca inventa: atração cuja página
+não tenha `duration` no infobox fica de fora e é listada no fim.
+"""
+import argparse
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+import monitor
+
+WIKI_API = "https://en.wikipedia.org/w/api.php"
+# A Wikipédia pede uso moderado e User-Agent identificável. São ~54 atrações,
+# duas chamadas cada: com meio segundo entre elas a execução leva ~1 min e não
+# encosta em limite nenhum.
+PAUSA_ENTRE_CHAMADAS_S = 0.5
+DURACOES_PATH = monitor.DURACOES_PATH
+
+# Formatos que aparecem de verdade no infobox: "3 minutes", "2:30",
+# "1 minute, 30 seconds", "4 minutes 30 seconds", "90 seconds".
+_MIN_SEG = re.compile(r"(\d+)\s*(?:minutes?|min)\b[^0-9]{0,12}?(\d+)\s*(?:seconds?|sec)\b", re.I)
+_MM_SS = re.compile(r"\b(\d{1,3}):([0-5]\d)\b")
+_SO_MIN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:minutes?|min)\b", re.I)
+_SO_SEG = re.compile(r"(\d+)\s*(?:seconds?|sec)\b", re.I)
+
+
+def minutos_do_texto(texto: str) -> int | None:
+    """Converte o campo `duration` do infobox em minutos inteiros.
+
+    Devolve None quando não reconhece, e isso é melhor que chutar: atração
+    sem duração aparece sem duração, nunca com estimativa (regra 12).
+    """
+    if not texto:
+        return None
+    # `{{convert|3|min}}` e `{{nowrap|2:30}}` são comuns no infobox. Trocar
+    # chave e barra por espaço deixa os números legíveis pelos padrões abaixo.
+    texto = re.sub(r"[{}|]", " ", texto)
+    texto = re.sub(r"<[^>]+>", " ", texto)
+    texto = texto.replace("[[", " ").replace("]]", " ").replace("'", " ")
+    casado = _MIN_SEG.search(texto)
+    if casado:
+        segundos = int(casado.group(1)) * 60 + int(casado.group(2))
+    elif _MM_SS.search(texto):
+        m, s = _MM_SS.search(texto).groups()
+        segundos = int(m) * 60 + int(s)
+    elif _SO_MIN.search(texto):
+        segundos = float(_SO_MIN.search(texto).group(1)) * 60
+    elif _SO_SEG.search(texto):
+        segundos = int(_SO_SEG.search(texto).group(1))
+    else:
+        return None
+    if segundos <= 0:
+        return None
+    # Meio a meio arredonda para CIMA. O round() do Python usa arredondamento
+    # bancário: round(2.5) devolve 2, e "2:30" viraria 2 min. Subestimar o
+    # compromisso de tempo é o erro que atrapalha quem está decidindo se cabe
+    # antes de fechar.
+    return max(1, int(segundos / 60 + 0.5))
+
+
+def campo_duration(wikitexto: str) -> str | None:
+    """Extrai o valor de `duration` do infobox, parando na próxima chave."""
+    casado = re.search(r"\|\s*duration\s*=\s*(.+?)(?=\n\s*\||\n\}\})",
+                       wikitexto, re.S | re.I)
+    return casado.group(1).strip() if casado else None
+
+
+def buscar_pagina(nome: str) -> str | None:
+    """Título da página mais provável para esta atração, ou None.
+
+    O título tem que compartilhar o nome da atração depois de normalizado — sem
+    isso a busca devolveria o artigo do filme, do personagem ou de uma atração
+    homônima em outro parque, e a duração entraria errada sem ninguém notar.
+    """
+    dados = monitor.get_json(
+        WIKI_API,
+        params={"action": "query", "list": "search", "srlimit": 5,
+                "srsearch": f"{nome} attraction", "format": "json"},
+    )
+    alvo = monitor.normalizar_nome_api(nome)
+    for item in dados.get("query", {}).get("search", []):
+        titulo = monitor.normalizar_nome_api(item["title"])
+        if titulo in alvo or alvo in titulo:
+            return item["title"]
+    return None
+
+
+def duracao_da_pagina(titulo: str) -> int | None:
+    dados = monitor.get_json(
+        WIKI_API,
+        params={"action": "query", "prop": "revisions", "rvprop": "content",
+                "rvslots": "main", "titles": titulo, "format": "json"},
+    )
+    for pagina in dados.get("query", {}).get("pages", {}).values():
+        try:
+            texto = pagina["revisions"][0]["slots"]["main"]["*"]
+        except (KeyError, IndexError, TypeError):
+            continue
+        return minutos_do_texto(campo_duration(texto) or "")
+    return None
+
+
+def carregar_arquivo() -> dict:
+    try:
+        with open(DURACOES_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"rides": {}}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--revisar", action="store_true", help="só relatório, não grava")
+    ap.add_argument("--sobrescrever", action="store_true",
+                    help="substitui durações já preenchidas")
+    args = ap.parse_args()
+
+    config = monitor.load_config()
+    dados = carregar_arquivo()
+    dados.setdefault("rides", {})
+    achadas, faltando = 0, []
+
+    for parque, cfg in config["parks"].items():
+        atuais = dados["rides"].setdefault(parque, {})
+        print(f"\n{parque}")
+        for atracao in cfg.get("attractions", {}):
+            if atracao in atuais and not args.sobrescrever:
+                print(f"  ✓ {atracao} — já tem {atuais[atracao]} min")
+                continue
+            try:
+                titulo = buscar_pagina(atracao)
+                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
+                minutos = duracao_da_pagina(titulo) if titulo else None
+                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
+            except Exception as exc:  # noqa: BLE001 — falha de rede não derruba o resto
+                print(f"  ! {atracao} — falha na consulta ({type(exc).__name__})")
+                faltando.append((parque, atracao, "falha de rede"))
+                continue
+            if minutos is None:
+                motivo = "sem infobox duration" if titulo else "página não encontrada"
+                print(f"  – {atracao} — {motivo}")
+                faltando.append((parque, atracao, motivo))
+                continue
+            atuais[atracao] = minutos
+            achadas += 1
+            print(f"  + {atracao} — {minutos} min (via '{titulo}')")
+
+    print(f"\n{achadas} duração(ões) nova(s); {len(faltando)} sem dado.")
+    if faltando:
+        print("Ficam SEM duração na tela, que é o comportamento correto:")
+        for parque, atracao, motivo in faltando:
+            print(f"  {parque} / {atracao} — {motivo}")
+
+    if args.revisar:
+        print("\n--revisar: nada gravado.")
+        return 0
+    Path(DURACOES_PATH).write_text(
+        json.dumps(dados, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"\nGravado em {DURACOES_PATH}")
+    print("Este arquivo é versionado: rode `git diff duracoes.json` e confira "
+          "antes de commitar.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

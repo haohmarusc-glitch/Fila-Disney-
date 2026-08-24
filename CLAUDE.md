@@ -82,6 +82,8 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `watchlist.json` — config declarativa (parques, atrações, thresholds, dias)
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
 - `coords.py` — script avulso (roda uma vez) que busca coordenadas no OpenStreetMap
+- `duracoes.py` — script avulso (roda uma vez) que busca duração no infobox da
+  Wikipédia. A Queue-Times e a themeparks.wiki não publicam esse dado
 - `coords.json` — coordenadas por atração; opcional, só o `/perto` depende dele
 - `duracoes.json` — duração de cada atração em minutos; opcional e curado à
   mão, porque a API não publica isso. Ausente ou incompleto = atração sem
