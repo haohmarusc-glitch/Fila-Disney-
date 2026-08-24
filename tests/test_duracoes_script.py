@@ -360,3 +360,76 @@ class TestCamposCrus(unittest.TestCase):
     def test_pagina_ausente_devolve_vazio(self):
         self.resposta = {"query": {"pages": {"-1": {"missing": ""}}}}
         self.assertEqual(duracoes.campos_crus("Inexistente", "Epcot"), {})
+
+
+class TestCampoVazioNaoVazaParaOSeguinte(unittest.TestCase):
+    """`| duration =` vazio engolia o campo de baixo.
+
+    Visto de verdade no Space Mountain, no Doctor Doom's Fearfall e no Monsters
+    Unchained: os três devolviam a linha do `restriction_in`. Nenhum virou
+    número errado por sorte — nenhum trazia "minutes" — mas a próxima chave a
+    cair ali pode trazer.
+    """
+
+    def test_duration_vazio_devolve_None(self):
+        texto = ("{{Infobox\n| duration = \n"
+                 "| restriction_in      = 52\n| opened = 1999\n}}")
+        self.assertIsNone(duracoes.campo_duration(texto))
+
+    def test_duration_vazio_com_comentario_embaixo(self):
+        texto = ("{{Infobox\n| duration =\n"
+                 "| restriction_ft = <!--Só números-->\n}}")
+        self.assertIsNone(duracoes.campo_duration(texto))
+
+    def test_duration_preenchido_continua_lendo(self):
+        texto = "{{Infobox\n| duration = 3 minutes\n| opened = 1999\n}}"
+        self.assertEqual(duracoes.campo_duration(texto), "3 minutes")
+
+    def test_valor_de_varias_linhas_continua_inteiro(self):
+        """O Pirates traz os quatro parques num campo só, separados por <br />."""
+        texto = ("{{Infobox\n| duration = '''Disneyland'''<br />15:30 minutes\n"
+                 "<br />'''Magic Kingdom'''<br />8:30 minutes\n| opened = 1967\n}}")
+        self.assertIn("Magic Kingdom", duracoes.campo_duration(texto))
+
+
+class TestNumeroPelado(unittest.TestCase):
+    """O MEN IN BLACK traz `duration = 5.00` — sem unidade nenhuma."""
+
+    def test_numero_sozinho_e_minuto(self):
+        self.assertEqual(duracoes.minutos_do_texto("5.00"), 5)
+        self.assertEqual(duracoes.minutos_do_texto(" 3 "), 3)
+
+    def test_numero_no_meio_de_frase_nao_conta(self):
+        """Só o campo INTEIRO. Solto no meio pode ser altura, ano ou capacidade."""
+        self.assertIsNone(duracoes.minutos_do_texto("52 inches"))
+        self.assertIsNone(duracoes.minutos_do_texto("opened in 1999"))
+
+
+class TestPaginaFixada(unittest.TestCase):
+    """Busca por nome caía no artigo do filme Tron e no Space Mountain genérico."""
+
+    def setUp(self):
+        original = duracoes.monitor.get_json
+        self.addCleanup(setattr, duracoes.monitor, "get_json", original)
+
+        def nunca_chamado(url, *, tentativas=3):
+            raise AssertionError(f"não devia consultar a API: {url}")
+
+        duracoes.monitor.get_json = nunca_chamado
+
+    def test_titulo_fixado_dispensa_a_busca(self):
+        self.assertEqual(
+            duracoes.buscar_pagina("Space Mountain", "Disney Magic Kingdom"),
+            "Space Mountain (Magic Kingdom)")
+        self.assertEqual(
+            duracoes.buscar_pagina("TRON Lightcycle / Run", "Disney Magic Kingdom"),
+            "Tron Lightcycle Power Run")
+
+    def test_toda_pagina_fixada_aponta_para_atracao_da_watclist(self):
+        """Nome errado aqui vira busca normal em silêncio, sem ninguém notar."""
+        import monitor as m
+        watchlist = m.load_config()["parks"]
+        for (parque, atracao) in duracoes.PAGINAS_WIKI:
+            with self.subTest(atracao=atracao):
+                self.assertIn(parque, watchlist)
+                self.assertIn(atracao, watchlist[parque]["attractions"])
