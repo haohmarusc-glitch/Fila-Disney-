@@ -118,6 +118,63 @@ class TestChamadaHTTP(unittest.TestCase):
         self.assertIsNone(duracoes.duracao_da_pagina("Qualquer"))
 
 
+class TestArtigoDeVariosParques(unittest.TestCase):
+    """Atração que existe em vários resorts tem UM artigo cobrindo todos.
+
+    Medido em 24/08/2026: o artigo do Pirates devolveu 16 min, que é o da
+    Disneyland — o do Magic Kingdom é bem mais curto. Duração do parque errado é
+    pior que duração nenhuma: parece certa, ninguém desconfia, e entra na conta
+    de "cabe antes de fechar".
+    """
+
+    MULTI = """{{Infobox attraction
+| name = Pirates of the Caribbean
+| park = Disneyland Park
+| park2 = Magic Kingdom
+| duration = 15:30
+}}"""
+    UNICO = """{{Infobox attraction
+| name = Test Track
+| park = Epcot
+| duration = 5 minutes
+}}"""
+
+    def setUp(self):
+        self.original = duracoes.monitor.get_json
+        self.addCleanup(setattr, duracoes.monitor, "get_json", self.original)
+
+    def responder(self, wikitexto):
+        def falso(url, *, tentativas=3):
+            return {"query": {"pages": {"1": {"revisions": [
+                {"slots": {"main": {"*": wikitexto}}}]}}}}
+        duracoes.monitor.get_json = falso
+
+    def test_dois_resorts_no_infobox_recusam_a_duracao(self):
+        self.responder(self.MULTI)
+        with self.assertRaises(duracoes.Ambigua):
+            duracoes.duracao_da_pagina("Pirates of the Caribbean (attraction)")
+
+    def test_um_resort_passa(self):
+        self.responder(self.UNICO)
+        self.assertEqual(duracoes.duracao_da_pagina("Test Track"), 5)
+
+    def test_a_excecao_diz_quais_parques(self):
+        self.responder(self.MULTI)
+        try:
+            duracoes.duracao_da_pagina("Pirates of the Caribbean (attraction)")
+        except duracoes.Ambigua as exc:
+            self.assertIn("disneyland park", exc.args[0])
+            self.assertIn("magic kingdom", exc.args[0])
+        else:
+            self.fail("devia ter recusado")
+
+    def test_so_olha_o_infobox_nao_o_artigo_inteiro(self):
+        """O corpo do texto cita outros parques o tempo todo; o infobox, não."""
+        texto = self.UNICO + "\n\nUma atração parecida existe na Disneyland Paris."
+        self.responder(texto)
+        self.assertEqual(duracoes.duracao_da_pagina("Test Track"), 5)
+
+
 class TestCampoDuration(unittest.TestCase):
     INFOBOX = """{{Infobox attraction
 | name = Space Mountain
