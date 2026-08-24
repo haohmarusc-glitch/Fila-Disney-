@@ -189,6 +189,41 @@ class TestArtigoDeVariosParques(unittest.TestCase):
         self.assertEqual(set(duracoes.PARQUES_WIKI), set(watchlist["parks"]))
 
 
+class TestUmParqueUsaOTextoInteiro(unittest.TestCase):
+    """Sem segunda instalação não há ambiguidade, então o texto todo vale.
+
+    Trocar a varredura por um parser de infobox fez `Na'vi River Journey` e
+    `Kali River Rapids` perderem a duração que já tinham — regressão medida na
+    execução de 24/08/2026, quando as duas passaram de `+ 6 min` e `+ 5 min`
+    para "sem infobox duration".
+    """
+
+    def test_infobox_em_minusculo(self):
+        """A Wikipédia aceita {{infobox}} e {{Infobox}}; o find era sensível."""
+        texto = ("{{infobox attraction\n| park = Disney's Animal Kingdom\n"
+                 "| duration = 6 minutes\n}}")
+        self.assertEqual(
+            duracoes.duracao_para_o_parque(texto, "Disney Animal Kingdom"), 6)
+
+    def test_duration_fora_do_primeiro_infobox(self):
+        texto = ("{{Infobox film\n| name = X\n}}\n"
+                 "{{Infobox attraction\n| park = Epcot\n| duration = 5 minutes\n}}")
+        self.assertEqual(duracoes.duracao_para_o_parque(texto, "Epcot"), 5)
+
+    def test_duration_como_ultimo_campo(self):
+        """Sem o fim-de-texto no lookahead, o último campo do infobox sumia."""
+        self.assertEqual(
+            duracoes.campo_duration("{{Infobox\n| name = X\n| duration = 4 minutes"),
+            "4 minutes")
+
+    def test_a_rede_nao_vale_para_artigo_de_varios_parques(self):
+        """O texto inteiro só entra quando não há como confundir de parque."""
+        texto = ("{{Infobox attraction\n| park = Disneyland Park\n"
+                 "| duration = 15:30\n| park2 = Magic Kingdom\n}}")
+        with self.assertRaises(duracoes.Ambigua):
+            duracoes.duracao_para_o_parque(texto, "Disney Magic Kingdom")
+
+
 class TestParametrosDoInfobox(unittest.TestCase):
     def test_le_chave_e_valor(self):
         params = duracoes.parametros_do_infobox(
