@@ -36,7 +36,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     em que foi gerado, e um watchdog que recebe batida atrasada é pior que um que
     não recebe nada. Exceção nova só existe se entrar nesta regra.
 12. Distância/tempo a pé só sai de coordenada real do `coords.json`, e duração de
-    atração só sai do `duracoes.json`. Sem o dado, a atração aparece sem a
+    atração só sai do `duracoes.json`. O arquivo está em 31 de 54 e as 23 que faltam
+    são ausência **medida**: a Wikipédia não publica ou não separa por parque, e o
+    Wikidata tem o item por instalação mas com o P2047 vazio (varrido em 24/08/2026,
+    números em `duracoes.json:_fontes_esgotadas`). Não vale refazer a busca — se
+    alguma fonte for preenchida, o assunto reabre. Sem o dado, a atração aparece sem a
     estimativa — nunca com número inventado. Duração **não** entra em soma que
     ordena nada: fila e caminhada são custo, duração é o que se quer, e somá-la
     poria o Kilimanjaro Safaris (22 min de passeio) atrás de um brinquedo de 90
