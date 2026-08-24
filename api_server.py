@@ -244,8 +244,17 @@ def build_perto_payload(latitude: float, longitude: float, conn, config, park_id
     # sem nada elegível (leitura velha, sem coordenada) — e o site precisa
     # dizer qual. Sem isto ele só apagava a tela, que foi o que apareceu no
     # celular às 19h55 de 24/08: cabeçalho com o nome do parque e nada abaixo.
+    # Descontar as placeholder é o que faz o número dizer a verdade: medido em
+    # 24/08 às 19h ET, com o Animal Kingdom fechado, a Queue-Times ainda
+    # publicava 4 "abertas" — Festival of the Lion King, Feathered Friends,
+    # Finding Nemo e Tree of Life. Todas com leitura fresca e wait 0, porque
+    # show e marco não têm fila. Sem o desconto o site diria "leituras velhas"
+    # num parque simplesmente fechado. Mesmo detector do /menores: quem decide
+    # é o histórico, não uma lista de nomes.
+    placeholders = monitor.atracoes_sem_fila_medida(conn, park_name)
     abertas = sum(1 for _l, r in monitor.iter_rides(payload)
-                  if r.get("is_open") and not monitor.fila_paralela(r["name"]))
+                  if r.get("is_open") and not monitor.fila_paralela(r["name"])
+                  and r["name"] not in placeholders)
     # Regra 2 do projeto e exigência da API gratuita: a atribuição tem que estar
     # visível. Toda mensagem do Telegram já a carrega; o JSON do site não
     # carregava nenhuma, e é a superfície mais visível do projeto. Vai no payload

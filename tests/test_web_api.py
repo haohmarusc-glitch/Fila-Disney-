@@ -1,4 +1,5 @@
 import http.client
+import sqlite3
 import threading
 import unittest
 import sys
@@ -9,6 +10,7 @@ from tests.apoio import _requests
 
 sys.modules.setdefault("requests", _requests)
 import api_server
+import monitor
 
 
 class TestParametrosAPI(unittest.TestCase):
@@ -19,6 +21,22 @@ class TestParametrosAPI(unittest.TestCase):
         for query in ({}, {"lat": ["inf"]}, {"lat": ["91"]}):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 api_server._number(query, "lat", -90, 90)
+
+
+def banco(leituras=()):
+    """SQLite em memória com o mínimo que o /perto consulta.
+
+    `leituras` é uma lista de (park, ride, wait_time) repetida quantas vezes
+    for preciso — o detector de placeholder exige amostra grande, então os
+    testes que dependem dele multiplicam a linha.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE wait_times (ts TEXT, park TEXT, land TEXT, "
+                 "ride TEXT, wait_time INTEGER, is_open INTEGER)")
+    conn.executemany(
+        "INSERT INTO wait_times (ts, park, land, ride, wait_time, is_open) "
+        "VALUES ('2026-08-24T12:00:00+00:00', ?, 'Land', ?, ?, 1)", leituras)
+    return conn
 
 
 class TestPayloadPerto(unittest.TestCase):
@@ -32,7 +50,7 @@ class TestPayloadPerto(unittest.TestCase):
     @patch("api_server.localizacao.parque_mais_proximo", return_value="Epcot")
     def test_devolve_json_estruturado(self, _park, _fetch, ranking, _score):
         ranking.return_value = [(17, 10, 7, 500.4, "Test Track", (1.0, 2.0), "google", None)]
-        result = api_server.build_perto_payload(1, 2, object(), {}, {"Epcot": 5}, {})
+        result = api_server.build_perto_payload(1, 2, banco(), {}, {"Epcot": 5}, {})
         self.assertEqual(result["park"], "Epcot")
         self.assertEqual(result["items"][0]["total"], 17)
         self.assertEqual(result["items"][0]["route_source"], "google")
@@ -43,13 +61,13 @@ class TestPayloadPerto(unittest.TestCase):
     @patch("api_server.localizacao.parque_mais_proximo", return_value="Epcot")
     def test_payload_carrega_a_atribuicao(self, *_mocks):
         """Regra 2: a atribuição é exigência da API gratuita, não enfeite."""
-        result = api_server.build_perto_payload(1, 2, object(), {}, {"Epcot": 5}, {})
+        result = api_server.build_perto_payload(1, 2, banco(), {}, {"Epcot": 5}, {})
         self.assertEqual(result["attribution"], "Powered by Queue-Times.com")
 
     @patch("api_server.localizacao.parque_mais_proximo", return_value=None)
     def test_recusa_local_fora_dos_parques(self, _park):
         with self.assertRaisesRegex(ValueError, "fora dos parques"):
-            api_server.build_perto_payload(0, 0, object(), {}, {}, {})
+            api_server.build_perto_payload(0, 0, banco(), {}, {}, {})
 
     @patch("api_server.localizacao.com_score", return_value=[])
     @patch("api_server.localizacao._ranking_detalhado", return_value=[])
@@ -64,7 +82,7 @@ class TestPayloadPerto(unittest.TestCase):
             {"name": "Remy's Single Rider", "is_open": True, "wait_time": 0},
         ]}]}
         with patch("api_server.monitor.fetch_queue_times", return_value=payload):
-            result = api_server.build_perto_payload(1, 2, object(), {}, {"Epcot": 5}, {})
+            result = api_server.build_perto_payload(1, 2, banco(), {}, {"Epcot": 5}, {})
         self.assertEqual(result["items"], [])
         # 1: a fechada não conta e a fila paralela não existe para o usuário
         # (regra 10), senão o site diria "parque aberto" com tudo fechado.
@@ -79,8 +97,50 @@ class TestPayloadPerto(unittest.TestCase):
             {"name": "Soarin'", "is_open": False, "wait_time": 0},
         ]}]}
         with patch("api_server.monitor.fetch_queue_times", return_value=payload):
-            result = api_server.build_perto_payload(1, 2, object(), {}, {"Epcot": 5}, {})
+            result = api_server.build_perto_payload(1, 2, banco(), {}, {"Epcot": 5}, {})
         self.assertEqual(result["abertas"], 0)
+
+    @patch("api_server.localizacao.com_score", return_value=[])
+    @patch("api_server.localizacao._ranking_detalhado", return_value=[])
+    @patch("api_server.localizacao.parque_mais_proximo",
+           return_value="Disney Animal Kingdom")
+    def test_show_de_fila_zero_nao_conta_como_parque_aberto(self, *_mocks):
+        """O caso medido em 24/08 às 19h ET: o Animal Kingdom estava fechado e
+        a Queue-Times publicava 4 atrações abertas — Festival of the Lion King,
+        Feathered Friends, Finding Nemo e Tree of Life. Leitura fresca, wait 0,
+        porque show e marco não têm fila. Sem descontar o placeholder o site
+        diria "leituras velhas" num parque simplesmente fechado.
+        """
+        shows = ["Festival of the Lion King", "Feathered Friends in Flight!",
+                 "Finding Nemo: The Big Blue... and Beyond!", "Tree of Life"]
+        # Amostra grande e máxima 0: é assim que o histórico denuncia o
+        # placeholder, e é o MESMO detector que o /menores usa.
+        leituras = [("Disney Animal Kingdom", nome, 0)
+                    for nome in shows
+                    for _ in range(monitor.MIN_LEITURAS_PLACEHOLDER)]
+        payload = {"lands": [{"rides": [
+            {"name": nome, "is_open": True, "wait_time": 0} for nome in shows]}]}
+        with patch("api_server.monitor.fetch_queue_times", return_value=payload):
+            result = api_server.build_perto_payload(
+                1, 2, banco(leituras), {}, {"Disney Animal Kingdom": 8}, {})
+        self.assertEqual(result["abertas"], 0, "parque fechado tem zero aberta")
+
+    @patch("api_server.localizacao.com_score", return_value=[])
+    @patch("api_server.localizacao._ranking_detalhado", return_value=[])
+    @patch("api_server.localizacao.parque_mais_proximo",
+           return_value="Disney Animal Kingdom")
+    def test_atracao_que_um_dia_publica_fila_volta_a_contar(self, *_mocks):
+        """O detector é histórico, não lista de nomes: se o MAX sobe de 0, a
+        atração deixa de ser placeholder sozinha."""
+        leituras = [("Disney Animal Kingdom", "Festival of the Lion King", 0)
+                    for _ in range(monitor.MIN_LEITURAS_PLACEHOLDER)]
+        leituras.append(("Disney Animal Kingdom", "Festival of the Lion King", 25))
+        payload = {"lands": [{"rides": [
+            {"name": "Festival of the Lion King", "is_open": True, "wait_time": 10}]}]}
+        with patch("api_server.monitor.fetch_queue_times", return_value=payload):
+            result = api_server.build_perto_payload(
+                1, 2, banco(leituras), {}, {"Disney Animal Kingdom": 8}, {})
+        self.assertEqual(result["abertas"], 1)
 
 
 class TestFreioDoToken(unittest.TestCase):
