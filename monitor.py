@@ -424,6 +424,17 @@ def get_json(url: str, *, tentativas: int = HTTP_TENTATIVAS) -> object:
     return requisicao_json("GET", url, tentativas=tentativas)
 
 
+def get_texto(url: str, *, tentativas: int = HTTP_TENTATIVAS) -> str:
+    """GET que devolve texto, com o MESMO retry e backoff do `get_json`.
+
+    A regra 11 existe pelo retry, não pelo formato: o que ela impede é chamada
+    externa sem backoff nem tratamento de 429. Página HTML não passa pelo
+    `get_json` porque não é JSON, e criar um `requests.get` solto para ela seria
+    furar a regra por um detalhe de content-type. Este é o irmão, não a exceção.
+    """
+    return requisicao_json("GET", url, tentativas=tentativas, texto=True)
+
+
 def post_json(url: str, dados: dict, *, tentativas: int = HTTP_TENTATIVAS,
               espera_minima: float = 0) -> object:
     """POST form-encoded. A Overpass exige POST para consulta e recusa GET longo."""
@@ -442,7 +453,7 @@ def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
                     json_dados: dict | None = None,
                     cabecalhos_extras: dict | None = None,
                     tentativas: int = HTTP_TENTATIVAS,
-                    espera_minima: float = 0) -> object:
+                    espera_minima: float = 0, texto: bool = False) -> object:
     """Núcleo HTTP com retry e backoff.
 
     Um ciclo perdido é histórico perdido para sempre, então vale insistir um
@@ -476,7 +487,7 @@ def requisicao_json(metodo: str, url: str, *, dados: dict | None = None,
             # de um `if 400 <= status < 500` — não mudava nada, porque a linha
             # seguinte levanta do mesmo jeito.
             resp.raise_for_status()
-            return resp.json()
+            return resp.text if texto else resp.json()
         except (requests.RequestException, ValueError) as exc:
             ultimo_erro = exc
             status = getattr(getattr(exc, "response", None), "status_code", None)
