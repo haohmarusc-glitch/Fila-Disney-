@@ -468,3 +468,71 @@ class TestDuracaoPorPista(unittest.TestCase):
         with self.assertRaises(duracoes.Ambigua):
             self._duracao("| park1 = Disneyland\n| duration1 = 16 minutes\n"
                           "| park2 = Tokyo Disneyland\n| duration2 = 9 minutes")
+
+
+class TestWikidata(unittest.TestCase):
+    """Segunda fonte: o P2047. Item por INSTALAÇÃO, não por atração.
+
+    É isso que o infobox não dá: a Haunted Mansion do Magic Kingdom e a da
+    Disneyland são Q distintos, então a duração já vem sem a ambiguidade que
+    barrou sete atrações. O que a sonda NÃO pode fazer é converter — imprime o
+    valor cru com a unidade e quem lê decide, igual ao --diagnostico.
+    """
+
+    def setUp(self):
+        self.chamadas = []
+        self.resposta = {}
+        original = duracoes.monitor.get_json
+        self.addCleanup(setattr, duracoes.monitor, "get_json", original)
+
+        def falso_get_json(url, *, tentativas=3):
+            self.chamadas.append(url)
+            return self.resposta
+
+        duracoes.monitor.get_json = falso_get_json
+
+    def _entidade(self, qid, unidade, quantidade="+3", **extra):
+        claim = {"mainsnak": {"datavalue": {"value": {
+            "amount": quantidade,
+            "unit": f"http://www.wikidata.org/entity/{unidade}"}}}}
+        return {"entities": {qid: {
+            "labels": {"en": {"value": extra.get("rotulo", "Haunted Mansion")}},
+            "descriptions": {"en": {"value": extra.get("descricao", "dark ride")}},
+            "claims": {"P2047": [claim]}}}}
+
+    def test_a_consulta_vai_para_o_wikidata(self):
+        self.resposta = {"search": [{"id": "Q1"}, {"id": "Q2"}]}
+        self.assertEqual(duracoes.buscar_itens_wikidata("Haunted Mansion"),
+                         ["Q1", "Q2"])
+        self.assertIn("wikidata.org", self.chamadas[0])
+        self.assertIn("action=wbsearchentities", self.chamadas[0])
+
+    def test_minuto_e_segundo_saem_rotulados(self):
+        self.resposta = self._entidade("Q1", "Q7727")
+        self.assertIn("+3 min", duracoes.itens_wikidata(["Q1"])[0]["duracao"])
+        self.resposta = self._entidade("Q1", "Q11574", "+150")
+        self.assertIn("+150 s", duracoes.itens_wikidata(["Q1"])[0]["duracao"])
+
+    def test_unidade_desconhecida_aparece_crua_em_vez_de_virar_minuto(self):
+        """Unidade nova tem que dar na vista, nunca virar conversão silenciosa."""
+        duracao = self._entidade("Q1", "Q99999")
+        self.resposta = duracao
+        self.assertIn("(Q99999)", duracoes.itens_wikidata(["Q1"])[0]["duracao"])
+
+    def test_a_descricao_vem_junto_porque_e_ela_que_diz_o_parque(self):
+        self.resposta = self._entidade(
+            "Q1", "Q7727", descricao="dark ride at Magic Kingdom")
+        self.assertEqual(duracoes.itens_wikidata(["Q1"])[0]["descricao"],
+                         "dark ride at Magic Kingdom")
+
+    def test_item_sem_P2047_devolve_None(self):
+        self.resposta = {"entities": {"Q1": {"claims": {"P31": []}}}}
+        self.assertIsNone(duracoes.itens_wikidata(["Q1"])[0]["duracao"])
+
+    def test_sem_candidatos_nao_consulta_nada(self):
+        self.assertEqual(duracoes.itens_wikidata([]), [])
+        self.assertEqual(self.chamadas, [])
+
+    def test_item_que_o_wikidata_nao_devolveu_e_ignorado(self):
+        self.resposta = {"entities": {}}
+        self.assertEqual(duracoes.itens_wikidata(["Q1"]), [])
