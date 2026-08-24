@@ -1764,6 +1764,17 @@ FRACAO_HORA_SOLIDA = 0.5     # ...nem hora com menos da metade da mais coberta
 
 HORARIO_LOOKBACK_DIAS = 30
 HORARIO_MIN_LEITURAS = 12    # por hora local, somando os dias da janela
+# O corte é relativo ao pico do próprio parque, não uma fração fixa. Medido no
+# Hollywood Studios em 24/08/2026: de dia o parque fica entre 69% e 94% de
+# atrações abertas, e de madrugada em EXATAMENTE 25% — 180 de 720 leituras, hora
+# após hora. Com o corte fixo de FRACAO_PARQUE_OPERANDO (0,25) a madrugada
+# passava raspando no limite e o horário saía (0, 23), o dia inteiro.
+#
+# Os 25% da madrugada são cinco shows — Beauty and the Beast, Disney Jr., Frozen
+# Sing-Along, Indiana Jones e Little Mermaid. Show tem sessão, não fila: a API
+# publica is_open verdadeiro 24h. Metade do pico separa isso da operação de
+# verdade em qualquer parque, sem precisar saber quais atrações são shows.
+FRACAO_PICO_OPERACAO = 0.5
 
 
 def horario_operacao(conn: sqlite3.Connection, config: dict, park: str,
@@ -1798,10 +1809,14 @@ def horario_operacao(conn: sqlite3.Connection, config: dict, park: str,
         acumulado = por_hora.setdefault(hora, [0, 0])
         acumulado[0] += abertas or 0
         acumulado[1] += total
-    operando = sorted(
-        hora for hora, (abertas, total) in por_hora.items()
-        if total >= HORARIO_MIN_LEITURAS and abertas / total >= FRACAO_PARQUE_OPERANDO
-    )
+    solidas = {hora: abertas / total for hora, (abertas, total) in por_hora.items()
+               if total >= HORARIO_MIN_LEITURAS}
+    if not solidas:
+        return None
+    # O piso absoluto continua como rede: num parque de pico baixo, metade do
+    # pico ficaria abaixo do que o resto do código chama de "operando".
+    limite = max(FRACAO_PARQUE_OPERANDO, FRACAO_PICO_OPERACAO * max(solidas.values()))
+    operando = sorted(hora for hora, fracao in solidas.items() if fracao >= limite)
     return (operando[0], operando[-1]) if operando else None
 
 

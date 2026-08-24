@@ -359,10 +359,20 @@ Duas perguntas que a Queue-Times não responde — ela entrega só `id`, `name`,
 ### O horário é medido, não cravado
 
 `horario_operacao` olha os últimos 30 dias e chama de hora de operação aquela em
-que ao menos 25% das atrações estavam abertas — a mesma fração que o resto do
-código já usa para decidir se o parque está operando. Cravar no `watchlist.json`
-seria pior: o horário muda por dia e por temporada, e em outubro os parques
-esticam por causa das festas de Halloween.
+que a fração de atrações abertas passa de **metade do pico do próprio parque**.
+Cravar no `watchlist.json` seria pior: o horário muda por dia e por temporada, e
+em outubro os parques esticam por causa das festas de Halloween. Como a janela é
+móvel, o horário se atualiza sozinho — nenhuma edição é necessária quando o
+parque muda a operação.
+
+O corte é relativo, e não uma fração fixa, por causa de uma medição: no Hollywood
+Studios o parque fica entre 69% e 94% de dia e em **exatamente 25%** de
+madrugada, hora após hora. Com o corte fixo de 25% que existia, a madrugada
+passava raspando e o horário saía `(0, 23)` — o dia inteiro, o que anulava a
+correção da hora de fechamento. Esses 25% são cinco shows (Beauty and the Beast,
+Disney Jr., Frozen Sing-Along, Indiana Jones, Little Mermaid): show tem sessão,
+não fila, e a API publica `is_open` verdadeiro 24h. Metade do pico separa isso da
+operação de verdade sem o código precisar saber quais atrações são shows.
 
 Filas paralelas ficam de fora dessa conta, e não é detalhe: as do Universal
 reportam `is_open` verdadeiro em 963 de 963 leituras, então incluí-las faria as
