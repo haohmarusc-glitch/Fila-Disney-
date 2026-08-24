@@ -156,6 +156,22 @@ def duracoes_da_pagina(html: str) -> dict[str, int]:
     return encontradas
 
 
+def e_pavilhao(nome: str) -> bool:
+    """Pavilhão é lugar, não atração — e entra em conflito com a atração dele.
+
+    O TouringPlans lista os pavilhões como itens próprios, com o tempo de
+    ATRAVESSAR: os onze do World Showcase e também o "Test Track Pavilion", que
+    casava com "Test Track" e disputava com a atração de verdade ("Test Track
+    presented by General Motors"). O resultado era o Test Track ficar sem
+    duração por um empate que nunca devia ter existido.
+
+    Perde-se uma atração da watchlist que se chame "... Pavilion" — nenhuma se
+    chama, e se um dia se chamar ela aparece como ausente no relatório, não
+    como número errado.
+    """
+    return nome.strip().lower().endswith("pavilion")
+
+
 def mapear_para_watchlist(cruas: dict[str, int], park_cfg: dict) -> tuple[dict, list]:
     """Casa os nomes do site com os canônicos da watchlist.
 
@@ -167,6 +183,8 @@ def mapear_para_watchlist(cruas: dict[str, int], park_cfg: dict) -> tuple[dict, 
     """
     candidatos: dict[str, dict[str, int]] = {}
     for nome_site, minutos_ in cruas.items():
+        if e_pavilhao(nome_site):
+            continue
         canonico = monitor.nome_watchlist(park_cfg, nome_site)
         if canonico:
             candidatos.setdefault(canonico, {})[nome_site] = minutos_
@@ -238,8 +256,9 @@ def main() -> int:
             detalhe = ", ".join(f"{n} = {v} min" for n, v in sorted(opcoes.items()))
             print(f"  ? {canonico} — versões divergem, fica sem duração ({detalhe})")
 
+        em_conflito = {c for c, _ in conflitos}
         faltando = [a for a in config["parks"][parque].get("attractions", {})
-                    if a not in achadas]
+                    if a not in achadas and a not in em_conflito]
         for atracao in sorted(faltando):
             print(f"  – {atracao} — não veio na página")
 

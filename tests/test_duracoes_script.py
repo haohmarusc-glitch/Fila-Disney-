@@ -142,6 +142,28 @@ class TestCasamentoComAWatchlist(unittest.TestCase):
         self.assertNotIn("Mission: SPACE", achadas)
         self.assertEqual(conflitos[0][0], "Mission: SPACE")
 
+    def test_pavilhao_nao_disputa_com_a_atracao(self):
+        """Caso real: o Test Track ficou sem duração por um empate falso.
+
+        "Test Track Pavilion" é o prédio, e os 2 min são de atravessá-lo. A
+        atração é "Test Track presented by General Motors". Sem separar os dois,
+        o conflito derrubava a atração inteira.
+        """
+        achadas, conflitos = self._mapear(
+            {"Test Track Pavilion": 2,
+             "Test Track presented by General Motors": 4}, "Epcot")
+        self.assertEqual(achadas["Test Track"][0], 4)
+        self.assertEqual(conflitos, [])
+
+    def test_pavilhao_sozinho_tambem_nao_entra(self):
+        achadas, _ = self._mapear({"Test Track Pavilion": 2}, "Epcot")
+        self.assertEqual(achadas, {})
+
+    def test_atracao_com_nome_parecido_nao_e_confundida_com_pavilhao(self):
+        self.assertFalse(duracoes.e_pavilhao("Test Track presented by General Motors"))
+        self.assertTrue(duracoes.e_pavilhao("Test Track Pavilion"))
+        self.assertTrue(duracoes.e_pavilhao("  Japan Pavilion  "))
+
     def test_fila_paralela_nao_entra(self):
         """`nome_watchlist` já barra single rider; a regra 10 vale aqui também."""
         achadas, _ = self._mapear({"Space Mountain Single Rider": 10})
