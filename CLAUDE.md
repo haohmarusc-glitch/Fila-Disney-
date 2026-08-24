@@ -43,8 +43,12 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     TouringPlans, via `duracoes.py`; a Wikipédia foi abandonada em 24/08/2026 por
     medir o ciclo, e o Wikidata por ter o item mas com o P2047 vazio (números em
     `duracoes.json:_fontes_esgotadas`). **Nunca misturar as duas medidas no mesmo
-    arquivo** — se o coletor não fechar os sete parques, ele não grava nada, de
-    propósito. Sem o dado, a atração aparece sem a estimativa — nunca com número
+    campo** — se o coletor não fechar os sete parques, ele não grava nada, de
+    propósito. Elas coexistem em seções rotuladas do mesmo arquivo: `rides` é o
+    total e `veiculo` é o ciclo (Wikipédia, 31 atrações), e o pré-show/embarque
+    exibido é a diferença entre os dois — só quando ambos existem e a diferença
+    passa de 2 min, porque abaixo disso é ruído de medição, e negativa
+    (Kilimanjaro) é divergência de fonte, não pré. Sem o dado, a atração aparece sem a estimativa — nunca com número
     inventado. Duração **não** entra em soma que
     ordena nada: fila e caminhada são custo, duração é o que se quer, e somá-la
     poria o Kilimanjaro Safaris (22 min de passeio) atrás de um brinquedo de 90

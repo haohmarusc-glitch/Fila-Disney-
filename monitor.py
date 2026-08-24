@@ -965,6 +965,41 @@ def duracao_da_atracao(duracoes: dict, park: str, ride: str) -> int | None:
     return duracoes.get(park, {}).get(ride)
 
 
+def carregar_veiculos() -> dict[str, dict[str, int]]:
+    """Tempo DENTRO do veículo, por parque. Seção `veiculo` do duracoes.json.
+
+    É a outra medida, guardada em seção própria e rotulada — nunca no mesmo
+    campo que o total (regra 12). Serve para decompor o total na tela: o pré é
+    total menos veículo, os dois com fonte. Atração sem as duas medidas fica
+    sem pré, nunca com estimativa.
+    """
+    try:
+        with open(DURACOES_PATH, encoding="utf-8") as f:
+            dados = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    saida = {}
+    for parque, atracoes in dados.get("veiculo", {}).items():
+        saida[parque] = {nome: int(m) for nome, m in atracoes.items()
+                         if isinstance(m, (int, float)) and m > 0}
+    return saida
+
+
+def pre_da_atracao(duracoes: dict, veiculos: dict, park: str, ride: str) -> int | None:
+    """Minutos de pré-show/embarque: total menos veículo, quando os dois existem.
+
+    Diferença menor que 2 min não é informação, é ruído das duas medições — e
+    negativa (Kilimanjaro: 20 de total contra 21 de ciclo medido) só prova que
+    as fontes divergem na folga. Nesses casos, sem pré na tela.
+    """
+    total = duracao_da_atracao(duracoes, park, ride)
+    veiculo = veiculos.get(park, {}).get(ride)
+    if total is None or veiculo is None:
+        return None
+    pre = total - veiculo
+    return pre if pre >= 2 else None
+
+
 def cabe_antes_de_fechar(agora, fechamento: int, minutos: int) -> bool:
     """Dá tempo de encarar a fila, andar até lá e fazer a atração antes de fechar?
 
@@ -2720,6 +2755,7 @@ def format_status(park_name: str, payload: dict, config: dict,
                       "pelo histórico")
     linhas.append("")
     duracoes = carregar_duracoes() if duracoes is None else duracoes
+    veiculos = carregar_veiculos()
     agora_local = now_park(config)
     for wait, ride, threshold in sorted(abertas):
         marca = "✅" if wait <= threshold else "▫️"
@@ -2734,6 +2770,9 @@ def format_status(park_name: str, payload: dict, config: dict,
         # fila. Ela serve para saber o compromisso de tempo — e para o aviso
         # abaixo, que é decisão de verdade no fim do dia.
         detalhe = f"     🎬 atração ~{minutos} min"
+        pre = pre_da_atracao(duracoes, veiculos, park_name, ride)
+        if pre is not None:
+            detalhe += f" · ~{pre} de pré-show/embarque"
         if horario and not cabe_antes_de_fechar(agora_local, horario[1], wait + minutos):
             detalhe += " · ⏳ não cabe antes de fechar"
         linhas.append(detalhe)
