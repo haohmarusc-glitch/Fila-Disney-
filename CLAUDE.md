@@ -81,7 +81,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `notifier.py` — transporte Telegram: `send`, `get_updates`, `esc` (env:
   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
 - `analyze.py` — CLI de análise do histórico
-- `api_server.py` — API HTTP privada que serve o site (`/perto`, `/health`).
+- `site/` — o frontend (filadisney.premercadosc.com): três estáticos sem
+  framework, servidos pelo Caddy do Premercado com `/api/*` repassado à API —
+  mesmo domínio, sem CORS. O `config.js` (token) não é versionado. Instalação e
+  virada de DNS em `docs/SITE.md`
+- `api_server.py` — API HTTP privada que serve o site (`/perto`, `/vigias`, `/health`).
   Processo separado, container `fila-disney-api`, **somente leitura** no mesmo
   SQLite. Publicada pelo Caddy do Premercado em `api-filadisney.premercadosc.com`
   — ou seja, encara a internet: token por `hmac.compare_digest`, freio de chute
