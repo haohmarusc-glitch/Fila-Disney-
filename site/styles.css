@@ -1,0 +1,184 @@
+/* Fila Disney — painel móvel. Sem framework: a página inteira são três
+   arquivos estáticos servidos pelo Caddy, e CSS puro cobre o que ela precisa. */
+
+:root {
+  --fundo: #f5f7fa;
+  --cartao: #ffffff;
+  --texto: #1a2333;
+  --texto-suave: #5b6575;
+  --borda: #e3e8ef;
+  --acento: #1d6fd6;
+  --verde-fundo: #e5f5e9;
+  --verde-texto: #1e7a37;
+  --amarelo-fundo: #fdf3d7;
+  --amarelo-texto: #8a6407;
+  --vermelho-fundo: #fdeaea;
+  --vermelho-texto: #b03434;
+  --sombra: 0 1px 3px rgba(16, 24, 40, .08);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #101722;
+    --cartao: #1a2333;
+    --texto: #e8edf5;
+    --texto-suave: #93a0b4;
+    --borda: #27324a;
+    --acento: #6aa9ff;
+    --verde-fundo: #12301c;
+    --verde-texto: #7fd898;
+    --amarelo-fundo: #33290e;
+    --amarelo-texto: #ecc75e;
+    --vermelho-fundo: #391a1a;
+    --vermelho-texto: #ff9d9d;
+    --sombra: none;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--fundo);
+  color: var(--texto);
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+}
+.marca { display: flex; align-items: center; gap: 10px; }
+.marca-icone { font-size: 1.7rem; }
+.topo h1 { font-size: 1.15rem; }
+.subtitulo { font-size: .8rem; color: var(--texto-suave); }
+.botao-atualizar {
+  border: 1px solid var(--borda);
+  background: var(--cartao);
+  color: var(--texto);
+  border-radius: 10px;
+  width: 38px; height: 38px;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+.botao-atualizar.girando { animation: girar 1s linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }
+
+.abas {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--borda);
+}
+.aba {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--texto-suave);
+  font-size: .95rem;
+  font-weight: 600;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+}
+.aba.ativa { color: var(--acento); border-bottom-color: var(--acento); }
+
+main { flex: 1; }
+.painel { padding: 12px; }
+.oculto { display: none; }
+.conteudo { display: flex; flex-direction: column; gap: 10px; }
+
+.aviso, .nota {
+  color: var(--texto-suave);
+  font-size: .85rem;
+  padding: 10px 4px;
+}
+.nota code {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+.erro {
+  background: var(--vermelho-fundo);
+  color: var(--vermelho-texto);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: .9rem;
+}
+
+.cartao {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  box-shadow: var(--sombra);
+  padding: 12px;
+}
+.posicao {
+  flex: none;
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 10px;
+  background: var(--fundo);
+  font-weight: 700;
+  color: var(--texto-suave);
+}
+.corpo { flex: 1; min-width: 0; }
+.corpo h2 { font-size: 1rem; margin-bottom: 2px; overflow-wrap: anywhere; }
+.detalhe { font-size: .82rem; color: var(--texto-suave); }
+.selos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.selo {
+  font-size: .74rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: var(--fundo);
+  color: var(--texto-suave);
+}
+.selo.bom { background: var(--verde-fundo); color: var(--verde-texto); }
+.selo a { color: var(--acento); text-decoration: none; }
+
+.total {
+  flex: none;
+  align-self: center;
+  text-align: center;
+  border-radius: 12px;
+  padding: 8px 12px;
+  min-width: 64px;
+}
+.total strong { display: block; font-size: 1.4rem; line-height: 1.1; }
+.total span { font-size: .7rem; }
+.total.verde { background: var(--verde-fundo); color: var(--verde-texto); }
+.total.amarelo { background: var(--amarelo-fundo); color: var(--amarelo-texto); }
+.total.vermelho { background: var(--vermelho-fundo); color: var(--vermelho-texto); }
+
+/* Vigias */
+.vigia-alvo { font-size: .82rem; color: var(--texto-suave); margin-top: 2px; }
+.barra {
+  margin-top: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--fundo);
+  overflow: hidden;
+}
+.barra > div {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--acento);
+  transition: width .4s ease;
+}
+.barra.pronta > div { background: var(--verde-texto); }
+
+.rodape {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  font-size: .75rem;
+  color: var(--texto-suave);
+}

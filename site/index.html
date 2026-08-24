@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Fila Disney</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topo">
+    <div class="marca">
+      <span class="marca-icone">🎢</span>
+      <div>
+        <h1>Fila Disney</h1>
+        <p id="subtitulo" class="subtitulo">localizando…</p>
+      </div>
+    </div>
+    <button id="atualizar" class="botao-atualizar" title="Atualizar agora">↻</button>
+  </header>
+
+  <nav class="abas" role="tablist">
+    <button class="aba ativa" data-aba="perto" role="tab">Melhores agora</button>
+    <button class="aba" data-aba="vigias" role="tab">Vigias</button>
+  </nav>
+
+  <main>
+    <section id="painel-perto" class="painel" role="tabpanel">
+      <div id="perto-conteudo" class="conteudo">
+        <p class="aviso">Permita o acesso à localização para ver o ranking do parque onde você está.</p>
+      </div>
+    </section>
+
+    <section id="painel-vigias" class="painel oculto" role="tabpanel">
+      <div id="vigias-conteudo" class="conteudo"></div>
+      <p class="nota">
+        Para criar ou cancelar uma vigia, use o Telegram:
+        <code>/vigiar everest 40</code> ou <code>/vigiar everest 50%</code>.
+        O alerta chega no chat de quem criou.
+      </p>
+    </section>
+  </main>
+
+  <footer class="rodape">
+    <span id="atribuicao">Powered by Queue-Times.com</span>
+    <span id="atualizado-em"></span>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
