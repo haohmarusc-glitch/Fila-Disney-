@@ -45,6 +45,7 @@ _MIN_SEG = re.compile(r"(\d+)\s*(?:minutes?|min)\b[^0-9]{0,12}?(\d+)\s*(?:second
 _MM_SS = re.compile(r"\b(\d{1,3}):([0-5]\d)\b")
 _SO_MIN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:minutes?|min)\b", re.I)
 _SO_SEG = re.compile(r"(\d+)\s*(?:seconds?|sec)\b", re.I)
+_SO_NUMERO = re.compile(r"\s*(\d+(?:\.\d+)?)\s*")
 
 
 def minutos_do_texto(texto: str) -> int | None:
@@ -70,6 +71,12 @@ def minutos_do_texto(texto: str) -> int | None:
         segundos = float(_SO_MIN.search(texto).group(1)) * 60
     elif _SO_SEG.search(texto):
         segundos = int(_SO_SEG.search(texto).group(1))
+    elif _SO_NUMERO.fullmatch(texto):
+        # Campo `duration` com numero pelado e minuto por convencao do infobox
+        # — o MEN IN BLACK traz "5.00" e nada mais. So vale para o campo
+        # INTEIRO: numero solto no meio de frase pode ser altura, ano ou
+        # capacidade, e virar duracao seria o palpite que a regra 12 proibe.
+        segundos = float(_SO_NUMERO.fullmatch(texto).group(1)) * 60
     else:
         return None
     if segundos <= 0:
@@ -100,6 +107,21 @@ PARQUES_WIKI = {
     "Universal Studios At Universal Orlando": ("universal studios florida",),
     "Islands Of Adventure At Universal Orlando": ("islands of adventure",),
     "Universal Epic Universe": ("epic universe",),
+}
+
+
+# Busca por nome às vezes cai no artigo errado, e aí não há parser que salve:
+# "TRON Lightcycle / Run" casa com o artigo do FILME Tron, e "Space Mountain"
+# casa com o artigo genérico que cobre cinco parques em vez do dedicado do
+# Magic Kingdom. São poucas e são estáveis — endereço de artigo, não número,
+# então fixar aqui não esbarra na regra 12.
+PAGINAS_WIKI = {
+    ("Disney Magic Kingdom", "Space Mountain"): "Space Mountain (Magic Kingdom)",
+    ("Disney Magic Kingdom", "TRON Lightcycle / Run"): "Tron Lightcycle Power Run",
+    ("Universal Studios At Universal Orlando", "Villain-Con Minion Blast"):
+        "Illumination's Villain-Con Minion Blast",
+    ("Islands Of Adventure At Universal Orlando", "Jurassic Park River Adventure"):
+        "Jurassic Park: The Ride",
 }
 
 
@@ -186,7 +208,12 @@ def campo_duration(wikitexto: str) -> str | None:
     """Extrai o valor de `duration` do infobox, parando na próxima chave."""
     # O fim do valor é a próxima chave, o fecho do template — ou o fim do
     # texto, que faltava e fazia o campo sumir quando era o último do infobox.
-    casado = re.search(r"\|\s*duration\s*=\s*(.+?)(?=\n\s*\||\n\}\}|\Z)",
+    # O `(?!\s*\|)` e o que impede campo VAZIO de engolir o campo seguinte. Sem
+    # ele, `| duration =` seguido de `| restriction_in = 52` capturava a linha
+    # do restriction inteira — visto no Space Mountain, no Doctor Doom's
+    # Fearfall e no Monsters Unchained. Nenhum virou numero errado por sorte
+    # (nenhum trazia "minutes"), mas ler o campo errado e bug, nao estilo.
+    casado = re.search(r"\|\s*duration\s*=[ \t]*(?!\s*\|)(.+?)(?=\n\s*\||\n\}\}|\Z)",
                        wikitexto, re.S | re.I)
     return casado.group(1).strip() if casado else None
 
@@ -206,13 +233,15 @@ def consultar(parametros: dict) -> dict:
     return monitor.get_json(f"{WIKI_API}?{urlencode(parametros)}")
 
 
-def buscar_pagina(nome: str) -> str | None:
+def buscar_pagina(nome: str, parque: str | None = None) -> str | None:
     """Título da página mais provável para esta atração, ou None.
 
     O título tem que compartilhar o nome da atração depois de normalizado — sem
     isso a busca devolveria o artigo do filme, do personagem ou de uma atração
     homônima em outro parque, e a duração entraria errada sem ninguém notar.
     """
+    if fixado := PAGINAS_WIKI.get((parque, nome)):
+        return fixado
     dados = consultar({"action": "query", "list": "search", "srlimit": 5,
                        "srsearch": f"{nome} attraction", "format": "json"})
     alvo = monitor.normalizar_nome_api(nome)
@@ -279,7 +308,7 @@ def relatar_campos_crus(config: dict, dados: dict) -> None:
         print(f"\n=== {parque}")
         for atracao in pendentes:
             try:
-                titulo = buscar_pagina(atracao)
+                titulo = buscar_pagina(atracao, parque)
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
                 campos = campos_crus(titulo, parque) if titulo else {}
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
@@ -336,7 +365,7 @@ def main() -> int:
                 print(f"  ✓ {atracao} — já tem {atuais[atracao]} min")
                 continue
             try:
-                titulo = buscar_pagina(atracao)
+                titulo = buscar_pagina(atracao, parque)
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
                 minutos = duracao_da_pagina(titulo, parque) if titulo else None
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
