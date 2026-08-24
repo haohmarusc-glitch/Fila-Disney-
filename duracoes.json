@@ -1,7 +1,7 @@
 {
   "_comment": "Duracao das atracoes, em minutos. A Queue-Times nao publica este dado (entrega so id, name, is_open, wait_time e last_updated), entao ele mora aqui, versionado, no mesmo espirito do coords.json.",
   "_regra": "Atracao ausente daqui aparece SEM duracao, nunca com estimativa — mesma regra 12 que vale para coordenada. Valor invalido (zero, texto, nulo) e ignorado com aviso no log, porque duracao 0 seria dado inventado disfarcado.",
-  "_como_preencher": "A chave e o nome CANONICO da watchlist.json, nao o nome que a API devolve. Confira contra a fonte oficial do parque ou o app; o lembrete de 05/10 pede essa conferencia junto com os horarios.",
+  "_como_preencher": "A chave e o nome CANONICO da watchlist.json, nao o nome que a API devolve. O teste tests/test_empacotamento.py recusa chave que nao exista na watchlist, entao errar o nome falha o CI em vez de sumir da tela em silencio.",
   "rides": {
     "Disney Magic Kingdom": {},
     "Epcot": {},
@@ -10,5 +10,12 @@
     "Universal Studios At Universal Orlando": {},
     "Islands Of Adventure At Universal Orlando": {},
     "Universal Epic Universe": {}
-  }
+  },
+  "_por_que_esta_vazio": "A Queue-Times nao publica duracao, e a sessao que criou este arquivo (23/08/2026) rodava num ambiente cujo egresso so alcanca dominios do GitHub — Wikipedia, themeparks.wiki e os sites dos parques dao timeout. Escrever 54 numeros de memoria seria exatamente o 'numero inventado' que a regra 12 proibe, entao o arquivo ficou estruturado e vazio: enquanto estiver assim, nenhuma duracao aparece na tela, que e o comportamento correto.",
+  "_como_preencher_de_verdade": [
+    "OPCAO 1 — do proprio VPS, que tem internet aberta: buscar numa fonte publica e colar aqui.",
+    "OPCAO 2 — sessao num ambiente com politica de rede permissiva (ver code.claude.com/docs/en/claude-code-on-the-web); conferir cada duracao contra fonte oficial do parque antes de gravar.",
+    "OPCAO 3 — preencher a mao, aos poucos. Arquivo parcial funciona: atracao ausente so nao mostra duracao.",
+    "Em qualquer caso: minutos inteiros e positivos. Zero, texto ou nulo sao ignorados com aviso no log."
+  ]
 }

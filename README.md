@@ -848,4 +848,5 @@ junto.
 - [x] Quais atrações quebram mais (`/quebras`)
 - [x] Ensaio das mensagens automáticas antes da viagem (`/teste_alertas`)
 - [x] Posição da família entre quem compartilha (`/grupo`)
+- [ ] Preencher o `duracoes.json` — mecanismo pronto e testado, faltam os 54 números
 - [ ] Exportar histórico pós-viagem como dataset para portfólio
