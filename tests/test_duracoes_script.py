@@ -308,3 +308,55 @@ class TestCampoDuration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCamposCrus(unittest.TestCase):
+    """O `--diagnostico` mostra o infobox sem interpretar.
+
+    O parser recusa artigo de vários parques para não repetir o Pirates, que
+    entrou com os 16 min da Disneyland. Mas recusar também joga fora o clone
+    idêntico — Seven Dwarfs Mine Train é a mesma atração no Magic Kingdom e em
+    Shanghai. Este modo põe o texto na tela para alguém decidir; o que ele NÃO
+    pode fazer é interpretar, senão vira o mesmo palpite que se quis evitar.
+    """
+
+    def setUp(self):
+        self.resposta = {}
+        original = duracoes.monitor.get_json
+        self.addCleanup(setattr, duracoes.monitor, "get_json", original)
+
+        def falso_get_json(url, *, tentativas=3):
+            return self.resposta
+
+        duracoes.monitor.get_json = falso_get_json
+
+    def _pagina(self, wikitexto):
+        self.resposta = {"query": {"pages": {"1": {"revisions": [
+            {"slots": {"main": {"*": wikitexto}}}]}}}}
+
+    def test_mostra_duracao_por_instalacao_sem_escolher(self):
+        """Onde o parser levantaria Ambigua, o diagnóstico entrega os dois lados."""
+        self._pagina("{{Infobox\n| park1 = Disneyland\n| duration1 = 16 minutes\n"
+                     "| park2 = Magic Kingdom\n| duration2 = 9 minutes\n}}")
+        campos = duracoes.campos_crus("Pirates", "Disney Magic Kingdom")
+        self.assertEqual(campos["duracoes"],
+                         {"duration1": "16 minutes", "duration2": "9 minutes"})
+        self.assertEqual(campos["parques_do_infobox"],
+                         {"park1": "Disneyland", "park2": "Magic Kingdom"})
+
+    def test_duracao_solta_de_artigo_multiparque_aparece(self):
+        """O clone idêntico: uma duração só, dois parques. É o caso a resgatar."""
+        self._pagina("{{Infobox\n| park = Magic Kingdom and Shanghai Disneyland\n"
+                     "| duration = 3 minutes\n}}")
+        campos = duracoes.campos_crus("Seven Dwarfs", "Disney Magic Kingdom")
+        self.assertEqual(campos["duracoes"], {"duration": "3 minutes"})
+        self.assertIn("magic kingdom", campos["resorts_citados"])
+        self.assertIn("shanghai disneyland", campos["resorts_citados"])
+
+    def test_artigo_sem_duracao_nao_inventa_campo(self):
+        self._pagina("{{Infobox\n| park = Epcot\n| opened = 2021\n}}")
+        self.assertEqual(duracoes.campos_crus("Qualquer", "Epcot")["duracoes"], {})
+
+    def test_pagina_ausente_devolve_vazio(self):
+        self.resposta = {"query": {"pages": {"-1": {"missing": ""}}}}
+        self.assertEqual(duracoes.campos_crus("Inexistente", "Epcot"), {})
