@@ -27,6 +27,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 import monitor
 
@@ -86,6 +87,17 @@ def campo_duration(wikitexto: str) -> str | None:
     return casado.group(1).strip() if casado else None
 
 
+def consultar(parametros: dict) -> dict:
+    """GET na API da Wikipédia pelo `get_json` do monitor (regra 11).
+
+    A query vai montada na URL porque `get_json(url, *, tentativas)` não recebe
+    `params` — chamá-lo com esse argumento levantava TypeError em toda atração,
+    e o `except` largo abaixo rotulava isso como "falha de rede". Erro de
+    programação disfarçado de problema externo é o pior tipo de log.
+    """
+    return monitor.get_json(f"{WIKI_API}?{urlencode(parametros)}")
+
+
 def buscar_pagina(nome: str) -> str | None:
     """Título da página mais provável para esta atração, ou None.
 
@@ -93,11 +105,8 @@ def buscar_pagina(nome: str) -> str | None:
     isso a busca devolveria o artigo do filme, do personagem ou de uma atração
     homônima em outro parque, e a duração entraria errada sem ninguém notar.
     """
-    dados = monitor.get_json(
-        WIKI_API,
-        params={"action": "query", "list": "search", "srlimit": 5,
-                "srsearch": f"{nome} attraction", "format": "json"},
-    )
+    dados = consultar({"action": "query", "list": "search", "srlimit": 5,
+                       "srsearch": f"{nome} attraction", "format": "json"})
     alvo = monitor.normalizar_nome_api(nome)
     for item in dados.get("query", {}).get("search", []):
         titulo = monitor.normalizar_nome_api(item["title"])
@@ -107,11 +116,8 @@ def buscar_pagina(nome: str) -> str | None:
 
 
 def duracao_da_pagina(titulo: str) -> int | None:
-    dados = monitor.get_json(
-        WIKI_API,
-        params={"action": "query", "prop": "revisions", "rvprop": "content",
-                "rvslots": "main", "titles": titulo, "format": "json"},
-    )
+    dados = consultar({"action": "query", "prop": "revisions", "rvprop": "content",
+                       "rvslots": "main", "titles": titulo, "format": "json"})
     for pagina in dados.get("query", {}).get("pages", {}).values():
         try:
             texto = pagina["revisions"][0]["slots"]["main"]["*"]
@@ -153,9 +159,13 @@ def main() -> int:
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
                 minutos = duracao_da_pagina(titulo) if titulo else None
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
-            except Exception as exc:  # noqa: BLE001 — falha de rede não derruba o resto
-                print(f"  ! {atracao} — falha na consulta ({type(exc).__name__})")
-                faltando.append((parque, atracao, "falha de rede"))
+            except Exception as exc:  # noqa: BLE001 — uma atração não derruba o resto
+                motivo = (f"falha de rede ({type(exc).__name__})"
+                          if isinstance(exc, (OSError, ValueError))
+                          or "requests" in type(exc).__module__
+                          else f"ERRO NO SCRIPT: {type(exc).__name__}: {exc}")
+                print(f"  ! {atracao} — {motivo}")
+                faltando.append((parque, atracao, motivo))
                 continue
             if minutos is None:
                 motivo = "sem infobox duration" if titulo else "página não encontrada"

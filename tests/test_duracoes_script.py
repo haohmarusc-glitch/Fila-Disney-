@@ -60,6 +60,64 @@ class TestParserDeDuracao(unittest.TestCase):
                 self.assertTrue(minutos is None or minutos >= 1)
 
 
+class TestChamadaHTTP(unittest.TestCase):
+    """O caminho de rede, que a primeira versão nunca exercitou.
+
+    `monitor.get_json(url, *, tentativas)` não aceita `params`, e o script
+    chamava com `params={...}`. Resultado: TypeError nas 54 atrações, antes de
+    tocar a rede — e o `except` largo rotulava como "falha de rede". O parser
+    tinha 16 casos de teste; a chamada não tinha nenhum.
+
+    O falso abaixo repete a assinatura REAL de propósito. Um Mock aceitaria
+    qualquer argumento e deixaria o bug passar de novo.
+    """
+
+    def setUp(self):
+        self.chamadas = []
+        self.resposta = {}
+        self.original = duracoes.monitor.get_json
+        self.addCleanup(setattr, duracoes.monitor, "get_json", self.original)
+
+        def falso_get_json(url, *, tentativas=3):
+            self.chamadas.append(url)
+            return self.resposta
+
+        duracoes.monitor.get_json = falso_get_json
+
+    def test_busca_monta_a_query_na_url(self):
+        self.resposta = {"query": {"search": [{"title": "Space Mountain"}]}}
+        self.assertEqual(duracoes.buscar_pagina("Space Mountain"), "Space Mountain")
+        url = self.chamadas[0]
+        self.assertIn("action=query", url)
+        self.assertIn("list=search", url)
+        self.assertIn("format=json", url)
+
+    def test_titulo_que_nao_casa_e_recusado(self):
+        """Buscar 'Tower of Terror' pode devolver o filme, ou a versão de Paris."""
+        self.resposta = {"query": {"search": [{"title": "The Twilight Zone (film)"}]}}
+        self.assertIsNone(duracoes.buscar_pagina("Tower of Terror"))
+
+    def test_titulo_decorado_ainda_casa(self):
+        self.resposta = {"query": {"search": [
+            {"title": "The Twilight Zone Tower of Terror"}]}}
+        self.assertEqual(duracoes.buscar_pagina("Tower of Terror"),
+                         "The Twilight Zone Tower of Terror")
+
+    def test_le_a_duracao_da_pagina(self):
+        self.resposta = {"query": {"pages": {"1": {"revisions": [
+            {"slots": {"main": {"*": "{{Infobox\n| duration = 3 minutes\n}}"}}}]}}}}
+        self.assertEqual(duracoes.duracao_da_pagina("Space Mountain"), 3)
+
+    def test_pagina_sem_revisao_nao_quebra(self):
+        self.resposta = {"query": {"pages": {"-1": {"missing": ""}}}}
+        self.assertIsNone(duracoes.duracao_da_pagina("Inexistente"))
+
+    def test_resposta_vazia_nao_quebra(self):
+        self.resposta = {}
+        self.assertIsNone(duracoes.buscar_pagina("Qualquer"))
+        self.assertIsNone(duracoes.duracao_da_pagina("Qualquer"))
+
+
 class TestCampoDuration(unittest.TestCase):
     INFOBOX = """{{Infobox attraction
 | name = Space Mountain
