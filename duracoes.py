@@ -16,6 +16,7 @@ Uso:
     docker compose exec fila-disney python duracoes.py --revisar   # só relatório
     docker compose exec fila-disney python duracoes.py             # grava
     docker compose exec fila-disney python duracoes.py --sobrescrever
+    docker compose exec fila-disney python duracoes.py --diagnostico  # infobox cru
 
 Cada duração encontrada vem com a página de origem no relatório, para dar para
 conferir na mão antes de aceitar. O script nunca inventa: atração cuja página
@@ -234,6 +235,72 @@ def duracao_da_pagina(titulo: str, parque: str) -> int | None:
     return None
 
 
+def campos_crus(titulo: str, parque: str) -> dict:
+    """Campos do infobox que decidem a duração, sem interpretar nada.
+
+    O parser é conservador de propósito com artigo que cobre vários parques:
+    recusa em vez de arriscar o número da outra instalação — foi o Pirates,
+    16 min na Disneyland contra bem menos no Magic Kingdom, que ensinou isso.
+    Só que recusar joga fora junto o clone idêntico, onde a atração é a mesma
+    nos dois parques e a duração única vale para o nosso.
+
+    Distinguir os dois casos é leitura, não heurística. Este modo põe o texto
+    cru na tela para alguém decidir; o número continua vindo do infobox, nunca
+    de estimativa (regra 12).
+    """
+    dados = consultar({"action": "query", "prop": "revisions", "rvprop": "content",
+                       "rvslots": "main", "titles": titulo, "format": "json"})
+    for pagina in dados.get("query", {}).get("pages", {}).values():
+        try:
+            texto = pagina["revisions"][0]["slots"]["main"]["*"]
+        except (KeyError, IndexError, TypeError):
+            continue
+        params = parametros_do_infobox(texto)
+        duracoes = {c: v for c, v in params.items()
+                    if re.fullmatch(r"duration\d*", c) and v}
+        if not duracoes and (solto := campo_duration(texto)):
+            duracoes["duration (fora do infobox)"] = solto
+        return {
+            "parques_do_infobox": {c: v for c, v in params.items()
+                                   if re.fullmatch(r"park\d*", c) and v},
+            "duracoes": duracoes,
+            "resorts_citados": sorted(resorts_citados(texto)),
+        }
+    return {}
+
+
+def relatar_campos_crus(config: dict, dados: dict) -> None:
+    """Imprime o infobox cru de cada atração que ainda está sem duração."""
+    for parque, cfg in config["parks"].items():
+        atuais = dados["rides"].get(parque, {})
+        pendentes = [a for a in cfg.get("attractions", {}) if a not in atuais]
+        if not pendentes:
+            continue
+        print(f"\n=== {parque}")
+        for atracao in pendentes:
+            try:
+                titulo = buscar_pagina(atracao)
+                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
+                campos = campos_crus(titulo, parque) if titulo else {}
+                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
+            except Exception as exc:  # noqa: BLE001 — uma atração não derruba o resto
+                print(f"  {atracao}\n     ! {type(exc).__name__}: {exc}")
+                continue
+            if not titulo:
+                print(f"  {atracao}\n     página não encontrada")
+                continue
+            print(f"  {atracao}  [{titulo}]")
+            if not campos.get("duracoes"):
+                print("     sem duration no infobox")
+            for chave, valor in campos.get("duracoes", {}).items():
+                print(f"     {chave} = {valor}")
+            for chave, valor in campos.get("parques_do_infobox", {}).items():
+                print(f"     {chave} = {valor}")
+            citados = campos.get("resorts_citados", [])
+            if len(citados) > 1:
+                print(f"     resorts citados: {', '.join(citados)}")
+
+
 def carregar_arquivo() -> dict:
     try:
         with open(DURACOES_PATH, encoding="utf-8") as f:
@@ -247,12 +314,19 @@ def main() -> int:
     ap.add_argument("--revisar", action="store_true", help="só relatório, não grava")
     ap.add_argument("--sobrescrever", action="store_true",
                     help="substitui durações já preenchidas")
+    ap.add_argument("--diagnostico", action="store_true",
+                    help="mostra o infobox cru do que ficou sem duração; não grava")
     args = ap.parse_args()
 
     config = monitor.load_config()
     dados = carregar_arquivo()
     dados.setdefault("rides", {})
     achadas, faltando = 0, []
+
+    if args.diagnostico:
+        relatar_campos_crus(config, dados)
+        print("\n--diagnostico: nada gravado.")
+        return 0
 
     for parque, cfg in config["parks"].items():
         atuais = dados["rides"].setdefault(parque, {})
