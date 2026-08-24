@@ -80,11 +80,39 @@ def minutos_do_texto(texto: str) -> int | None:
     return max(1, int(segundos / 60 + 0.5))
 
 
+# Atração que existe em vários resorts tem UM artigo na Wikipédia cobrindo
+# todos, e a duração do infobox é a de alguma instalação — normalmente a
+# original. Medido em 24/08/2026: o artigo do Pirates devolveu 16 min, que é o
+# da Disneyland; o do Magic Kingdom é bem mais curto. Duração do parque errado é
+# pior que duração nenhuma, porque parece certa e ninguém desconfia.
+RESORTS = (
+    "disneyland park", "disneyland resort", "magic kingdom", "tokyo disneyland",
+    "tokyo disneysea", "disneyland paris", "walt disney studios park",
+    "shanghai disneyland", "hong kong disneyland", "disney california adventure",
+    "epcot", "disney's hollywood studios", "disney's animal kingdom",
+    "universal studios hollywood", "universal studios florida",
+    "universal studios japan", "universal studios singapore",
+    "universal studios beijing", "islands of adventure", "epic universe",
+)
+
+
+def resorts_citados(wikitexto: str) -> set[str]:
+    """Resorts que aparecem no infobox. Mais de um = duração ambígua."""
+    inicio = wikitexto.lower()
+    fim = inicio.find("\n}}")
+    trecho = inicio[:fim if fim > 0 else 4000]
+    return {nome for nome in RESORTS if nome in trecho}
+
+
 def campo_duration(wikitexto: str) -> str | None:
     """Extrai o valor de `duration` do infobox, parando na próxima chave."""
     casado = re.search(r"\|\s*duration\s*=\s*(.+?)(?=\n\s*\||\n\}\})",
                        wikitexto, re.S | re.I)
     return casado.group(1).strip() if casado else None
+
+
+class Ambigua(Exception):
+    """O artigo cobre mais de um resort: a duração do infobox não diz qual."""
 
 
 def consultar(parametros: dict) -> dict:
@@ -123,6 +151,9 @@ def duracao_da_pagina(titulo: str) -> int | None:
             texto = pagina["revisions"][0]["slots"]["main"]["*"]
         except (KeyError, IndexError, TypeError):
             continue
+        resorts = resorts_citados(texto)
+        if len(resorts) > 1:
+            raise Ambigua(sorted(resorts))
         return minutos_do_texto(campo_duration(texto) or "")
     return None
 
@@ -159,6 +190,11 @@ def main() -> int:
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
                 minutos = duracao_da_pagina(titulo) if titulo else None
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
+            except Ambigua as exc:
+                onde = ", ".join(exc.args[0])
+                print(f"  ? {atracao} — artigo cobre vários parques ({onde})")
+                faltando.append((parque, atracao, f"ambíguo: {onde}"))
+                continue
             except Exception as exc:  # noqa: BLE001 — uma atração não derruba o resto
                 motivo = (f"falha de rede ({type(exc).__name__})"
                           if isinstance(exc, (OSError, ValueError))
