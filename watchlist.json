@@ -171,6 +171,12 @@
       "text": "Abre AGORA a compra do Lightning Lane Multi-Pass do Hollywood Studios (dia 13/10). E manual, no My Disney Experience, e as melhores janelas somem cedo."
     },
     {
+      "id": "conferir-duracao-rise-2026-10-13",
+      "date": "2026-10-13",
+      "hour": "08:00",
+      "text": "Hoje no Hollywood Studios: conferir a duracao real do Rise of the Resistance. O duracoes.json diz 7 min, e ele destoa — em todas as outras com pre-show longo o TouringPlans soma o pre-show (Tower of Terror 15 contra 3:34 de ciclo). O Rise tem uns 10 min de pre-shows antes do trackless, entao 7 parece ser so a parte final. Cronometre da entrada da fila ate a saida e corrija o arquivo se for o caso."
+    },
+    {
       "id": "multipass-magic-kingdom-2026-10-14",
       "date": "2026-10-14",
       "hour": "07:00",
