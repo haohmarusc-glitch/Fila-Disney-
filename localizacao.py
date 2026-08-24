@@ -610,6 +610,10 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
     medalhas = ("🥇", "🥈", "🥉", "4️⃣", "5️⃣")
     pontuado = com_score(ranking, park_name, config, conn)
     origens = {item[4]: item[6] for item in ranking_detalhado}
+    # Rota por colocado, não só para o campeão: quem escolhe o 2º lugar —
+    # porque o 1º é o que acabou de fazer — ficava sem mapa. O nome vira o
+    # link; o rodapé continua com a rota do melhor, que é o gesto rápido.
+    destinos = {item[4]: (item[7] or item[5]) for item in ranking_detalhado}
     for i, (item, score) in enumerate(pontuado[:limite]):
         total, fila, caminhada, metros, nome, _coord = item
         medalha = medalhas[i] if i < len(medalhas) else "•"
@@ -618,8 +622,14 @@ def format_perto(posicao, park_name, payload, config, coords, conn=None, limite=
             linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — fila {fila} min{seta}")
             linhas.append("     <i>sem coordenada: distância desconhecida</i>")
             continue
+        destino = destinos.get(nome)
+        rotulo = notifier.esc(nome)
+        if destino is not None:
+            url = MAPS_URL.format(o_lat=posicao[0], o_lon=posicao[1],
+                                  d_lat=destino[0], d_lon=destino[1])
+            rotulo = f'<a href="{url}">{rotulo}</a>'
         estrela = f" · qualidade da fila ⭐ {score}" if score is not None else ""
-        linhas.append(f"{medalha} <b>{notifier.esc(nome)}</b> — <b>{total} min</b> no total{estrela}")
+        linhas.append(f"{medalha} <b>{rotulo}</b> — <b>{total} min</b> no total{estrela}")
         perfil = perfil_historico(conn, config, park_name, nome, fila)
         classe = classificar_fila(fila, perfil)
         contexto = f" · {classe}" if classe else ""
