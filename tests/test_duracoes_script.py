@@ -195,3 +195,49 @@ class TestBuscaPassaPeloMonitor(unittest.TestCase):
         lidas = duracoes.coletar("Disney Magic Kingdom", "/magic-kingdom/attractions/duration")
         self.assertEqual(chamadas, ["https://touringplans.com/magic-kingdom/attractions/duration"])
         self.assertIn("Space Mountain", lidas)
+
+
+class TestContagemDeReferencia(unittest.TestCase):
+    """Página com bem menos atrações que o medido é parser quebrado, não parque.
+
+    A v1 devolveu ZERO nos sete parques e o CI estava verde. A contagem de
+    referência é o alarme que teria pego: 0 de 76 não é flutuação sazonal.
+    """
+
+    def test_toda_pagina_tem_referencia(self):
+        self.assertEqual(set(duracoes.CONTAGENS_REFERENCIA), set(duracoes.PAGINAS))
+
+    def test_referencias_batem_com_o_medido(self):
+        """Colhido na VPS em 24/08/2026. Mudou muito? Medir de novo, não afrouxar."""
+        self.assertEqual(duracoes.CONTAGENS_REFERENCIA["Disney Magic Kingdom"], 76)
+        self.assertEqual(duracoes.CONTAGENS_REFERENCIA["Epcot"], 94)
+        self.assertEqual(duracoes.CONTAGENS_REFERENCIA["Universal Epic Universe"], 19)
+
+
+class TestAjustesManuais(unittest.TestCase):
+    """Correção verificada à mão sobrevive à recoleta e declara proveniência."""
+
+    def test_todo_ajuste_tem_minutos_fonte_e_atracao_da_watchlist(self):
+        import json
+        import monitor as m
+        dados = json.load(open("duracoes.json"))
+        watchlist = m.load_config()["parks"]
+        ajustes = dados.get("_ajustes", {})
+        self.assertTrue(ajustes, "o Rise de 18 min tem que estar aqui")
+        for parque, itens in ajustes.items():
+            for atracao, ajuste in itens.items():
+                with self.subTest(atracao=atracao):
+                    self.assertIn(atracao, watchlist[parque]["attractions"])
+                    self.assertIsInstance(ajuste["minutos"], int)
+                    self.assertGreater(ajuste["minutos"], 0)
+                    self.assertTrue(ajuste["fonte"].strip(),
+                                    "ajuste sem proveniência é chute com outro nome")
+
+    def test_o_ajuste_esta_aplicado_no_dado_vigente(self):
+        """O _ajustes documenta; o rides é o que o bot lê. Os dois têm que bater."""
+        import json
+        dados = json.load(open("duracoes.json"))
+        for parque, itens in dados.get("_ajustes", {}).items():
+            for atracao, ajuste in itens.items():
+                with self.subTest(atracao=atracao):
+                    self.assertEqual(dados["rides"][parque][atracao], ajuste["minutos"])
