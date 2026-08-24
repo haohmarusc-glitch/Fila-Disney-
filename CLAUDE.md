@@ -36,13 +36,21 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     em que foi gerado, e um watchdog que recebe batida atrasada é pior que um que
     não recebe nada. Exceção nova só existe se entrar nesta regra.
 12. Distância/tempo a pé só sai de coordenada real do `coords.json`, e duração de
-    atração só sai do `duracoes.json`. A duração é o **tempo total** — pré-show
-    obrigatório, a atração e a folga para sair —, não o ciclo do brinquedo, porque
-    é o total que responde "cabe antes de fechar". Onde há pré-show os dois números
-    divergem muito: o Mission: SPACE tem 6 min de ciclo e 15 de total. Fonte é o
-    TouringPlans, via `duracoes.py`; a Wikipédia foi abandonada em 24/08/2026 por
-    medir o ciclo, e o Wikidata por ter o item mas com o P2047 vazio (números em
-    `duracoes.json:_fontes_esgotadas`). **Nunca misturar as duas medidas no mesmo
+    atração só sai do `duracoes.json`. A duração **quer ser** o tempo total —
+    pré-show obrigatório, a atração e a folga para sair —, não o ciclo do
+    brinquedo, porque é o total que responde "cabe antes de fechar". Onde há
+    pré-show os dois números divergem muito: o Mission: SPACE tem 6 min de ciclo
+    e 15 de total. Fonte é o TouringPlans, via `duracoes.py`; a Wikipédia foi
+    abandonada em 24/08/2026 por medir o ciclo, e o Wikidata por ter o item mas
+    com o P2047 vazio (números em `duracoes.json:_fontes_esgotadas`). **Mas a
+    fonte não cumpre isso em tudo**: medido em 24/08/2026, 17 das 31 atrações
+    com as duas medidas têm `rides - veiculo < 2`, e casos como o TRON (total=1)
+    ou o Gringotts (total = ciclo) são claramente o ciclo. Onde isso acontece a
+    tela subestima o compromisso e o "cabe antes de fechar" erra **para menos**,
+    nunca para mais. Não foi corrigido porque corrigir exigiria número sem
+    fonte; o conserto é cronometrar in loco e promover a `_ajustes` com
+    proveniência, como se fez com o Rise of the Resistance. Detalhe e lista em
+    `duracoes.json:_limite_da_fonte`. **Nunca misturar as duas medidas no mesmo
     campo** — se o coletor não fechar os sete parques, ele não grava nada, de
     propósito. Elas coexistem em seções rotuladas do mesmo arquivo: `rides` é o
     total e `veiculo` é o ciclo (Wikipédia, 31 atrações), e o pré-show/embarque
