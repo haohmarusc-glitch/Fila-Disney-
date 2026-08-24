@@ -318,3 +318,78 @@ class TestVigiasPayload(unittest.TestCase):
         payload = api_server.build_vigias_payload(self.conn, self.config)
         self.assertEqual(payload["vigias"], [])
         self.assertEqual(payload["max_por_chat"], 5)
+
+
+class TestParquePayload(unittest.TestCase):
+    """O /parque é o /status em JSON: consulta sem GPS, para a aba Roteiro."""
+
+    def setUp(self):
+        import importlib
+        import tempfile
+        from pathlib import Path
+        for nome in ("monitor", "localizacao"):
+            sys.modules.pop(nome, None)
+        self.monitor = importlib.import_module("monitor")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.monitor.DB_PATH = Path(tmp.name) / "h.db"
+        self.monitor.DURACOES_PATH = Path(tmp.name) / "duracoes.json"
+        import json as _json
+        self.monitor.DURACOES_PATH.write_text(_json.dumps({
+            "rides": {"Disney Animal Kingdom": {"Kilimanjaro Safaris": 20}},
+            "veiculo": {},
+        }), encoding="utf-8")
+        self.conn = self.monitor.init_db()
+        self.addCleanup(self.conn.close)
+        self.config = self.monitor.load_config()
+        api_server.monitor = self.monitor
+        api_server._cache.clear()
+        agora = self.monitor.utc_now().isoformat()
+        self.payload = {"lands": [{"name": "L", "rides": [
+            {"id": 1, "name": "Kilimanjaro Safaris", "is_open": True,
+             "wait_time": 20, "last_updated": agora},
+            {"id": 2, "name": "Kali River Rapids", "is_open": False,
+             "wait_time": None, "last_updated": agora},
+            {"id": 3, "name": "Tree of Life", "is_open": True,
+             "wait_time": 0, "last_updated": agora},
+        ]}]}
+        api_server._cache[99] = (1e18, self.payload)  # cache quente: sem rede
+        self.park_ids = {"Disney Animal Kingdom": 99, "Epcot": 5}
+
+    def _payload(self, busca="animal"):
+        import time as _t
+        api_server._cache[99] = (_t.monotonic(), self.payload)
+        return api_server.build_parque_payload(busca, self.conn, self.config, self.park_ids)
+
+    def test_resolve_por_pedaco_do_nome(self):
+        dados = self._payload("animal")
+        self.assertEqual(dados["park"], "Disney Animal Kingdom")
+        self.assertEqual(dados["attribution"], "Powered by Queue-Times.com")
+
+    def test_parque_inexistente_e_erro_claro(self):
+        with self.assertRaises(ValueError):
+            self._payload("shangri-la")
+
+    def test_busca_ambigua_lista_os_candidatos(self):
+        self.park_ids["Disney Animal Kingdom 2"] = 100
+        with self.assertRaises(ValueError) as ctx:
+            self._payload("animal")
+        self.assertIn("ambígua", str(ctx.exception))
+
+    def test_so_watchlist_entra_e_com_duracao(self):
+        itens = {i["ride"]: i for i in self._payload()["items"]}
+        self.assertIn("Kilimanjaro Safaris", itens)
+        self.assertNotIn("Tree of Life", itens, "fora da watchlist não polui")
+        self.assertEqual(itens["Kilimanjaro Safaris"]["duracao_min"], 20)
+        self.assertEqual(itens["Kilimanjaro Safaris"]["wait"], 20)
+
+    def test_fechada_sem_fila_e_None_nunca_zero(self):
+        itens = {i["ride"]: i for i in self._payload()["items"]}
+        kali = itens["Kali River Rapids"]
+        self.assertFalse(kali["aberta"])
+        self.assertIsNone(kali["wait"])
+
+    def test_abertas_vem_antes_por_fila(self):
+        nomes = [i["ride"] for i in self._payload()["items"]]
+        self.assertEqual(nomes[0], "Kilimanjaro Safaris")
+        self.assertEqual(nomes[-1], "Kali River Rapids")

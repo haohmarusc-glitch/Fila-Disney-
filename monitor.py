@@ -1710,14 +1710,25 @@ def format_confianca(conn: sqlite3.Connection, config: dict, park: str,
             "Compara o valor publicado com o mesmo dia da semana e horário; não mede a espera real.")
 
 
-def format_lotacao(conn: sqlite3.Connection, config: dict, park: str, payload: dict) -> str:
+def calcular_lotacao(conn: sqlite3.Connection, config: dict, park: str,
+                     payload: dict) -> dict | None:
+    """Números da lotação estimada, sem formatação — a regra num lugar só.
+
+    O /lotacao do Telegram e o /parque da API consomem daqui. Extraído do
+    formatador exatamente para não duplicar o cálculo: foi duplicação de regra
+    que produziu o offset -4 cravado do resumo diário.
+
+    Devolve None sem filas atuais suficientes. `nivel` vem None quando o
+    histórico da mesma hora/dia é curto — sem base de comparação não há
+    "cheio" nem "leve", só a média publicada.
+    """
     atuais = [int(r["wait_time"]) for _l, r in iter_rides(payload)
               if r.get("is_open") and r.get("wait_time") is not None
               and not fila_paralela(r["name"]) and not leitura_obsoleta(r)]
     fechadas = sum(1 for _l, r in iter_rides(payload)
                    if not r.get("is_open") and not fila_paralela(r["name"]))
     if not atuais:
-        return f"⚠️ <b>{notifier.esc(park)}</b> sem filas atuais suficientes para estimar lotação."
+        return None
     momento = now_park(config)
     fuso = ZoneInfo(config["trip"]["timezone"])
     def selecionar_historico(rows):
@@ -1744,20 +1755,39 @@ def format_lotacao(conn: sqlite3.Connection, config: dict, park: str, payload: d
     if len(historico) < 12:
         historico = selecionar_historico(conn.execute(base_sql, (park,)).fetchall())
     media = sum(atuais) / len(atuais)
-    if len(historico) < 12:
-        nivel = "dados históricos insuficientes"
-        detalhe = f"Média publicada agora: {media:.0f} min"
-    else:
+    resultado = {"media": round(media, 1), "fechadas": fechadas,
+                 "instavel": fechadas >= 3, "nivel": None,
+                 "p25": None, "p75": None, "amostras": len(historico)}
+    if len(historico) >= 12:
         p25 = localizacao.percentil(historico, .25)
         mediana = localizacao.percentil(historico, .5)
         p75 = localizacao.percentil(historico, .75)
-        nivel = ("🟢 leve" if media <= p25 else "🟡 normal" if media <= mediana
-                 else "🟠 cheia" if media <= p75 else "🔴 excepcionalmente cheia")
-        detalhe = f"Agora {media:.0f} min · faixa comum {p25:.0f}–{p75:.0f} min · n={len(historico)}"
-    instavel = "⚠️ operação instável" if fechadas >= 3 else "operação estável"
+        resultado.update(
+            p25=round(p25), p75=round(p75),
+            nivel=("leve" if media <= p25 else "normal" if media <= mediana
+                   else "cheia" if media <= p75 else "excepcional"))
+    return resultado
+
+
+_EMOJI_NIVEL = {"leve": "🟢 leve", "normal": "🟡 normal", "cheia": "🟠 cheia",
+                "excepcional": "🔴 excepcionalmente cheia"}
+
+
+def format_lotacao(conn: sqlite3.Connection, config: dict, park: str, payload: dict) -> str:
+    dados = calcular_lotacao(conn, config, park, payload)
+    if dados is None:
+        return f"⚠️ <b>{notifier.esc(park)}</b> sem filas atuais suficientes para estimar lotação."
+    if dados["nivel"] is None:
+        nivel = "dados históricos insuficientes"
+        detalhe = f"Média publicada agora: {dados['media']:.0f} min"
+    else:
+        nivel = _EMOJI_NIVEL[dados["nivel"]]
+        detalhe = (f"Agora {dados['media']:.0f} min · faixa comum "
+                   f"{dados['p25']}–{dados['p75']} min · n={dados['amostras']}")
+    instavel = "⚠️ operação instável" if dados["instavel"] else "operação estável"
     return (f"👥 <b>Lotação estimada — {notifier.esc(park)}</b>\n\n"
             f"Nível: <b>{nivel}</b>\n{detalhe}\n"
-            f"Atrações fechadas: {fechadas} · {instavel}\n\n"
+            f"Atrações fechadas: {dados['fechadas']} · {instavel}\n\n"
             "Estimativa pela distribuição das filas; não é contagem de pessoas.")
 
 

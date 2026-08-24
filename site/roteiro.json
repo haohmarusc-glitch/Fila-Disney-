@@ -1,0 +1,188 @@
+{
+  "_fonte": "Roteiro Guia dos Parques (17/08/2026), etapa 3 do planejamento. Transcrito dos .docx da familia em 24/08/2026. Os dias de parque tem que bater com o park_days da watchlist.json — regra 17: mudou o roteiro, muda os dois juntos (ha teste garantindo).",
+  "titulo": "Viagem Flórida 2026",
+  "subtitulo": "12 a 25 de outubro · grupo de 8 · casa em Kissimmee + 2 noites Miami",
+  "dias": [
+    {
+      "data": "2026-10-12",
+      "rotulo": "Chegada",
+      "parque": null,
+      "destaque": "Chegada em Orlando e instalação na casa de Kissimmee",
+      "timeline": [],
+      "notas": "Mercado (Publix/Target) para abastecer a casa. Vincular os ingressos nos apps antes de qualquer compra de fura-fila."
+    },
+    {
+      "data": "2026-10-13",
+      "rotulo": "Hollywood Studios",
+      "parque": "Disney Hollywood Studios",
+      "destaque": "Lightning Lane Multi-Pass + Rise of the Resistance",
+      "timeline": [
+        {"hora": "07h00", "texto": "Sair de Kissimmee. Meta: estacionamento 60 min antes da abertura."},
+        {"hora": "Pré-abertura", "texto": "No app: reservar Slinky Dog Dash como 1ª janela do Multi-Pass. Avaliar Single de Rise se fila projetada > 90 min."},
+        {"hora": "Abertura", "texto": "Rope drop: Tower of Terror ou Rock 'n' Roller Coaster. Depois as duas em sequência."},
+        {"hora": "Manhã", "texto": "Rise of the Resistance (standby cedo ou Single). Millennium Falcon. Janelas do Multi-Pass: Runaway Railway, Toy Story Mania, Alien Swirling Saucers."},
+        {"hora": "Almoço", "texto": "Docking Bay 7 ou Woody's Lunch Box. Mobile Order. 60–90 min de pausa com ar-condicionado."},
+        {"hora": "Tarde", "texto": "Slinky Dog na janela. Shows (Indiana Jones ou Frozen Sing-Along). Segunda rodada via Multi-Pass."},
+        {"hora": "Noite", "texto": "Se tiver Fantasmic, lugar 45 min antes. Jantar leve e volta para a casa."}
+      ],
+      "furafila": "Multi-Pass obrigatório — compra a partir de 10/10 (~US$ 21–24 p/p). Single de Rise: avaliar no dia.",
+      "notas": "MNSSHP no MK empurra gente para os outros parques, HS incluído: reforça a disciplina do rope drop. Lotação prevista UT 6/10."
+    },
+    {
+      "data": "2026-10-14",
+      "rotulo": "Animal Kingdom",
+      "parque": "Disney Animal Kingdom",
+      "destaque": "Avatar Flight of Passage (Single) + Kilimanjaro Safaris",
+      "timeline": [
+        {"hora": "07h30", "texto": "Sair de Kissimmee. Estar na abertura."},
+        {"hora": "Abertura", "texto": "Direto para Kilimanjaro Safaris — animais ativos cedo; entre 11h e 15h a savana vira soneca coletiva."},
+        {"hora": "Manhã", "texto": "Expedition Everest (single rider se a fila crescer). Kali River Rapids (molha de verdade: capa ou roupa extra). Trilha Gorilla Falls."},
+        {"hora": "Single Pass", "texto": "Flight of Passage na janela comprada, ideal fim da manhã. Depois Na'vi River Journey se a fila estiver boa (ou 90 min antes do fechamento)."},
+        {"hora": "Almoço", "texto": "Satu'li Canteen (Pandora). Mobile Order."},
+        {"hora": "Tarde", "texto": "Festival of the Lion King + Zootopia: Better Zoogether. Feathered Friends ou Finding Nemo se sobrar fôlego."},
+        {"hora": "Fim do dia", "texto": "Sair no fechamento (AK fecha cedo, 19h–20h típico). Jantar perto da casa e sono cedo: quinta tem EPCOT."}
+      ],
+      "furafila": "Single Pass do Flight of Passage (não entra no Multi-Pass).",
+      "notas": "Dia de recuperação disfarçado: sombra e shows sentados. Dinoland/DINOSAUR fechou em 2026 — não existe mais. Lotação UT 5/10.",
+      "analise_troca": "A troca 14↔17 (AK no sábado, MK na quarta) é a única alternativa considerada no planejamento: melhora a lotação do MK, mas tira o MK do fim de semana do aniversário e deixa o sábado sem programa noturno. Decisão: manter."
+    },
+    {
+      "data": "2026-10-15",
+      "rotulo": "EPCOT + Food & Wine",
+      "parque": "Epcot",
+      "destaque": "Guardians Cosmic Rewind + quiosques do festival",
+      "timeline": [
+        {"hora": "08h30", "texto": "Chegar pela entrada principal. Rope drop em Test Track ou área de Guardians."},
+        {"hora": "Single Pass", "texto": "Guardians of the Galaxy: Cosmic Rewind — single rider não existe, a janela vale ouro."},
+        {"hora": "Manhã", "texto": "Frozen Ever After e Remy's Ratatouille assim que o World Showcase abrir (11h), antes das filas."},
+        {"hora": "Almoço = festival", "texto": "Quiosques na abertura (10h30–11h): almoço em 4–6 paradas pequenas, pratos divididos no grupo de 8."},
+        {"hora": "Tarde", "texto": "Soarin', The Seas with Nemo, aquário e pavilhões com ar-condicionado no pico do calor."},
+        {"hora": "Noite", "texto": "Mais quiosques ou Biergarten (reservar). Fechar com Luminous (~21h) visto da lagoa."}
+      ],
+      "furafila": "Single Pass do Guardians.",
+      "notas": "Quinta antes das 16h é o cenário perfeito do Food & Wine, sem as multidões de fim de semana. Lotação UT 5/10 — melhor dia Disney."
+    },
+    {
+      "data": "2026-10-16",
+      "rotulo": "Descanso + Compras",
+      "parque": null,
+      "destaque": "Premium Outlets, Best Buy, Ross + piscina",
+      "timeline": [
+        {"hora": "Manhã", "texto": "Piscina da casa + preguiça."},
+        {"hora": "Tarde", "texto": "Premium Outlets International Drive + Best Buy + Ross. Reabastecer no Publix ou Target."},
+        {"hora": "Noite", "texto": "Dormir cedo: sábado é o dia D do Magic Kingdom."}
+      ],
+      "notas": "Este dia existe para chegar no sábado com energia. Não encher de programação."
+    },
+    {
+      "data": "2026-10-17",
+      "rotulo": "Magic Kingdom — dia D",
+      "parque": "Disney Magic Kingdom",
+      "destaque": "Dia completo + fogos Happily Ever After + TRON",
+      "timeline": [
+        {"hora": "06h45", "texto": "Sair de Kissimmee. Sábado de fall break: estacionamento e balsa/monotrilho demoram. Meta: portão 60 min antes."},
+        {"hora": "Pré-abertura", "texto": "Multi-Pass: 1ª janela em Seven Dwarfs ou Peter Pan. Singles de TRON e Tiana já comprados, distribuídos entre manhã e tarde."},
+        {"hora": "Abertura", "texto": "Lado oeste: Jungle Cruise → Pirates → Haunted Mansion, enquanto a massa corre para Fantasyland e Tomorrowland."},
+        {"hora": "Manhã", "texto": "Big Thunder Mountain. Tiana na janela do Single. Multi-Pass sem parar: usou uma janela, reserva a próxima."},
+        {"hora": "Almoço", "texto": "Columbia Harbour House ou Pecos Bill. Pausa real de 90 min — sábado à tarde é o pico."},
+        {"hora": "Tarde", "texto": "Space Mountain e Buzz (standby ou Multi-Pass). TRON na janela do Single. PeopleMover e shows no pico."},
+        {"hora": "Fogos", "texto": "Happily Ever After ~21h (confirmar no app). Main Street entre a praça e o castelo, 45–60 min antes. É o clímax."}
+      ],
+      "furafila": "Multi-Pass (compra a partir de 14/10) + Singles de TRON e Tiana.",
+      "notas": "Sábado de fall break (lotação alta), mas é o ÚNICO dia da janela sem festa: 13, 15, 16 e 18 têm MNSSHP e o MK fecha às 18h. Artilharia completa.",
+      "analise_troca": "Trocar MK para quarta 14 seria tecnicamente melhor em lotação, mas tira o MK da véspera do aniversário e deixa o sábado sem programa noturno (AK fecha cedo). Decisão do planejamento: manter e compensar com rope drop + Multi-Pass + dois Singles."
+    },
+    {
+      "data": "2026-10-18",
+      "rotulo": "Descanso + Aniversário da Débora",
+      "parque": null,
+      "destaque": "Jantar no California Grill · fogos da festa ~21h15 do deck",
+      "timeline": [
+        {"hora": "Dia", "texto": "Livre: piscina, malas. Opcional para os animados: um dos 2 dias grátis do ingresso Universal numa esticada curta ao Wizarding World."},
+        {"hora": "20h00", "texto": "Jantar de aniversário no California Grill (topo do Contemporary). Alternativas: Narcoossee's ou Cítricos."},
+        {"hora": "21h15", "texto": "Fogos da MNSSHP vistos do deck de observação do restaurante."}
+      ],
+      "notas": "Reserva abriu 19/08 (60 dias antes), para 8 pessoas. Sem ingresso de parque neste dia."
+    },
+    {
+      "data": "2026-10-19",
+      "rotulo": "Islands of Adventure",
+      "parque": "Islands Of Adventure At Universal Orlando",
+      "destaque": "Hagrid + VelociCoaster (sem Express)",
+      "timeline": [
+        {"hora": "07h45", "texto": "Estacionamento Universal 60 min antes. Percurso até o portão: 15–20 min a pé."},
+        {"hora": "Abertura", "texto": "Direto para Hagrid's (sem single rider confiável). Na sequência imediata: VelociCoaster (tem single rider)."},
+        {"hora": "Manhã", "texto": "Skull Island, Hulk (single rider), combo aquático: Jurassic Park River Adventure + Ripsaw Falls + Bilge Rat Barges, já molhados."},
+        {"hora": "Almoço", "texto": "Three Broomsticks (Hogsmeade) ou Mythos."},
+        {"hora": "Tarde", "texto": "Forbidden Journey com calma (a fila do castelo merece). Hippogriff. Spider-Man e Doctor Doom no fim da tarde."},
+        {"hora": "Fim do dia", "texto": "Hogwarts Express para Diagon Alley (ingresso Park-to-Park) ou sair pelo portão. Jantar no CityWalk se quiser."}
+      ],
+      "furafila": "Sem Express: rope drop agressivo + single rider (VelociCoaster, Hulk e outras).",
+      "notas": "Segunda sem HHN: ritmo normal. Lotação UT 6/10."
+    },
+    {
+      "data": "2026-10-20",
+      "rotulo": "Universal Studios Florida",
+      "parque": "Universal Studios At Universal Orlando",
+      "destaque": "Diagon Alley + Gringotts — dia SEM HHN, noite completa",
+      "timeline": [
+        {"hora": "08h00", "texto": "Mesma logística da véspera. Abertura: direto para Escape from Gringotts — a massa NÃO vai toda para lá cedo, e a fila explode depois."},
+        {"hora": "Manhã", "texto": "Revenge of the Mummy (quase walk-on cedo + single rider), Transformers, Men in Black, Simpsons Ride."},
+        {"hora": "Almoço", "texto": "Leaky Cauldron (Diagon Alley) — o melhor serviço rápido do USF. Sorvete da Florean Fortescue."},
+        {"hora": "Tarde", "texto": "E.T. Adventure, DreamWorks Land (Trolls + Po), Villain-Con. Shows para sentar: Bourne Stuntacular e Horror Make-Up."},
+        {"hora": "Fim de tarde", "texto": "Hogwarts Express ida e volta se faltou. Diagon Alley ao entardecer — o dragão cuspindo fogo."},
+        {"hora": "Noite", "texto": "Jantar no parque ou CityWalk + CineSational no lago. Último dia com noite de parque."}
+      ],
+      "furafila": "Sem Express: rope drop no Gringotts + single rider (Mummy, MIB).",
+      "notas": "Terça é o melhor dia estatístico da Universal, e 20/10 não tem HHN: horário noturno completo. Lotação UT 5/10."
+    },
+    {
+      "data": "2026-10-21",
+      "rotulo": "Epic Universe — gran finale",
+      "parque": "Universal Epic Universe",
+      "destaque": "Express Pass + Mario Kart + Stardust Racers",
+      "timeline": [
+        {"hora": "07h30", "texto": "Chegar 60–75 min antes. Entrada e estacionamento próprios; margem extra porque tudo é novo."},
+        {"hora": "Abertura", "texto": "Antes de usar Express: correr para Super Nintendo World — Mine-Cart Madness e Mario Kart, as maiores filas do dia."},
+        {"hora": "Manhã", "texto": "Isle of Berk: Hiccup's Wing Gliders + Fyre Drill. Dark Universe: Monsters Unchained + Curse of the Werewolf (Express)."},
+        {"hora": "Meio-dia", "texto": "Stardust Racers com Express (a fila estabiliza no meio do dia). Almoço em Celestial Park via mobile order."},
+        {"hora": "Tarde", "texto": "Ministry of Magic: Battle at the Ministry (Express; pode exigir fila virtual — conferir no app cedo). Le Cirque Arcanus. Constellation Carousel."},
+        {"hora": "Noite", "texto": "Repetições via single rider (7 atrações têm) + show noturno do lago no fechamento. Despedida dos parques."}
+      ],
+      "furafila": "Express Pass comprado (~US$ 224 p/p, cobre 12 de 15 atrações, uso único por atração).",
+      "notas": "Pior lotação da janela (UT 7/10), compensada pelo Express. HHN à noite é no USF, não afeta. Magic × Hawks em Orlando à noite: não emendar."
+    },
+    {
+      "data": "2026-10-22",
+      "rotulo": "Estrada para Miami",
+      "parque": null,
+      "destaque": "Check-out da casa e viagem Orlando → Miami",
+      "timeline": [],
+      "notas": "2 SUVs, ~3h30 de estrada. Duas noites em North Miami Beach."
+    },
+    {
+      "data": "2026-10-23",
+      "rotulo": "Miami",
+      "parque": null,
+      "destaque": "Dia em Miami · noite: Lincoln Road ou Heat × Pistons (20h)",
+      "timeline": [],
+      "notas": "Decisão em aberto do planejamento: trocar o jantar da Lincoln Road pelo jogo do Heat no Kaseya Center (20 min de carro). Ingressos fora do teto de bem-estar."
+    },
+    {
+      "data": "2026-10-24",
+      "rotulo": "Miami",
+      "parque": null,
+      "destaque": "Praia e último dia inteiro da viagem",
+      "timeline": [],
+      "notas": ""
+    },
+    {
+      "data": "2026-10-25",
+      "rotulo": "Volta ao Brasil",
+      "parque": null,
+      "destaque": "Voo de volta",
+      "timeline": [],
+      "notas": ""
+    }
+  ]
+}

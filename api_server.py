@@ -114,6 +114,51 @@ def esperar_banco(espera_s: int = ESPERA_BANCO_S) -> None:
         time.sleep(2)
 
 
+def build_parque_payload(busca: str, conn, config: dict, park_ids: dict) -> dict:
+    """As filas da watchlist de um parque, SEM precisar de GPS.
+
+    É o /status em JSON: a aba Roteiro do site consulta qualquer dia da viagem
+    de casa, do hotel ou do parque errado — o /perto exige estar lá dentro, e
+    planejar é justamente olhar antes de estar.
+    """
+    matches = monitor.match_parks(busca, park_ids)
+    if not matches:
+        raise ValueError(f"parque não encontrado: {busca!r}")
+    if len(matches) > 1:
+        raise ValueError("busca ambígua: " + ", ".join(sorted(matches)))
+    park = matches[0]
+    payload = payload_do_parque(park_ids[park], time.monotonic())
+    park_cfg = config["parks"].get(park, {})
+    limite_obsoleto = config.get("alert", {}).get("max_staleness_minutes", 20)
+    duracoes = monitor.carregar_duracoes()
+    veiculos = monitor.carregar_veiculos()
+    itens = []
+    for _land, ride in monitor.iter_rides(payload):
+        canonico = monitor.nome_watchlist(park_cfg, ride["name"])
+        if canonico is None:
+            continue
+        wait = ride.get("wait_time")
+        itens.append({
+            "ride": canonico,
+            "wait": wait,  # None é None — nunca 0 (regra 15)
+            "threshold": park_cfg["attractions"].get(canonico),
+            "aberta": bool(ride.get("is_open")),
+            "obsoleta": monitor.leitura_obsoleta(ride, limite_obsoleto),
+            "duracao_min": monitor.duracao_da_atracao(duracoes, park, canonico),
+            "pre_min": monitor.pre_da_atracao(duracoes, veiculos, park, canonico),
+        })
+    itens.sort(key=lambda i: (not i["aberta"], i["wait"] if i["wait"] is not None else 999,
+                              i["ride"]))
+    horario = monitor.horario_operacao(conn, config, park)
+    return {
+        "park": park,
+        "horario": {"abre": horario[0], "fecha": horario[1]} if horario else None,
+        "lotacao": monitor.calcular_lotacao(conn, config, park, payload),
+        "items": itens,
+        "attribution": "Powered by Queue-Times.com",
+    }
+
+
 def _rotulo_do_chat(conn, chat_id) -> str:
     row = conn.execute(
         "SELECT nome FROM chat_names WHERE chat_id = ?", (str(chat_id),)).fetchone()
@@ -243,7 +288,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/health":
             return self._send(200, {"ok": True, "service": "fila-disney-api"})
-        if parsed.path not in ("/perto", "/vigias"):
+        if parsed.path not in ("/perto", "/vigias", "/parque"):
             return self._send(404, {"error": "rota não encontrada"})
         agora = time.monotonic()
         if bloqueado(agora):
@@ -258,6 +303,16 @@ class Handler(BaseHTTPRequestHandler):
                         PERTO_MAX_JANELA, PERTO_JANELA_S)
             return self._send(429, {"error": "muitos pedidos; tente em instantes"},
                               {"Retry-After": str(PERTO_JANELA_S)})
+        if parsed.path == "/parque":
+            try:
+                nome = (parse_qs(parsed.query).get("nome") or [""])[0]
+                return self._send(200, build_parque_payload(
+                    nome, self.server.conn, self.server.config, self.server.park_ids))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            except Exception:
+                log.exception("Falha em /parque")
+                return self._send(503, {"error": "filas temporariamente indisponíveis"})
         if parsed.path == "/vigias":
             try:
                 return self._send(200, build_vigias_payload(
