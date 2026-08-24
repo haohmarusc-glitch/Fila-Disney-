@@ -312,6 +312,16 @@ def init_db() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS reminders_sent ("
         "id TEXT PRIMARY KEY, sent_at TEXT NOT NULL)"
     )
+    # Atração fora da watchlist é descartada em silêncio no alerta e no /status,
+    # senão a mensagem viraria uma lista de 76 itens. O silêncio é certo para a
+    # tela e errado para a viagem: atração que ABRIR em setembro fica invisível
+    # até alguém chegar no parque. Esta tabela guarda o que a API já mostrou,
+    # para distinguir "sempre existiu e não interessa" de "apareceu agora".
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS atracoes_conhecidas ("
+        "park TEXT NOT NULL, ride TEXT NOT NULL, visto_em TEXT NOT NULL, "
+        "avisado INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (park, ride))"
+    )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS evening_alert ("
         "sent_on TEXT NOT NULL, park TEXT NOT NULL, PRIMARY KEY (sent_on, park))"
@@ -1159,6 +1169,110 @@ def format_reabertura(park: str, ride: str, wait: int | None) -> str:
     return (f"🚨 <b>REABRIU</b>\n\n<b>{notifier.esc(ride)}</b>\n"
             f"{notifier.esc(park)}\n{fila}\n\n"
             "Transição confirmada pelo Queue-Times; confira a entrada antes de caminhar.")
+
+
+def registrar_atracoes(conn: sqlite3.Connection, park: str, payload: dict) -> list[str]:
+    """Anota o que a API mostrou e devolve o que é NOVO neste parque.
+
+    A primeira vez que um parque aparece, tudo entra já marcado como avisado.
+    Sem essa semeadura, o primeiro ciclo depois do deploy anunciaria as 76
+    atrações do Magic Kingdom de uma vez — e o aviso que existe para chamar
+    atenção viraria a coisa que se aprende a ignorar.
+
+    Fila paralela não conta (regra 10): a API publica single rider como atração
+    separada, e ela nunca é novidade que interesse a alguém.
+    """
+    vistas = {ride for (ride,) in conn.execute(
+        "SELECT ride FROM atracoes_conhecidas WHERE park = ?", (park,))}
+    agora = utc_now().isoformat()
+    nomes = [ride["name"] for _land, ride in iter_rides(payload)
+             if not fila_paralela(ride["name"])]
+    primeira_vez = not vistas
+    novas = [n for n in nomes if n not in vistas]
+    if not novas:
+        return []
+    conn.executemany(
+        "INSERT OR IGNORE INTO atracoes_conhecidas (park, ride, visto_em, avisado) "
+        "VALUES (?, ?, ?, ?)",
+        [(park, nome, agora, 1 if primeira_vez else 0) for nome in novas])
+    conn.commit()
+    if primeira_vez:
+        log.info("%s: %d atrações registradas na primeira leitura", park, len(novas))
+        return []
+    return novas
+
+
+def atracoes_a_avisar(conn: sqlite3.Connection, park: str) -> list[str]:
+    return [ride for (ride,) in conn.execute(
+        "SELECT ride FROM atracoes_conhecidas WHERE park = ? AND avisado = 0 "
+        "ORDER BY ride", (park,))]
+
+
+def marcar_avisadas(conn: sqlite3.Connection, park: str, rides: list[str]) -> None:
+    conn.executemany(
+        "UPDATE atracoes_conhecidas SET avisado = 1 WHERE park = ? AND ride = ?",
+        [(park, ride) for ride in rides])
+    conn.commit()
+
+
+def fora_da_watchlist(config: dict, park: str, payload: dict) -> list[tuple[str, int | None]]:
+    """(nome, fila) do que a API devolve e a watchlist não cobre."""
+    park_cfg = config["parks"].get(park, {})
+    return [(ride["name"], ride.get("wait_time"))
+            for _land, ride in iter_rides(payload)
+            if not fila_paralela(ride["name"])
+            and get_threshold(park_cfg, ride["name"]) is None]
+
+
+def format_atracao_nova(park: str, ride: str, wait: int | None) -> str:
+    """Aviso de atração que a API passou a publicar."""
+    # Ausência de dado nunca vira 0 min (regra 15).
+    fila = f"{wait} min" if wait is not None else "sem fila publicada"
+    return (f"🆕 <b>Atração nova em {notifier.esc(park)}</b>\n\n"
+            f"<b>{notifier.esc(ride)}</b>\n"
+            f"Fila agora: {fila}\n\n"
+            "Não está na <code>watchlist.json</code>, então não entra em alerta "
+            "nem no /status até ser adicionada. Use /novidades para ver o resto.")
+
+
+def avisar_atracoes_novas(conn: sqlite3.Connection, config: dict, park: str,
+                          payload: dict) -> None:
+    """Avisa UMA vez por atração. Falha de envio deixa para o próximo ciclo."""
+    novas = registrar_atracoes(conn, park, payload)
+    pendentes = atracoes_a_avisar(conn, park)
+    if not pendentes:
+        return
+    filas = {nome: wait for nome, wait in fora_da_watchlist(config, park, payload)}
+    enviadas = []
+    for ride in pendentes:
+        if ride not in filas:  # entrou na watchlist antes de o aviso sair
+            enviadas.append(ride)
+            continue
+        if notifier.send(format_atracao_nova(park, ride, filas[ride])):
+            enviadas.append(ride)
+            log.info("ATRAÇÃO NOVA: %s / %s", park, ride)
+    if enviadas:
+        marcar_avisadas(conn, park, enviadas)
+    if novas and not enviadas:
+        log.warning("%s: %d atração(ões) nova(s) sem aviso enviado", park, len(novas))
+
+
+def format_novidades(config: dict, park: str, payload: dict) -> str:
+    """O que a API publica e a watchlist não cobre, por fila decrescente."""
+    fora = fora_da_watchlist(config, park, payload)
+    if not fora:
+        return (f"✅ <b>{notifier.esc(park)}</b>\n\n"
+                "Tudo que a API publica está na watchlist.")
+    com_fila = sorted(((w, n) for n, w in fora if w is not None), reverse=True)
+    sem_fila = sorted(n for n, w in fora if w is None)
+    linhas = [f"🆕 <b>Fora da watchlist — {notifier.esc(park)}</b>", ""]
+    linhas += [f"• {notifier.esc(nome)} — {wait} min" for wait, nome in com_fila]
+    if sem_fila:
+        linhas += ["", "<i>Sem fila publicada agora:</i>"]
+        linhas += [f"• {notifier.esc(nome)}" for nome in sem_fila]
+    linhas += ["", f"{len(fora)} atração(ões). Para entrar em alerta e no /status, "
+                   "adicione o nome e o limite na <code>watchlist.json</code>."]
+    return "\n".join(linhas)
 
 
 def maybe_alertar_reabertura(conn: sqlite3.Connection, config: dict, park: str,
@@ -2321,6 +2435,7 @@ HELP = (
     "/chuva — opções internas por fila + caminhada\n"
     "/resumo — previsão do dia pelo histórico (o mesmo das 7h)\n"
     "/resumo &lt;parque&gt; — previsão de um parque específico\n"
+    "/novidades &lt;parque&gt; — atrações que a API publica e a watchlist não cobre\n"
     "/parques — parques monitorados\n"
     "/perto — melhor atração agora considerando fila + caminhada\n"
     "/personagens_perto — encontros abertos perto da sua localização\n"
@@ -2749,7 +2864,8 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         return format_confianca(conn, config, park, ride, payload)
 
     comandos_parque = ("/status", "/resumo", "/menores", "/ranking", "/teste_alertas",
-                       "/fechadas", "/quebras", "/janela", "/lotacao", "/plano", "/chuva")
+                       "/fechadas", "/quebras", "/janela", "/lotacao", "/plano", "/chuva",
+                       "/novidades")
     if cmd not in comandos_parque:
         return HELP
     if cmd == "/teste_alertas" and not arg:
@@ -2827,6 +2943,8 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         ranking = [(wait, ride, park_name)
                    for wait, ride in maiores_filas(payload, config, 10)]
         return format_ranking_atual(ranking, config)
+    if cmd == "/novidades":
+        return format_novidades(config, park_name, payload)
     if cmd == "/fechadas":
         return format_fechadas(conn, config, park_name, payload)
     if cmd == "/lotacao":
@@ -2980,6 +3098,13 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
             )
             conn.commit()
             log.info("%s: %d atrações gravadas", park_name, len(rows))
+
+        # Depois de gravar, nunca antes: se o INSERT falhar, o parque não fica
+        # marcado como conhecido e o aviso volta no próximo ciclo.
+        try:
+            avisar_atracoes_novas(conn, config, park_name, payload)
+        except Exception as exc:  # noqa: BLE001 — aviso nunca derruba a coleta
+            log.warning("Falha ao checar atrações novas em %s: %s", park_name, exc)
 
     return payloads
 

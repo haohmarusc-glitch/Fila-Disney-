@@ -101,6 +101,8 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 
 Tabelas: `wait_times(ts, park, land, ride, wait_time, is_open)`, `alerts_sent(park, ride, sent_at)` e `daily_summary(sent_on)` — esta última guarda a data (no fuso do parque) em que o resumo das 7h já saiu, para não repetir. `top_alert(id=1, sent_at)` guarda o último envio do alerta de menores filas.
 
+`atracoes_conhecidas(park, ride, visto_em, avisado)` é o que permite avisar de atração nova sem repetir: a primeira leitura de um parque entra toda marcada como avisada, senão o primeiro ciclo depois do deploy anunciaria as 76 do Magic Kingdom de uma vez. Depois disso, nome que aparece pela primeira vez rende **um** aviso — o filtro da watchlist continua descartando em silêncio no `/status` e no alerta, que é o certo para a tela, mas agora ele avisa uma vez o que descartou.
+
 `group_sharing` (opt-in do `/grupo`) e `chat_names` (rótulo vindo do Telegram)
 não expiram por tempo: são preferência e etiqueta, não rastro. Saem no
 `revogar_acesso`, junto com `user_locations` e `character_last_checks` daquele
