@@ -31,10 +31,35 @@ function criar(tag) {
     replaceChildren(...filhos) { this.children = filhos; },
     get childElementCount() { return this.children.length; },
     classList: { add() {}, remove() {}, toggle() {} },
-    addEventListener() {},
+    ouvintes: {},
+    addEventListener(tipo, fn) { this.ouvintes[tipo] = fn; },
+    click() { if (this.ouvintes.click) this.ouvintes.click(); },
     scrollIntoView() {},
     querySelectorAll() { return []; },
   };
+}
+
+/* Acha o primeiro nó cujo texto casa — é assim que o teste clica num botão
+ * pelo rótulo que o usuário vê, em vez de por um seletor interno. */
+function acharPorTexto(no, alvo) {
+  if (!no) return null;
+  if (no.textContent === alvo) return no;
+  for (const filho of no.children) {
+    const achado = acharPorTexto(filho, alvo);
+    if (achado) return achado;
+  }
+  return null;
+}
+
+/* Serializa a árvore com as tags, para o teste ver que <b> virou <b> e que
+ * <script> não virou nada. */
+function estruturaDe(no) {
+  if (!no) return "";
+  const dentro = no.children.map(estruturaDe).join("");
+  const proprio = no.textContent || "";
+  if (!no.tag || no.tag === "div" || no.tag === "span") return proprio + dentro;
+  const attrs = no.href ? ` href="${no.href}"` : "";
+  return `<${no.tag}${attrs}>${proprio}${dentro}</${no.tag}>`;
 }
 
 const elementos = {};
@@ -81,13 +106,29 @@ function textoDe(no) {
 }
 
 (async () => {
+  if (caso.telegram !== undefined) {
+    // Modo direto: só o conversor de HTML do Telegram, sem carregar tela.
+    const bloco = doTelegram(caso.telegram);
+    console.log(JSON.stringify({
+      texto: textoDe(bloco).split(" | ").join(""),
+      estrutura: bloco.children.map(estruturaDe).join(""),
+    }));
+    process.exit(0);
+  }
   if (caso.aba) trocarAba(caso.aba);
   if (caso.gps) iniciarGPS();
   // As cargas são assíncronas e ninguém devolve promessa aqui; um tick de
   // folga basta porque o fetch é resolvido na hora pelo stub.
   await new Promise((resolve) => setTimeout(resolve, 50));
+  if (caso.clicar) {
+    const botao = acharPorTexto(elementos[`${caso.aba}-conteudo`], caso.clicar);
+    if (!botao) throw new Error(`não achei o botão "${caso.clicar}" na tela`);
+    botao.click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   console.log(JSON.stringify({
     perto: textoDe(elementos["perto-conteudo"]),
+    parques: textoDe(elementos["parques-conteudo"]),
     vigias: textoDe(elementos["vigias-conteudo"]),
     subtitulo: elementos["subtitulo"] ? elementos["subtitulo"].textContent : "",
   }));

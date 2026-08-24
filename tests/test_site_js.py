@@ -113,5 +113,123 @@ class TestVigiaFechada(unittest.TestCase):
         self.assertIn("aguardando histórico", tela["vigias"])
 
 
+
+def parque_payload(**campos) -> dict:
+    base = {"park": "Epcot", "horario": {"abre": 9, "fecha": 21},
+            "lotacao": {"nivel": "cheia", "fechadas": 2},
+            "items": [], "outras": [], "shows": [],
+            "attribution": "Powered by Queue-Times.com"}
+    base.update(campos)
+    return base
+
+
+@unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
+class TestAbaParques(unittest.TestCase):
+    """A aba que mostra o parque inteiro e roda os comandos do Telegram."""
+
+    def tela(self, *, clicar=None, comando=None, **payload):
+        respostas = {
+            "/comandos": {"comandos": [{"cmd": "menores", "rotulo": "Menores filas"},
+                                       {"cmd": "status", "rotulo": "Status"}],
+                          "parques": ["Epcot", "Disney Animal Kingdom"]},
+            "/parque": parque_payload(**payload),
+        }
+        if comando is not None:
+            respostas["/comando"] = {"comando": "menores", "parque": "Epcot",
+                                     "texto": comando,
+                                     "attribution": "Powered by Queue-Times.com"}
+        caso = {"aba": "parques", "respostas": respostas}
+        if clicar:
+            caso["clicar"] = clicar
+        return render(caso)
+
+    def test_lista_os_parques_e_o_estado_do_escolhido(self):
+        tela = self.tela()
+        self.assertIn("Epcot", tela["parques"])
+        self.assertIn("Disney Animal Kingdom", tela["parques"])
+        self.assertIn("opera ~09h–21h pelo histórico", tela["parques"])
+        self.assertIn("lotação cheia", tela["parques"])
+
+    def test_show_aparece_sem_numero_de_fila(self):
+        """O pedido que originou a aba. Show tem wait 0 permanente: mostrar
+        "0 min" seria dizer que não há espera onde não há medição (regra 15),
+        e mostrá-lo no ranking por fila o poria em primeiro sempre."""
+        tela = self.tela(shows=[{"ride": "Awesome Planet", "aberta": True},
+                                {"ride": "Impressions de France", "aberta": False}])
+        self.assertIn("Awesome Planet", tela["parques"])
+        self.assertIn("em cartaz", tela["parques"])
+        self.assertIn("Impressions de France", tela["parques"])
+        self.assertIn("fechada", tela["parques"])
+        self.assertNotIn("0 min", tela["parques"])
+
+    def test_separa_watchlist_de_outras_atracoes(self):
+        tela = self.tela(
+            items=[{"ride": "Test Track", "wait": 40, "threshold": 30, "aberta": True,
+                    "obsoleta": False, "duracao_min": 4, "pre_min": None}],
+            outras=[{"ride": "Spaceship Earth", "wait": 15, "aberta": True,
+                     "obsoleta": False}])
+        self.assertIn("Na watchlist", tela["parques"])
+        self.assertIn("Test Track", tela["parques"])
+        self.assertIn("Outras atrações", tela["parques"])
+        self.assertIn("Spaceship Earth", tela["parques"])
+
+    def test_secao_vazia_nao_vira_titulo_solto(self):
+        tela = self.tela()
+        for titulo in ("Na watchlist", "Outras atrações", "Shows e sem fila"):
+            self.assertNotIn(titulo, tela["parques"])
+
+    def test_botao_roda_o_comando_e_mostra_o_texto_do_telegram(self):
+        tela = self.tela(clicar="Menores filas",
+                         comando="<b>Menores filas — Epcot</b>\n<code>Test Track</code> 40 min")
+        self.assertIn("Menores filas — Epcot", tela["parques"])
+        self.assertIn("Test Track", tela["parques"])
+
+
+@unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
+class TestHtmlDoTelegram(unittest.TestCase):
+    """O site mostra o MESMO texto que o Telegram, e o converte sem innerHTML.
+
+    O conteúdo vem do nosso formatador e já passa pelo `notifier.esc` (regra 8),
+    mas a tela não confia nisso: constrói a árvore com uma lista fechada de
+    tags, então um `&` que escapasse do esc vira texto, nunca execução.
+    """
+
+    def converter(self, html: str) -> dict:
+        return render({"telegram": html})
+
+    def test_preserva_as_tags_que_o_telegram_usa(self):
+        r = self.converter("<b>Epcot</b> — <code>40 min</code> <i>agora</i>")
+        self.assertIn("<b>Epcot</b>", r["estrutura"])
+        self.assertIn("<code>40 min</code>", r["estrutura"])
+        self.assertIn("<i>agora</i>", r["estrutura"])
+
+    def test_tag_desconhecida_perde_a_marcacao_e_mantem_o_texto(self):
+        """Some o destaque, nunca a informação."""
+        r = self.converter("<script>alert(1)</script>fim")
+        self.assertNotIn("<script", r["estrutura"])
+        self.assertIn("fim", r["estrutura"])
+        self.assertIn("alert(1)", r["estrutura"], "o texto continua legível")
+
+    def test_link_javascript_perde_o_href(self):
+        r = self.converter('<a href="javascript:alert(1)">clique</a>')
+        self.assertNotIn("javascript", r["estrutura"])
+        self.assertIn("clique", r["estrutura"])
+
+    def test_link_http_sobrevive(self):
+        """O /perto manda rota do Google Maps; ela tem que continuar clicável."""
+        r = self.converter('<a href="https://maps.google.com/dir">rota</a>')
+        self.assertIn('href="https://maps.google.com/dir"', r["estrutura"])
+
+    def test_entidades_viram_o_caractere(self):
+        """"Mickey & Minnie's" chega escapado do esc (regra 8) e tem que
+        aparecer com o & na tela, não como &amp;."""
+        r = self.converter("Mickey &amp; Minnie&#39;s &lt;x&gt;")
+        self.assertIn("Mickey & Minnie's", r["texto"])
+        self.assertNotIn("&amp;", r["texto"])
+
+    def test_texto_sem_tag_nenhuma_passa_inteiro(self):
+        r = self.converter("Nenhuma atração aberta agora.")
+        self.assertIn("Nenhuma atração aberta agora.", r["texto"])
+
 if __name__ == "__main__":
     unittest.main()

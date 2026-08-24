@@ -98,7 +98,16 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
   Existe porque dois defeitos passaram por 469 testes de Python e só
   apareceram no celular: painel em branco com o parque fechado e vigia
   anunciando "0 min" em atração fechada
-- `api_server.py` — API HTTP privada que serve o site (`/perto`, `/vigias`, `/health`).
+- `api_server.py` — API HTTP privada que serve o site (`/perto`, `/parque`,
+  `/vigias`, `/comandos`, `/comando`, `/health`). O `/comando` roda os
+  formatadores do **próprio** `monitor.py` e devolve o mesmo texto que o
+  Telegram manda — o site não reimplementa `/menores` nem `/status`, porque
+  dois critérios divergiriam justamente no dia em que fossem comparados dentro
+  do parque. A whitelist `COMANDOS_SITE` é fechada e só tem leitura: o
+  `/teste_alertas` ficou de fora por ser o único que **escreve** (dispara
+  alertas para os chats), e `/vigiar`, `/entrar` e `/revogar` precisam de um
+  chat de destino que o site não tem — o token é da família inteira, não de
+  uma pessoa.
   Processo separado, container `fila-disney-api`, **somente leitura** no mesmo
   SQLite. Publicada pelo Caddy do Premercado em `api-filadisney.premercadosc.com`
   — ou seja, encara a internet: token por `hmac.compare_digest`, freio de chute
