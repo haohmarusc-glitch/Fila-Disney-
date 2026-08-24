@@ -1936,12 +1936,12 @@ def previsao_por_atracao(conn: sqlite3.Connection, config: dict, park_name: str)
                    if item[2] >= max(MIN_LEITURAS_HORA, n_maior * FRACAO_HORA_SOLIDA)]
         if not solidas:
             continue
-        primeiras = solidas[:2]  # duas primeiras horas sólidas = janela do rope drop
-        leituras_abertura = sum(item[2] for item in primeiras)
-        abertura = (
-            primeiras[0][0],
-            sum(item[1] * item[2] for item in primeiras) / leituras_abertura,
-        )
+        # A média das DUAS primeiras horas rotulada com a primeira dizia
+        # "abertura 09h ~46 min" numa atração que às 09h tem 32 min: o número era
+        # de 09h+10h e o rótulo era só de 09h. Superestimava em 14 min justamente
+        # a hora que a linha existe para decidir — o rope drop. Agora a hora e o
+        # número são a mesma coisa.
+        abertura = solidas[0][:2]
         melhor = min(solidas, key=lambda item: item[1])
         pico = max(solidas, key=lambda item: item[1])
         previsao.append(
@@ -1983,7 +1983,13 @@ def format_daily_summary(conn: sqlite3.Connection, config: dict, park_name: str)
     for ride, (h_ab, m_ab), (h_bom, m_bom), (h_pico, m_pico), leituras in previsao:
         linhas.append(f"🎢 <b>{notifier.esc(ride)}</b>")
         linhas.append(f"     abertura {h_ab:02d}h ~{m_ab:.0f} min · pico {h_pico:02d}h ~{m_pico:.0f} min")
-        linhas.append(f"     melhor do dia {h_bom:02d}h ~{m_bom:.0f} min · n={leituras}")
+        if h_bom == h_ab:
+            # Repetir a hora em duas linhas não informa nada. Num parque cuja
+            # fila só sobe a partir da abertura — a forma normal — o melhor
+            # momento É o rope drop, e dizer isso vale mais que o número.
+            linhas.append(f"     melhor do dia é o próprio rope drop · n={leituras}")
+        else:
+            linhas.append(f"     melhor do dia {h_bom:02d}h ~{m_bom:.0f} min · n={leituras}")
     return "\n".join(cabecalho + linhas + rodape)
 
 

@@ -184,6 +184,53 @@ class TestFechamentoForaDaPrevisao(BaseHorario):
                             "21h é a hora de fechamento, com a fila drenando")
 
 
+class TestLinhaDaAbertura(BaseHorario):
+    """A hora e o número da abertura têm que ser a mesma coisa."""
+
+    def gravar_curva(self, por_hora_local):
+        fuso = self.monitor.fuso_do_parque(self.config)
+        hoje = self.monitor.utc_now().date()
+        linhas = []
+        for dia in range(1, 5):
+            data = hoje - dt.timedelta(days=dia)
+            for hora in range(24):
+                aberto = hora in por_hora_local
+                utc = dt.datetime.combine(data, dt.time(hora), tzinfo=fuso
+                                          ).astimezone(dt.timezone.utc).replace(tzinfo=None)
+                for i in range(10):
+                    ts = (utc + dt.timedelta(minutes=i * 5)).isoformat()
+                    for atracao in ATRACOES:
+                        linhas.append((ts, PARQUE, "L", atracao,
+                                       por_hora_local.get(hora) if aberto else None,
+                                       int(aberto)))
+        self.conn.executemany(
+            "INSERT INTO wait_times (ts, park, land, ride, wait_time, is_open) "
+            "VALUES (?, ?, ?, ?, ?, ?)", linhas)
+        self.conn.commit()
+
+    def test_o_numero_da_abertura_e_o_da_hora_de_abertura(self):
+        """Antes vinha a média de 09h+10h com rótulo de 09h: 46 min onde eram 32."""
+        self.gravar_curva({9: 30, 10: 60, 11: 60, 12: 60, 13: 50, 14: 40})
+        previsao = self.monitor.previsao_por_atracao(self.conn, self.config, PARQUE)
+        self.assertTrue(previsao)
+        _ride, (hora, minutos), _melhor, _pico, _n = previsao[0]
+        self.assertEqual(hora, 9)
+        self.assertAlmostEqual(minutos, 30, 0,
+                               "o número tem que ser o da hora que o rótulo diz")
+
+    def test_melhor_do_dia_na_abertura_nao_repete_a_hora(self):
+        self.gravar_curva({9: 20, 10: 50, 11: 60, 12: 55, 13: 45, 14: 40})
+        texto = self.monitor.format_daily_summary(self.conn, self.config, PARQUE)
+        self.assertIn("melhor do dia é o próprio rope drop", texto)
+        self.assertNotIn("melhor do dia 09h", texto)
+
+    def test_melhor_do_dia_fora_da_abertura_mostra_a_hora(self):
+        self.gravar_curva({9: 50, 10: 60, 11: 60, 12: 55, 13: 30, 14: 40})
+        texto = self.monitor.format_daily_summary(self.conn, self.config, PARQUE)
+        self.assertIn("melhor do dia 13h", texto)
+        self.assertNotIn("rope drop ·", texto)
+
+
 class TestDuracao(BaseTeste):
     def escrever(self, dados):
         self.monitor.DURACOES_PATH.write_text(
