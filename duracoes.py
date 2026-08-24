@@ -81,27 +81,73 @@ def minutos_do_texto(texto: str) -> int | None:
 
 
 # Atração que existe em vários resorts tem UM artigo na Wikipédia cobrindo
-# todos, e a duração do infobox é a de alguma instalação — normalmente a
-# original. Medido em 24/08/2026: o artigo do Pirates devolveu 16 min, que é o
-# da Disneyland; o do Magic Kingdom é bem mais curto. Duração do parque errado é
-# pior que duração nenhuma, porque parece certa e ninguém desconfia.
-RESORTS = (
-    "disneyland park", "disneyland resort", "magic kingdom", "tokyo disneyland",
-    "tokyo disneysea", "disneyland paris", "walt disney studios park",
-    "shanghai disneyland", "hong kong disneyland", "disney california adventure",
-    "epcot", "disney's hollywood studios", "disney's animal kingdom",
-    "universal studios hollywood", "universal studios florida",
-    "universal studios japan", "universal studios singapore",
-    "universal studios beijing", "islands of adventure", "epic universe",
-)
+# todos. O infobox numera as instalações — `park2 = Magic Kingdom` vem com
+# `duration2` — então dá para pegar a duração DO NOSSO parque em vez de recusar
+# o artigo inteiro. Contar parques e desistir descartava clone de duração
+# idêntica (Rise of the Resistance, Rock 'n' Roller Coaster, Seven Dwarfs Mine
+# Train) junto com o caso legítimo do Pirates, que tem 16 min na Disneyland e
+# bem menos no Magic Kingdom.
+#
+# Os nomes da watchlist não são os da Wikipédia: aqui é "Disney Hollywood
+# Studios", lá é "Disney's Hollywood Studios"; aqui "Universal Studios At
+# Universal Orlando", lá "Universal Studios Florida".
+PARQUES_WIKI = {
+    "Disney Magic Kingdom": ("magic kingdom",),
+    "Epcot": ("epcot",),
+    "Disney Hollywood Studios": ("hollywood studios",),
+    "Disney Animal Kingdom": ("animal kingdom",),
+    "Universal Studios At Universal Orlando": ("universal studios florida",),
+    "Islands Of Adventure At Universal Orlando": ("islands of adventure",),
+    "Universal Epic Universe": ("epic universe",),
+}
 
 
-def resorts_citados(wikitexto: str) -> set[str]:
-    """Resorts que aparecem no infobox. Mais de um = duração ambígua."""
-    inicio = wikitexto.lower()
-    fim = inicio.find("\n}}")
-    trecho = inicio[:fim if fim > 0 else 4000]
-    return {nome for nome in RESORTS if nome in trecho}
+def parametros_do_infobox(wikitexto: str) -> dict[str, str]:
+    """{chave: valor} do primeiro infobox. Chaves em minúsculo, sem espaço."""
+    inicio = wikitexto.find("{{Infobox")
+    if inicio < 0:
+        return {}
+    profundidade, fim = 0, len(wikitexto)
+    for i in range(inicio, len(wikitexto) - 1):
+        if wikitexto[i:i + 2] == "{{":
+            profundidade += 1
+        elif wikitexto[i:i + 2] == "}}":
+            profundidade -= 1
+            if profundidade == 0:
+                fim = i
+                break
+    corpo = wikitexto[inicio:fim]
+    saida = {}
+    # A quebra de linha antes do | separa parametro de topo; o | dentro de
+    # {{convert|...}} fica na mesma linha e nao vira chave falsa.
+    for pedaco in re.split(r"\n\s*\|", corpo)[1:]:
+        if "=" not in pedaco:
+            continue
+        chave, _, valor = pedaco.partition("=")
+        saida[chave.strip().lower()] = valor.strip()
+    return saida
+
+
+def duracao_para_o_parque(wikitexto: str, parque: str) -> int | None:
+    """Duração da instalação DESTE parque, ou levanta Ambigua."""
+    params = parametros_do_infobox(wikitexto)
+    instalacoes = {m.group(1): valor for chave, valor in params.items()
+                   if (m := re.fullmatch(r"park(\d*)", chave)) and valor}
+    if len(instalacoes) <= 1:
+        return minutos_do_texto(params.get("duration", ""))
+
+    esperados = PARQUES_WIKI.get(parque, ())
+    for indice, nome in instalacoes.items():
+        nome = nome.lower()
+        if not any(alvo in nome for alvo in esperados):
+            continue
+        propria = params.get(f"duration{indice}")
+        if propria:
+            return minutos_do_texto(propria)
+        # Parque achado, mas sem duração própria: a duração solta e do artigo
+        # inteiro e pode ser de outra instalacao. E o caso do Pirates.
+        break
+    raise Ambigua(sorted(v.lower() for v in instalacoes.values()))
 
 
 def campo_duration(wikitexto: str) -> str | None:
@@ -143,7 +189,7 @@ def buscar_pagina(nome: str) -> str | None:
     return None
 
 
-def duracao_da_pagina(titulo: str) -> int | None:
+def duracao_da_pagina(titulo: str, parque: str) -> int | None:
     dados = consultar({"action": "query", "prop": "revisions", "rvprop": "content",
                        "rvslots": "main", "titles": titulo, "format": "json"})
     for pagina in dados.get("query", {}).get("pages", {}).values():
@@ -151,10 +197,7 @@ def duracao_da_pagina(titulo: str) -> int | None:
             texto = pagina["revisions"][0]["slots"]["main"]["*"]
         except (KeyError, IndexError, TypeError):
             continue
-        resorts = resorts_citados(texto)
-        if len(resorts) > 1:
-            raise Ambigua(sorted(resorts))
-        return minutos_do_texto(campo_duration(texto) or "")
+        return duracao_para_o_parque(texto, parque)
     return None
 
 
@@ -188,7 +231,7 @@ def main() -> int:
             try:
                 titulo = buscar_pagina(atracao)
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
-                minutos = duracao_da_pagina(titulo) if titulo else None
+                minutos = duracao_da_pagina(titulo, parque) if titulo else None
                 time.sleep(PAUSA_ENTRE_CHAMADAS_S)
             except Ambigua as exc:
                 onde = ", ".join(exc.args[0])
