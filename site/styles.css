@@ -182,3 +182,79 @@ main { flex: 1; }
   font-size: .75rem;
   color: var(--texto-suave);
 }
+
+/* Roteiro */
+.dia {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  box-shadow: var(--sombra);
+  padding: 12px;
+}
+.dia.hoje { border-color: var(--acento); border-width: 2px; }
+.dia-cabecalho { display: flex; gap: 12px; align-items: center; }
+.dia-data {
+  flex: none;
+  width: 52px;
+  text-align: center;
+  border-radius: 10px;
+  background: var(--fundo);
+  padding: 6px 4px;
+}
+.dia-data strong { display: block; font-size: 1.2rem; line-height: 1.1; }
+.dia-data span { font-size: .68rem; color: var(--texto-suave); text-transform: uppercase; }
+.dia.hoje .dia-data { background: var(--acento); color: #fff; }
+.dia.hoje .dia-data span { color: #ffffffcc; }
+.dia-titulo { flex: 1; min-width: 0; }
+.dia-titulo h2 { font-size: 1rem; }
+.dia-titulo p { font-size: .8rem; color: var(--texto-suave); }
+.selo-hoje {
+  background: var(--acento); color: #fff;
+  font-size: .68rem; font-weight: 700;
+  border-radius: 999px; padding: 3px 8px;
+}
+.dia details { margin-top: 8px; }
+.dia summary {
+  cursor: pointer;
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--acento);
+}
+.dia-timeline { margin: 8px 0 0; padding: 0; list-style: none; }
+.dia-timeline li {
+  display: flex; gap: 8px;
+  font-size: .82rem;
+  padding: 5px 0;
+  border-top: 1px solid var(--borda);
+}
+.dia-timeline b { flex: none; width: 92px; color: var(--texto-suave); font-weight: 600; }
+.dia-nota { margin-top: 8px; font-size: .78rem; color: var(--texto-suave); }
+.dia-troca {
+  margin-top: 8px;
+  font-size: .78rem;
+  background: var(--amarelo-fundo);
+  color: var(--amarelo-texto);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.botao-filas {
+  margin-top: 10px;
+  border: 1px solid var(--acento);
+  background: none;
+  color: var(--acento);
+  font-weight: 600;
+  font-size: .85rem;
+  border-radius: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.filas-live { margin-top: 10px; border-top: 1px solid var(--borda); padding-top: 8px; }
+.filas-live .linha {
+  display: flex; justify-content: space-between; gap: 8px;
+  font-size: .84rem;
+  padding: 4px 0;
+}
+.filas-live .linha span:last-child { flex: none; font-weight: 700; }
+.filas-live .meta { font-size: .78rem; color: var(--texto-suave); margin-bottom: 4px; }
+.fila-ok { color: var(--verde-texto); }
+.fila-alta { color: var(--vermelho-texto); }

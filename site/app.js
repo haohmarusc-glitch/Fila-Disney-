@@ -181,10 +181,133 @@ async function carregarVigias() {
   }
 }
 
+/* ------------------------------------------------------------ roteiro */
+
+const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun",
+                   "jul", "ago", "set", "out", "nov", "dez"];
+const DIA_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+let roteiroCache = null;
+
+function hojeNoParque() {
+  // "Hoje" no fuso dos parques, não no do celular: às 23h de Brasília ainda
+  // são 22h em Orlando, e virar o cartão do dia uma hora antes confundiria.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
+
+function classeDaFila(wait, threshold) {
+  if (wait === null || threshold === null || threshold === undefined) return "";
+  return wait <= threshold ? "fila-ok" : "fila-alta";
+}
+
+async function abrirFilasDoDia(dia, container, botao) {
+  botao.disabled = true;
+  botao.textContent = "carregando…";
+  try {
+    const dados = await api(`/parque?nome=${encodeURIComponent(dia.parque)}`);
+    const bloco = texto("div", "filas-live");
+    const meta = [];
+    if (dados.horario) meta.push(`opera ~${String(dados.horario.abre).padStart(2, "0")}h–${String(dados.horario.fecha).padStart(2, "0")}h pelo histórico`);
+    if (dados.lotacao && dados.lotacao.nivel) meta.push(`lotação ${dados.lotacao.nivel}`);
+    if (dados.lotacao && dados.lotacao.fechadas) meta.push(`${dados.lotacao.fechadas} fechada(s)`);
+    if (meta.length) bloco.appendChild(texto("p", "meta", meta.join(" · ")));
+    for (const item of dados.items) {
+      const linha = texto("div", "linha");
+      const nome = texto("span", null, item.ride);
+      const partes = [];
+      if (item.duracao_min !== null) partes.push(`~${item.duracao_min} min de atração`);
+      if (partes.length) nome.appendChild(texto("small", "detalhe", ` ${partes.join(" · ")}`));
+      linha.appendChild(nome);
+      const valor = !item.aberta ? "fechada"
+        : item.wait === null ? "—"
+        : `${item.wait} min`;
+      linha.appendChild(texto("span", classeDaFila(item.wait, item.threshold),
+                              item.obsoleta ? `${valor} ⏳` : valor));
+      bloco.appendChild(linha);
+    }
+    botao.replaceWith(bloco);
+    marcaAtualizado();
+  } catch (erro) {
+    botao.disabled = false;
+    botao.textContent = "ver filas agora";
+    container.appendChild(texto("div", "erro", mensagemDeErro(erro)));
+  }
+}
+
+function cartaoDia(dia, hoje) {
+  const [ano, mes, diaNum] = dia.data.split("-").map(Number);
+  const cartao = texto("article", dia.data === hoje ? "dia hoje" : "dia");
+
+  const cab = texto("div", "dia-cabecalho");
+  const data = texto("div", "dia-data");
+  data.appendChild(texto("strong", null, String(diaNum)));
+  data.appendChild(texto("span", null,
+    `${MES_CURTO[mes - 1]} · ${DIA_SEMANA[new Date(ano, mes - 1, diaNum).getDay()]}`));
+  cab.appendChild(data);
+  const titulo = texto("div", "dia-titulo");
+  titulo.appendChild(texto("h2", null, dia.rotulo));
+  titulo.appendChild(texto("p", null, dia.destaque));
+  cab.appendChild(titulo);
+  if (dia.data === hoje) cab.appendChild(texto("span", "selo-hoje", "HOJE"));
+  cartao.appendChild(cab);
+
+  if (dia.timeline.length) {
+    const detalhes = texto("details");
+    if (dia.data === hoje) detalhes.open = true;
+    detalhes.appendChild(texto("summary", null, "plano do dia"));
+    const lista = texto("ul", "dia-timeline");
+    for (const passo of dia.timeline) {
+      const li = texto("li");
+      li.appendChild(texto("b", null, passo.hora));
+      li.appendChild(texto("span", null, passo.texto));
+      lista.appendChild(li);
+    }
+    if (dia.furafila) {
+      const li = texto("li");
+      li.appendChild(texto("b", null, "Fura-fila"));
+      li.appendChild(texto("span", null, dia.furafila));
+      lista.appendChild(li);
+    }
+    detalhes.appendChild(lista);
+    cartao.appendChild(detalhes);
+  }
+  if (dia.notas) cartao.appendChild(texto("p", "dia-nota", dia.notas));
+  if (dia.analise_troca) {
+    cartao.appendChild(texto("p", "dia-troca", `🔀 ${dia.analise_troca}`));
+  }
+  if (dia.parque) {
+    const botao = texto("button", "botao-filas", "ver filas agora");
+    botao.addEventListener("click", () => abrirFilasDoDia(dia, cartao, botao));
+    cartao.appendChild(botao);
+  }
+  return cartao;
+}
+
+async function carregarRoteiro() {
+  const destino = el("roteiro-conteudo");
+  try {
+    if (!roteiroCache) {
+      const resp = await fetch("roteiro.json");
+      if (!resp.ok) throw new Error(`roteiro.json: HTTP ${resp.status}`);
+      roteiroCache = await resp.json();
+    }
+    const hoje = hojeNoParque();
+    destino.replaceChildren(
+      texto("p", "aviso", roteiroCache.subtitulo),
+      ...roteiroCache.dias.map((dia) => cartaoDia(dia, hoje)));
+    const cartaoHoje = destino.querySelector(".dia.hoje");
+    if (cartaoHoje) cartaoHoje.scrollIntoView({ block: "start", behavior: "instant" });
+  } catch (erro) {
+    destino.replaceChildren(texto("div", "erro", String(erro.message || erro)));
+  }
+}
+
 /* ----------------------------------------------------- ciclo e abas */
 
 function recarregar() {
   if (abaAtiva === "perto") carregarPerto();
+  else if (abaAtiva === "roteiro") carregarRoteiro();
   else carregarVigias();
 }
 
@@ -198,6 +321,7 @@ function trocarAba(nome) {
   document.querySelectorAll(".aba").forEach((aba) =>
     aba.classList.toggle("ativa", aba.dataset.aba === nome));
   el("painel-perto").classList.toggle("oculto", nome !== "perto");
+  el("painel-roteiro").classList.toggle("oculto", nome !== "roteiro");
   el("painel-vigias").classList.toggle("oculto", nome !== "vigias");
   try { localStorage.setItem("aba", nome); } catch { /* modo privado: segue sem lembrar */ }
   recarregar();
