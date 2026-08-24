@@ -17,6 +17,7 @@ Uso:
     docker compose exec fila-disney python duracoes.py             # grava
     docker compose exec fila-disney python duracoes.py --sobrescrever
     docker compose exec fila-disney python duracoes.py --diagnostico  # infobox cru
+    docker compose exec fila-disney python duracoes.py --wikidata     # P2047
 
 Cada duração encontrada vem com a página de origem no relatório, para dar para
 conferir na mão antes de aceitar. O script nunca inventa: atração cuja página
@@ -33,6 +34,14 @@ from urllib.parse import urlencode
 import monitor
 
 WIKI_API = "https://en.wikipedia.org/w/api.php"
+# O Wikidata é a segunda fonte, e existe por um motivo que o infobox não
+# resolve: lá cada INSTALAÇÃO é um item próprio. A Haunted Mansion do Magic
+# Kingdom e a da Disneyland são Q diferentes, então a duração já vem sem a
+# ambiguidade que barrou sete atrações aqui. O campo é o P2047.
+WIKIDATA_API = "https://www.wikidata.org/w/api.php"
+# Só as unidades que aparecem de verdade. O relatório imprime o Q cru junto,
+# então unidade nova aparece na tela em vez de virar conversão errada.
+UNIDADES_WIKIDATA = {"Q7727": "min", "Q11574": "s", "Q25235": "h"}
 # A Wikipédia pede uso moderado e User-Agent identificável. São ~54 atrações,
 # duas chamadas cada: com meio segundo entre elas a execução leva ~1 min e não
 # encosta em limite nenhum.
@@ -242,7 +251,7 @@ class Ambigua(Exception):
     """O artigo cobre mais de um resort: a duração do infobox não diz qual."""
 
 
-def consultar(parametros: dict) -> dict:
+def consultar(parametros: dict, base: str = WIKI_API) -> dict:
     """GET na API da Wikipédia pelo `get_json` do monitor (regra 11).
 
     A query vai montada na URL porque `get_json(url, *, tentativas)` não recebe
@@ -250,7 +259,7 @@ def consultar(parametros: dict) -> dict:
     e o `except` largo abaixo rotulava isso como "falha de rede". Erro de
     programação disfarçado de problema externo é o pior tipo de log.
     """
-    return monitor.get_json(f"{WIKI_API}?{urlencode(parametros)}")
+    return monitor.get_json(f"{base}?{urlencode(parametros)}")
 
 
 def buscar_pagina(nome: str, parque: str | None = None) -> str | None:
@@ -350,6 +359,84 @@ def relatar_campos_crus(config: dict, dados: dict) -> None:
                 print(f"     resorts citados: {', '.join(citados)}")
 
 
+def buscar_itens_wikidata(nome: str, limite: int = 5) -> list[str]:
+    """Q-ids candidatos para esta atração, na ordem em que o Wikidata devolve."""
+    dados = consultar({"action": "wbsearchentities", "search": nome,
+                       "language": "en", "type": "item", "limit": limite,
+                       "format": "json"}, WIKIDATA_API)
+    return [item["id"] for item in dados.get("search", [])]
+
+
+def duracao_do_item(entidade: dict) -> str | None:
+    """Valor CRU do P2047, com a unidade junto. Não converte: quem lê decide.
+
+    Converter aqui repetiria o erro que o `--diagnostico` existiu para corrigir
+    — decidir sozinho o que só dá para decidir olhando. E a unidade importa:
+    "+3" pode ser 3 minutos ou 3 segundos, e o Q vem colado justamente por isso.
+    """
+    for reivindicacao in entidade.get("claims", {}).get("P2047", []):
+        valor = (reivindicacao.get("mainsnak", {}).get("datavalue") or {}).get("value")
+        if not isinstance(valor, dict):
+            continue
+        unidade = str(valor.get("unit", "")).rsplit("/", 1)[-1]
+        return f"{valor.get('amount', '?')} {UNIDADES_WIKIDATA.get(unidade, '')}({unidade})"
+    return None
+
+
+def itens_wikidata(ids: list[str]) -> list[dict]:
+    """Rótulo, descrição e duração de cada item. A descrição é o que diz o parque.
+
+    O Wikidata descreve atração como "dark ride at Magic Kingdom" ou "roller
+    coaster at Universal's Islands of Adventure" — é ela que separa a nossa
+    instalação da homônima em Tóquio, sem depender de casar nome.
+    """
+    if not ids:
+        return []
+    dados = consultar({"action": "wbgetentities", "ids": "|".join(ids),
+                       "props": "labels|descriptions|claims", "languages": "en",
+                       "format": "json"}, WIKIDATA_API)
+    saida = []
+    for qid in ids:
+        entidade = dados.get("entities", {}).get(qid)
+        if not entidade:
+            continue
+        saida.append({
+            "id": qid,
+            "rotulo": entidade.get("labels", {}).get("en", {}).get("value", ""),
+            "descricao": entidade.get("descriptions", {}).get("en", {}).get("value", ""),
+            "duracao": duracao_do_item(entidade),
+        })
+    return saida
+
+
+def relatar_wikidata(config: dict, dados: dict) -> None:
+    """Sonda o Wikidata para cada atração ainda sem duração. Não grava nada."""
+    achados = 0
+    for parque, cfg in config["parks"].items():
+        atuais = dados["rides"].get(parque, {})
+        pendentes = [a for a in cfg.get("attractions", {}) if a not in atuais]
+        if not pendentes:
+            continue
+        print(f"\n=== {parque}")
+        for atracao in pendentes:
+            try:
+                itens = itens_wikidata(buscar_itens_wikidata(atracao))
+                time.sleep(PAUSA_ENTRE_CHAMADAS_S)
+            except Exception as exc:  # noqa: BLE001 — uma atração não derruba o resto
+                print(f"  {atracao}\n     ! {type(exc).__name__}: {exc}")
+                continue
+            com_duracao = [item for item in itens if item["duracao"]]
+            if not com_duracao:
+                print(f"  {atracao} — nenhum dos {len(itens)} itens tem P2047")
+                continue
+            achados += 1
+            print(f"  {atracao}")
+            for item in com_duracao:
+                print(f"     {item['id']}  {item['duracao']}  {item['rotulo']}"
+                      f" — {item['descricao']}")
+    print(f"\n{achados} atração(ões) com P2047 no Wikidata.")
+
+
 def carregar_arquivo() -> dict:
     try:
         with open(DURACOES_PATH, encoding="utf-8") as f:
@@ -365,12 +452,19 @@ def main() -> int:
                     help="substitui durações já preenchidas")
     ap.add_argument("--diagnostico", action="store_true",
                     help="mostra o infobox cru do que ficou sem duração; não grava")
+    ap.add_argument("--wikidata", action="store_true",
+                    help="sonda o Wikidata (P2047) para o que ficou sem duração; não grava")
     args = ap.parse_args()
 
     config = monitor.load_config()
     dados = carregar_arquivo()
     dados.setdefault("rides", {})
     achadas, faltando = 0, []
+
+    if args.wikidata:
+        relatar_wikidata(config, dados)
+        print("\n--wikidata: nada gravado.")
+        return 0
 
     if args.diagnostico:
         relatar_campos_crus(config, dados)
