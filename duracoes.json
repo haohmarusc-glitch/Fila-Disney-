@@ -2,53 +2,76 @@
   "_comment": "Duracao das atracoes, em minutos. A Queue-Times nao publica este dado (entrega so id, name, is_open, wait_time e last_updated), entao ele mora aqui, versionado, no mesmo espirito do coords.json.",
   "_regra": "Atracao ausente daqui aparece SEM duracao, nunca com estimativa — mesma regra 12 que vale para coordenada. Valor invalido (zero, texto, nulo) e ignorado com aviso no log, porque duracao 0 seria dado inventado disfarcado.",
   "_como_preencher": "A chave e o nome CANONICO da watchlist.json, nao o nome que a API devolve. O teste tests/test_empacotamento.py recusa chave que nao exista na watchlist, entao errar o nome falha o CI em vez de sumir da tela em silencio.",
-  "_medida": "ATENCAO: os valores abaixo ainda sao os antigos, do infobox da Wikipedia, que mede o CICLO da atracao. A medida correta e o TOTAL — pre-show obrigatorio + atracao + folga para sair —, que e o que responde 'cabe antes de fechar'. Onde ha pre-show os dois divergem muito: Mission: SPACE tem 6 min de ciclo e 15 de total; Space Mountain, 3 e 10. Rodar `duracoes.py` substitui o arquivo inteiro pelos numeros do TouringPlans. Ate la, os valores estao desatualizados — porem coerentes entre si, que e o que importa: NUNCA misturar as duas medidas no mesmo arquivo.",
+  "_medida": "Tempo TOTAL: pre-show obrigatorio + a atracao + a folga para sair. NAO e o ciclo do brinquedo, e NAO inclui fila. E o total que responde 'cabe antes de fechar'. Fonte: paginas publicas 'Attraction Durations' do TouringPlans, colhidas por `duracoes.py` em 24/08/2026 — 54 de 54, os sete parques completos. Nunca misturar com outra medida no mesmo arquivo: se o coletor nao fechar os sete parques ele nao grava nada, de proposito.",
   "_fontes_descartadas": "Wikipedia (infobox `duration`): mede o ciclo, nao o total. Chegou a 31 de 54 e foi abandonada em 24/08/2026 pela medida errada, nao por falta de dado. Wikidata (P2047), varrido no mesmo dia: 18 atracoes com item alcancado e sem o campo, 4 sem item, 1 so com artigo de lista — zero duracoes; os unicos P2047 encontrados eram de filme homonimo (Jungle Cruise 127 min e o longa de 2021). themeparks.wiki nao publica duracao. RCDB so cobre montanha-russa. O codigo dos dois coletores esta no historico do git.",
   "rides": {
     "Disney Magic Kingdom": {
-      "Big Thunder Mountain Railroad": 3,
+      "Big Thunder Mountain Railroad": 7,
+      "Buzz Lightyear's Space Ranger Spin": 5,
+      "Haunted Mansion": 10,
+      "Jungle Cruise": 8,
+      "Peter Pan's Flight": 3,
+      "Pirates of the Caribbean": 8,
       "Seven Dwarfs Mine Train": 3,
-      "Pirates of the Caribbean": 9,
+      "Space Mountain": 10,
       "TRON Lightcycle / Run": 1,
-      "Space Mountain": 3
+      "Tiana's Bayou Adventure": 18
     },
     "Epcot": {
-      "Guardians of the Galaxy: Cosmic Rewind": 3,
-      "Remy's Ratatouille Adventure": 5,
-      "Test Track": 5,
-      "Mission: SPACE": 6,
       "Frozen Ever After": 5,
-      "Soarin'": 5
+      "Guardians of the Galaxy: Cosmic Rewind": 4,
+      "Mission: SPACE": 15,
+      "Remy's Ratatouille Adventure": 5,
+      "Soarin'": 8,
+      "Test Track": 4
     },
     "Disney Hollywood Studios": {
-      "Slinky Dog Dash": 2,
-      "Star Wars: Rise of the Resistance": 18,
-      "Rock 'n' Roller Coaster": 1
+      "Alien Swirling Saucers": 3,
+      "Mickey & Minnie's Runaway Railway": 5,
+      "Millennium Falcon: Smugglers Run": 5,
+      "Rock 'n' Roller Coaster": 2,
+      "Slinky Dog Dash": 3,
+      "Star Wars: Rise of the Resistance": 7,
+      "Tower of Terror": 15,
+      "Toy Story Mania!": 7
     },
     "Disney Animal Kingdom": {
-      "Avatar Flight of Passage": 4,
-      "Na'vi River Journey": 6,
-      "Expedition Everest": 3,
-      "Kilimanjaro Safaris": 21,
-      "Kali River Rapids": 5
+      "Avatar Flight of Passage": 6,
+      "Expedition Everest": 4,
+      "Kali River Rapids": 10,
+      "Kilimanjaro Safaris": 20,
+      "Na'vi River Journey": 5
     },
     "Universal Studios At Universal Orlando": {
+      "E.T. Adventure": 8,
       "Harry Potter and the Escape from Gringotts": 5,
-      "Transformers: The Ride 3D": 5,
       "MEN IN BLACK Alien Attack": 5,
-      "The Simpsons Ride": 5,
-      "E.T. Adventure": 5
+      "Revenge of the Mummy": 5,
+      "The Simpsons Ride": 8,
+      "Transformers: The Ride 3D": 5,
+      "Villain-Con Minion Blast": 5
     },
     "Islands Of Adventure At Universal Orlando": {
-      "The Incredible Hulk Coaster": 2,
+      "Doctor Doom's Fearfall": 2,
+      "Flight of the Hippogriff": 3,
+      "Hagrid's Magical Creatures Motorbike Adventure": 5,
+      "Harry Potter and the Forbidden Journey": 6,
+      "Jurassic Park River Adventure": 9,
+      "Jurassic World VelociCoaster": 2,
+      "Ripsaw Falls": 7,
       "Skull Island: Reign of Kong": 6,
-      "Ripsaw Falls": 6,
-      "Harry Potter and the Forbidden Journey": 4,
-      "The Amazing Adventures of Spider-Man": 5,
-      "Flight of the Hippogriff": 1
+      "The Amazing Adventures of Spider-Man": 7,
+      "The Incredible Hulk Coaster": 4
     },
     "Universal Epic Universe": {
-      "Mario Kart: Bowser's Challenge": 5
+      "Constellation Carousel": 4,
+      "Curse of the Werewolf": 4,
+      "Harry Potter and the Battle at the Ministry": 11,
+      "Hiccup's Wing Gliders": 4,
+      "Mario Kart: Bowser's Challenge": 12,
+      "Mine-Cart Madness": 3,
+      "Monsters Unchained: The Frankenstein Experiment": 8,
+      "Stardust Racers": 7
     }
   },
   "_por_que_esta_vazio": "A Queue-Times nao publica duracao, e a sessao que criou este arquivo (23/08/2026) rodava num ambiente cujo egresso so alcanca dominios do GitHub — Wikipedia, themeparks.wiki e os sites dos parques dao timeout. Escrever 54 numeros de memoria seria exatamente o 'numero inventado' que a regra 12 proibe, entao o arquivo ficou estruturado e vazio: enquanto estiver assim, nenhuma duracao aparece na tela, que e o comportamento correto.",
