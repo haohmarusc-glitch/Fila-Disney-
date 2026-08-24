@@ -18,16 +18,46 @@ import duracoes  # noqa: E402
 import monitor  # noqa: E402
 
 
+# Estrutura COPIADA da página real, colhida na VPS em 24/08/2026: rótulo e
+# valor em linhas separadas, área em linha própria, e nota de avaliação e
+# considerações físicas no meio. A primeira versão do parser foi escrita contra
+# uma estrutura imaginada e voltou zero nos sete parques — este fixture existe
+# para que isso não se repita em silêncio.
 PAGINA = """
 <html><head><style>.x{color:red}</style></head><body>
-<script>var naoDeveAparecer = "1. Fake in NOWHERE";</script>
+<script>var naoDeveAparecer = "9. Fake";</script>
 <h1>Attraction Durations at Magic Kingdom</h1>
-<ol>
-  <li>1. Space Mountain in TOMORROWLAND<br>Duration: 10 min</li>
-  <li>2. Seven Dwarfs Mine Train in FANTASYLAND<br>Duration: 3 min</li>
-  <li>3. Bibbidi Bobbidi Boutique in FANTASYLAND<br>Duration: 1 hr</li>
-  <li>4. Sonny Eclipse in TOMORROWLAND</li>
-</ol>
+<div>1. Space Mountain</div>
+<div>in Tomorrowland</div>
+<div>(4.1/5 &middot; 9,001 reviews)</div>
+<div>Physical Considerations</div><div>;</div>
+<div>Must Transfer From Wheelchair/ECV</div>
+<div>Duration:</div>
+<div>10 min</div>
+
+<div>2. Seven Dwarfs Mine Train</div>
+<div>in Fantasyland</div>
+<div>Duration:</div>
+<div>3 min</div>
+
+<div>3. Bibbidi Bobbidi Boutique</div>
+<div>in Fantasyland</div>
+<div>Not Enough User Ratings</div>
+<div>Duration:</div>
+<div>1 hr</div>
+
+<div>4. The Haunted Mansion</div>
+<div>in Liberty Square</div>
+<div>Duration:</div>
+<div>10 min</div>
+
+<div>5. Astro Orbiter</div>
+<div>in Tomorrowland</div>
+<div>Duration:</div>
+<div>2 min</div>
+
+<div>6. Sonny Eclipse</div>
+<div>in Tomorrowland</div>
 </body></html>
 """
 
@@ -44,6 +74,30 @@ class TestParserDaPagina(unittest.TestCase):
     def test_item_sem_duracao_e_descartado(self):
         """Nome sem 'Duration:' embaixo não vira entrada com valor do vizinho."""
         self.assertNotIn("Sonny Eclipse", duracoes.duracoes_da_pagina(PAGINA))
+
+    def test_rotulo_e_valor_em_linhas_separadas(self):
+        """É assim que a página real escreve, e foi o que derrubou a v1.
+
+        `'Duration:'` sozinho não tem número; `'7 min'` sozinho não tem rótulo.
+        Casar só a forma grudada devolvia ZERO nos sete parques.
+        """
+        linhas = ["1. Big Thunder Mountain Railroad", "in Frontierland",
+                  "Duration:", "7 min"]
+        html = "".join(f"<p>{l}</p>" for l in linhas)
+        self.assertEqual(duracoes.duracoes_da_pagina(html),
+                         {"Big Thunder Mountain Railroad": 7})
+
+    def test_forma_grudada_tambem_serve(self):
+        """Não é a forma de hoje, mas aceitar as duas custa uma linha."""
+        html = "<p>1. Space Mountain</p><p>Duration: 10 min</p>"
+        self.assertEqual(duracoes.duracoes_da_pagina(html), {"Space Mountain": 10})
+
+    def test_rotulo_sem_valor_logo_abaixo_nao_inventa(self):
+        html = "<p>1. Space Mountain</p><p>Duration:</p><p>Reserve on the app</p>"
+        self.assertEqual(duracoes.duracoes_da_pagina(html), {})
+
+    def test_area_e_avaliacao_no_meio_nao_atrapalham(self):
+        self.assertEqual(duracoes.duracoes_da_pagina(PAGINA)["The Haunted Mansion"], 10)
 
     def test_script_e_style_nao_entram(self):
         self.assertNotIn("Fake", " ".join(duracoes.texto_visivel(PAGINA)))
