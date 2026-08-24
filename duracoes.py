@@ -22,6 +22,16 @@ Uso:
 Cada duração encontrada vem com a página de origem no relatório, para dar para
 conferir na mão antes de aceitar. O script nunca inventa: atração cuja página
 não tenha `duration` no infobox fica de fora e é listada no fim.
+
+O Wikidata foi varrido em 24/08/2026 e não rende nada — está medido, não
+suposto. A ideia era boa: lá cada instalação é um item próprio, então a
+ambiguidade de parque que barra 8 atrações aqui não existiria. E os itens
+existem mesmo, separados por parque (`Q85465363 — Attraction in Magic Kingdom
+(WDW)`, `Q67130334 — ride at Disney's Hollywood Studios`). Só que NENHUM tem
+P2047. Das 23 pendentes: 18 com item alcançado e sem o campo, 4 sem item
+nenhum, 1 só com artigo de lista. Os únicos P2047 que apareceram eram de
+filme homônimo — o Jungle Cruise de 127 min é o longa de 2021. O `--wikidata`
+fica no script para reconferir se o Wikidata for preenchido um dia.
 """
 import argparse
 import json
