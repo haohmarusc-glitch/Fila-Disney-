@@ -397,6 +397,29 @@ inválido (zero, texto, nulo) é ignorado com aviso no log, porque duração 0 s
 número inventado disfarçado. Mudou o arquivo, precisa rebuildar a imagem, igual
 ao `coords.json`.
 
+#### Preencher: rode uma vez
+
+```bash
+docker compose exec fila-disney python duracoes.py --revisar   # só relatório
+docker compose exec fila-disney python duracoes.py             # grava
+docker compose exec fila-disney python duracoes.py --sobrescrever
+```
+
+O `duracoes.py` busca no infobox da Wikipédia, que é a única fonte pública que
+publica isso — conferido em 24/08/2026, nem a Queue-Times nem a themeparks.wiki
+trazem duração (o schema de entidade da segunda tem só `entityType`,
+`externalId`, `id`, `location`, `name`, `parentId` e `slug`).
+
+O script está para o `duracoes.json` como o `coords.py` está para o
+`coords.json`: enriquecimento de uma vez, nunca dependência de runtime. Ele
+casa a página pelo nome normalizado da watchlist — sem isso a busca traria o
+artigo do filme ou de uma atração homônima em outro parque, e a duração entraria
+errada sem ninguém notar. Atração cuja página não tenha `duration` no infobox
+fica de fora e é listada no fim.
+
+O relatório mostra a página de origem de cada número. Como o arquivo é
+versionado, dá para conferir com `git diff duracoes.json` antes de commitar.
+
 **A duração não entra em soma que ordena nada.** Fila e caminhada são custo;
 duração é o que você quer. Somando os três, o Kilimanjaro Safaris — 22 min de
 passeio — cairia atrás de um brinquedo de 90 segundos com a mesma fila, que é o
