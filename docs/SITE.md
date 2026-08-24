@@ -64,17 +64,44 @@ tem drift próprio em relação ao GitHub. O Caddyfile da VPS também divergiu d
 repositório (o bloco `api-filadisney` só existe lá) — por isso este runbook é
 de comandos, não um PR no Premercado.
 
-## Virar o DNS (sem downtime)
+## A virada do DNS (feita em 24/08/2026)
+
+Está escrito aqui porque cada tropeço custou tempo e o mesmo caminho vale
+para qualquer subdomínio novo no Cloudflare.
 
 1. Antes de mexer no DNS, teste pelo IP com SNI:
-   `curl -k -H "Host: filadisney.premercadosc.com" https://IP_DA_VPS/` —
-   deve voltar o HTML novo (o certificado só vem depois do DNS, o `-k` é só
-   para este teste).
-2. No provedor de DNS, troque o registro `filadisney` de
-   `CNAME custom-domains.chatgpt.site` para `CNAME premercadosc.com`
-   (ou registro A com o IP da VPS).
-3. O Caddy emite o certificado sozinho na primeira visita após a propagação.
-4. A página antiga do host externo pode ser desativada depois.
+   `curl -k -H "Host: filadisney.premercadosc.com" https://IP_DA_VPS/` — ou,
+   de dentro da VPS, `curl -si -H "Host: ..." http://localhost/`, que deve
+   voltar `308` para o HTTPS. Isso prova que o Caddy reconhece o hostname
+   antes de qualquer questão de certificado.
+2. No Cloudflare, o registro era `CNAME filadisney → custom-domains.chatgpt.site`.
+   Trocado por **A → IP da VPS**, com Proxy status **DNS only** (nuvem cinza).
+   Proxy ligado (nuvem laranja) quebra o ACME e o Caddy nunca emite nada.
+3. Confira que não sobrou `AAAA`: `dig +short AAAA filadisney.premercadosc.com`
+   tem que vir vazio. O Let's Encrypt **prefere IPv6**, então um `AAAA` órfão
+   apontando para o host antigo derruba a validação mesmo com o `A` correto —
+   o erro aparece como `Invalid response from http://.../.well-known/... : 400`
+   citando um endereço `2606:4700::` (Cloudflare) em vez do IP da VPS.
+4. O Caddy não tenta de novo na hora. Depois de falhar ele entra em backoff
+   crescente (`retrying_in` vai a 600s), então logo após a propagação o site
+   ainda dá `TLS connect error: tlsv1 alert internal error` — que é "não tenho
+   certificado para este nome", não erro de configuração. Force com
+   `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile` e
+   dê ~30s antes de testar; aqui o `curl` foi 26 segundos cedo demais e
+   pareceu falha.
+5. Depois de várias falhas o CertMagic migra sozinho para
+   `acme-staging-v02` — proteção contra rate limit, não configuração errada.
+   Ele volta à produção quando a validação passa. O sinal de fim é
+   `certificate obtained successfully` com `issuer` em `acme-v02` **sem** o
+   `-staging-`; as linhas `served key authentication` logo acima são os
+   validadores do Let's Encrypt chegando na VPS.
+6. Verificação final, as duas metades:
+   `curl -sS -o /dev/null -D - https://filadisney.premercadosc.com/` (200 e
+   `server: Caddy`) e `curl -sS https://filadisney.premercadosc.com/api/health`
+   (`{"ok": true, ...}`), que é a única rota sem token.
+7. Sobraram do host antigo dois TXT — `_cf-custom-hostname.filadisney` e
+   `_openai-site-verification.filadisney`. Não atrapalham; apagar só depois
+   de confirmar a página, para não misturar duas mudanças.
 
 ## Depois de mudar o site
 

@@ -51,6 +51,37 @@ class TestPayloadPerto(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fora dos parques"):
             api_server.build_perto_payload(0, 0, object(), {}, {}, {})
 
+    @patch("api_server.localizacao.com_score", return_value=[])
+    @patch("api_server.localizacao._ranking_detalhado", return_value=[])
+    @patch("api_server.localizacao.parque_mais_proximo", return_value="Epcot")
+    def test_conta_abertas_para_o_site_explicar_a_lista_vazia(self, _park, _rank, _score):
+        """Ranking vazio tem duas causas e a tela precisa distinguir: parque
+        fechado, ou aberto sem nada elegível. Sem este número o site só
+        apagava o painel, que foi o que apareceu no celular em 24/08."""
+        payload = {"lands": [{"rides": [
+            {"name": "Test Track", "is_open": True, "wait_time": 40},
+            {"name": "Soarin'", "is_open": False, "wait_time": 0},
+            {"name": "Remy's Single Rider", "is_open": True, "wait_time": 0},
+        ]}]}
+        with patch("api_server.monitor.fetch_queue_times", return_value=payload):
+            result = api_server.build_perto_payload(1, 2, object(), {}, {"Epcot": 5}, {})
+        self.assertEqual(result["items"], [])
+        # 1: a fechada não conta e a fila paralela não existe para o usuário
+        # (regra 10), senão o site diria "parque aberto" com tudo fechado.
+        self.assertEqual(result["abertas"], 1)
+
+    @patch("api_server.localizacao.com_score", return_value=[])
+    @patch("api_server.localizacao._ranking_detalhado", return_value=[])
+    @patch("api_server.localizacao.parque_mais_proximo", return_value="Epcot")
+    def test_parque_fechado_conta_zero_aberta(self, _park, _rank, _score):
+        payload = {"lands": [{"rides": [
+            {"name": "Test Track", "is_open": False, "wait_time": 0},
+            {"name": "Soarin'", "is_open": False, "wait_time": 0},
+        ]}]}
+        with patch("api_server.monitor.fetch_queue_times", return_value=payload):
+            result = api_server.build_perto_payload(1, 2, object(), {}, {"Epcot": 5}, {})
+        self.assertEqual(result["abertas"], 0)
+
 
 class TestFreioDoToken(unittest.TestCase):
     """A API tem hostname próprio no Caddy: o token enfrenta a internet inteira."""
