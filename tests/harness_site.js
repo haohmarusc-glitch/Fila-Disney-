@@ -51,6 +51,15 @@ function acharPorTexto(no, alvo) {
   return null;
 }
 
+/* As tags que a árvore usa, com quantas de cada — é como o teste afirma que o
+ * seletor nativo do celular existe e tem uma opção por parque. */
+function tagsDe(no, conta = {}) {
+  if (!no) return conta;
+  if (no.tag) conta[no.tag] = (conta[no.tag] || 0) + 1;
+  for (const filho of no.children) tagsDe(filho, conta);
+  return conta;
+}
+
 /* Todas as classes usadas na árvore — é como o teste afirma que "fechada" não
  * saiu pintada de verde, já que a cor mora na classe e não no texto. */
 function classesDe(no) {
@@ -58,8 +67,6 @@ function classesDe(no) {
   return [no.className, ...no.children.flatMap(classesDe)].filter(Boolean);
 }
 
-/* Serializa a árvore com as tags, para o teste ver que <b> virou <b> e que
- * <script> não virou nada. */
 /* Todos os href da árvore — para o teste afirmar que o link do mapa aponta
  * para o lugar certo, e que muda de forma quando há GPS. */
 function linksDe(no) {
@@ -67,6 +74,8 @@ function linksDe(no) {
   return [no.href, ...no.children.flatMap(linksDe)].filter(Boolean);
 }
 
+/* Serializa a árvore com as tags, para o teste ver que <b> virou <b> e que
+ * <script> não virou nada. */
 function estruturaDe(no) {
   if (!no) return "";
   const dentro = no.children.map(estruturaDe).join("");
@@ -151,6 +160,7 @@ function textoDe(no) {
     perto: textoDe(elementos["perto-conteudo"]),
     parques: textoDe(elementos["parques-conteudo"]),
     classes: classesDe(elementos["parques-conteudo"]),
+    tags: tagsDe(elementos["parques-conteudo"]),
     links: linksDe(elementos["parques-conteudo"]).concat(
       linksDe(elementos["perto-conteudo"])),
     vigias: textoDe(elementos["vigias-conteudo"]),

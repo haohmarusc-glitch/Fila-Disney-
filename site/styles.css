@@ -44,11 +44,23 @@ body {
   flex-direction: column;
 }
 
+/* A página inteira vive numa faixa central. Sem isto, no monitor a `.linha`
+   com `space-between` jogava o nome na borda esquerda e o tempo de fila a mais
+   de mil pixels de distância — o número existia e ninguém achava. O celular
+   escondia o defeito porque a tela é estreita por natureza. */
+.faixa {
+  width: 100%;
+  max-width: 960px;
+  margin-inline: auto;
+  padding-inline: 16px;
+}
+
 .topo {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 10px;
+  gap: 12px;
+  padding-block: 16px 12px;
 }
 .marca { display: flex; align-items: center; gap: 10px; }
 .marca-icone { font-size: 1.7rem; }
@@ -66,12 +78,16 @@ body {
 .botao-atualizar.girando { animation: girar 1s linear infinite; }
 @keyframes girar { to { transform: rotate(360deg); } }
 
+/* A barra de abas encosta nas bordas da tela; só os botões respeitam a faixa,
+   senão a linha divisória ficaria pendurada no meio do monitor. */
+.barra-abas { border-bottom: 1px solid var(--borda); background: var(--cartao); }
 .abas {
   display: flex;
   gap: 4px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--borda);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.abas::-webkit-scrollbar { display: none; }
 .aba {
   appearance: none;
   border: none;
@@ -86,7 +102,7 @@ body {
 .aba.ativa { color: var(--acento); border-bottom-color: var(--acento); }
 
 main { flex: 1; }
-.painel { padding: 12px; }
+.painel { padding-block: 16px 24px; }
 .oculto { display: none; }
 .conteudo { display: flex; flex-direction: column; gap: 10px; }
 
@@ -178,7 +194,9 @@ main { flex: 1; }
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  padding-block: 14px calc(16px + env(safe-area-inset-bottom));
+  margin-top: 8px;
+  border-top: 1px solid var(--borda);
   font-size: .75rem;
   color: var(--texto-suave);
 }
@@ -253,11 +271,24 @@ main { flex: 1; }
    duas colunas saíram coladas — "Avatar Flight of Passagefechada". O estilo
    agora é da classe, não do lugar onde ela aparece. */
 .linha {
-  display: flex; justify-content: space-between; gap: 8px;
-  font-size: .84rem;
-  padding: 4px 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: .88rem;
+  padding: 9px 0;
+  border-top: 1px solid var(--borda);
 }
-.linha span:last-child { flex: none; font-weight: 700; }
+.linha:first-of-type { border-top: none; }
+/* O valor é o que se procura na lista: fica em pill, alinhado à direita, com
+   largura mínima para que a coluna de números seja uma coluna de verdade. */
+.linha span:last-child {
+  flex: none;
+  min-width: 76px;
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 .meta { font-size: .78rem; color: var(--texto-suave); margin-bottom: 4px; }
 .fila-ok { color: var(--verde-texto); }
 .fila-alta { color: var(--vermelho-texto); }
@@ -272,47 +303,73 @@ main { flex: 1; }
    Os parques agora quebram em linha; os comandos continuam rolando, porque
    são onze e ocupariam quatro linhas antes da primeira fila aparecer — e ali
    o gesto custa pouco: o botão importante já está visível. */
+/* Rótulo em cima de cada barra: sem ele as duas fileiras de pílulas pareciam
+   a mesma coisa, e nada dizia que a de cima escolhe o parque e a de baixo roda
+   um comando. */
+.rotulo-barra {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--texto-suave);
+  margin-bottom: 6px;
+}
 .escolha {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 .escolha.comandos {
   flex-wrap: nowrap;
   overflow-x: auto;
   padding-bottom: 8px;
-  margin-top: 14px;
   scrollbar-width: none;
+  /* A sombra à direita anuncia que a faixa desliza — foi não ter esse sinal
+     que escondeu cinco dos sete parques na primeira versão. */
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
 }
 .escolha.comandos::-webkit-scrollbar { display: none; }
 
 .chip {
   flex: 0 0 auto;
-  padding: 7px 13px;
+  min-height: 40px;           /* alvo de toque; 40px é o mínimo confortável */
+  padding: 8px 15px;
   font: inherit;
-  font-size: .85rem;
-  color: var(--texto-suave);
+  font-size: .87rem;
+  font-weight: 500;
+  color: var(--texto);
   background: var(--cartao);
   border: 1px solid var(--borda);
   border-radius: 999px;
   cursor: pointer;
+  transition: border-color .15s, background .15s;
 }
+.chip:hover { border-color: var(--acento); }
 .chip.ativa {
   color: #fff;
   background: var(--acento);
   border-color: var(--acento);
+  font-weight: 600;
 }
 .chip:disabled { opacity: .55; cursor: default; }
 
-.grupo { margin-top: 18px; }
+/* Cada seção é um cartão: no monitor a lista solta no fundo da página não
+   dizia onde uma terminava e a outra começava. */
+.grupo {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  box-shadow: var(--sombra);
+  padding: 4px 14px 12px;
+}
 .grupo-titulo {
-  font-size: .78rem;
-  font-weight: 600;
+  font-size: .72rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: .04em;
+  letter-spacing: .06em;
   color: var(--texto-suave);
-  margin-bottom: 6px;
+  padding: 12px 0 4px;
 }
 
 /* Saída de comando: o mesmo texto que chega no Telegram. `pre-wrap` porque os
@@ -345,4 +402,88 @@ main { flex: 1; }
   text-decoration: none;
   color: var(--acento);
   white-space: nowrap;
+}
+
+
+/* ------------------------------------------------- telas grandes */
+
+/* No monitor a faixa fica mais larga e as listas viram duas colunas: com uma
+   só, "Shows e sem fila" caía muito abaixo da dobra e ninguém rolava até lá. */
+@media (min-width: 860px) {
+  .faixa { max-width: 1100px; }
+  .topo h1 { font-size: 1.3rem; }
+  .aba { font-size: 1rem; padding: 12px 18px; }
+
+  .grupos {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    align-items: start;
+  }
+  /* A watchlist é o que importa: ocupa a linha inteira, em cima. */
+  .grupos > .grupo:first-child { grid-column: 1 / -1; }
+
+  .cartao { padding: 14px 16px; }
+  .conteudo { gap: 14px; }
+
+  /* Os cartões do ranking em duas colunas: numa faixa de 1100px cada cartão
+     sozinho deixava meio metro de vazio entre o nome e o total. */
+  #perto-conteudo, #vigias-conteudo {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+  #perto-conteudo > .aviso, #perto-conteudo > .erro,
+  #vigias-conteudo > .aviso, #vigias-conteudo > .erro { grid-column: 1 / -1; }
+
+  /* No monitor os onze comandos cabem em duas linhas: manter a rolagem
+     horizontal aqui seria esconder botões que já tinham espaço. */
+  .escolha.comandos {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    mask-image: none;
+  }
+}
+
+/* Quem prefere menos movimento não precisa do giro do botão de atualizar. */
+@media (prefers-reduced-motion: reduce) {
+  .botao-atualizar.girando { animation: none; }
+  .barra > div, .chip { transition: none; }
+}
+
+
+/* Seletor de parque: nativo no celular, pílulas no monitor. */
+.combo-parque {
+  width: 100%;
+  min-height: 44px;
+  font: inherit;
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--texto);
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+.pilulas-parque { display: none; }
+
+/* Estado do parque: horário, lotação e fechadas. Estava como texto solto de
+   12px espremido entre duas barras de botões, e é justamente o que responde
+   "vale a pena ir agora". */
+.estado-parque {
+  display: block;
+  font-size: .82rem;
+  color: var(--texto-suave);
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  padding: 9px 12px;
+  margin-bottom: 18px;
+}
+
+@media (min-width: 640px) {
+  .combo-parque { display: none; }
+  .pilulas-parque { display: flex; }
 }

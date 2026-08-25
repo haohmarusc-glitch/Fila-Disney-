@@ -376,9 +376,29 @@ async function carregarParques() {
     if (!parqueAtivo) parqueAtivo = comandosCache.parques[0];
 
     const tudo = texto("div", null);
-    const seletor = texto("div", "escolha");
+    tudo.appendChild(texto("p", "rotulo-barra", "Parque"));
+
+    // Duas formas de escolher o mesmo parque, uma por tamanho de tela (o CSS
+    // esconde a que não serve). No celular as sete pílulas ocupavam sete
+    // linhas e empurravam as filas para fora da tela; o seletor nativo gasta
+    // uma linha e abre a lista do sistema, que é o controle que o telefone já
+    // sabe operar. No monitor as pílulas cabem e mostram tudo de relance.
+    const combo = texto("select", "combo-parque");
     for (const nome of comandosCache.parques) {
-      const b = texto("button", nome === parqueAtivo ? "chip ativo" : "chip", nome);
+      const opcao = texto("option", null, nome);
+      opcao.value = nome;
+      if (nome === parqueAtivo) opcao.selected = true;
+      combo.appendChild(opcao);
+    }
+    combo.addEventListener("change", () => {
+      parqueAtivo = combo.value;
+      carregarParques();
+    });
+    tudo.appendChild(combo);
+
+    const seletor = texto("div", "escolha pilulas-parque");
+    for (const nome of comandosCache.parques) {
+      const b = texto("button", nome === parqueAtivo ? "chip ativa" : "chip", nome);
       b.addEventListener("click", () => { parqueAtivo = nome; carregarParques(); });
       seletor.appendChild(b);
     }
@@ -399,8 +419,9 @@ async function carregarParques() {
     }
     if (dados.lotacao && dados.lotacao.nivel) meta.push(`lotação ${dados.lotacao.nivel}`);
     if (dados.lotacao && dados.lotacao.fechadas) meta.push(`${dados.lotacao.fechadas} fechada(s)`);
-    if (meta.length) tudo.appendChild(texto("p", "meta", meta.join(" · ")));
+    if (meta.length) tudo.appendChild(texto("p", "estado-parque", meta.join(" · ")));
 
+    tudo.appendChild(texto("p", "rotulo-barra", "Consultar"));
     const botoes = texto("div", "escolha comandos");
     const saida = texto("div", "saida-comando");
     for (const item of comandosCache.comandos) {
@@ -411,13 +432,15 @@ async function carregarParques() {
     tudo.appendChild(botoes);
     tudo.appendChild(saida);
 
+    const grupos = texto("div", "grupos");
     for (const bloco of [
       secao("Na watchlist", dados.items, true),
       secao("Outras atrações", dados.outras || [], true),
       secao("Shows e sem fila", dados.shows || [], false),
     ]) {
-      if (bloco) tudo.appendChild(bloco);
+      if (bloco) grupos.appendChild(bloco);
     }
+    if (grupos.childElementCount) tudo.appendChild(grupos);
     destino.replaceChildren(tudo);
     marcaAtualizado();
   } catch (erro) {
