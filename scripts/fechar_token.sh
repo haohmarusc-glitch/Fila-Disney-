@@ -208,13 +208,27 @@ dc_pre up -d caddy
 echo
 echo "== conferindo"
 
-# Bate em localhost com o Host na mão, não no nome público: de dentro da VPS o
-# DNS pode não voltar para a própria máquina, e aí o curl falha sem chegar no
-# Caddy — devolvendo 000, que não diz nada sobre o site. O `-k` é porque o
-# certificado é do nome público, não de "localhost".
+# Conecta em 127.0.0.1 mantendo o nome real: de dentro da VPS o DNS pode não
+# voltar para a própria máquina, e aí o curl falha sem chegar no Caddy.
+#
+# Tem que ser `--resolve`, e não `-H "Host: ..."` contra o localhost. O `-H`
+# corrige o cabeçalho HTTP mas não o SNI: o curl continua apresentando
+# "localhost" no handshake, o Caddy não tem certificado para esse nome e recusa
+# a conexão antes de existir qualquer HTTP. Dá 000 mesmo com o site perfeito —
+# é o mesmo `tlsv1 alert internal error` da virada de DNS. Foi assim que esta
+# conferência mentiu duas vezes: primeiro batendo no nome público, depois no
+# localhost.
 codigo_de() {
     curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: $1" "https://localhost${2}" 2>/dev/null || echo 000
+        --resolve "${1}:443:127.0.0.1" "https://${1}${2}" 2>/dev/null || echo 000
+}
+
+# Porta 80 não tem SNI. Serve para separar "Caddy fora do ar" de "problema no
+# TLS": se o 80 responde e o 443 não, o Caddy está vivo e a questão é
+# certificado.
+codigo_http_de() {
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "Host: $1" "http://localhost${2}" 2>/dev/null || echo 000
 }
 
 # O container acabou de subir; o Caddy leva alguns segundos para ouvir.
@@ -236,10 +250,19 @@ if [[ -n "$VIZINHO" ]]; then
     CODIGO="$(codigo_de "$VIZINHO" /)"
     echo "   $VIZINHO -> $CODIGO   (qualquer código serve; 000 é o Caddy sem responder)"
     if [[ "$CODIGO" == "000" ]]; then
+        # Antes de mandar desfazer, separa "Caddy morto" de "problema no TLS":
+        # a porta 80 não tem SNI, então se ela responde o Caddy está de pé.
+        HTTP="$(codigo_http_de "$VIZINHO" /)"
         echo
-        echo "!! $VIZINHO parou de responder, e ele divide este Caddy. Para voltar atrás:"
-        echo "   cp $BACKUP $CADDYFILE && cd $PREMERCADO && docker compose up -d caddy"
-        exit 1
+        if [[ "$HTTP" == "000" ]]; then
+            echo "!! $VIZINHO não respondeu nem no 80 nem no 443, e ele divide este Caddy."
+            echo "   Para voltar atrás:"
+            echo "   cp $BACKUP $CADDYFILE && cd $PREMERCADO && docker compose up -d caddy"
+            exit 1
+        fi
+        echo "!! O 443 de $VIZINHO não respondeu, mas o 80 devolveu $HTTP: o Caddy está de pé"
+        echo "   e a questão é certificado, não este bloco. Confira com:"
+        echo "   cd $PREMERCADO && docker compose logs --tail 50 caddy"
     fi
 fi
 
