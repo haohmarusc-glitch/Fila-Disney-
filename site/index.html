@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topo">
+  <header class="topo faixa">
     <div class="marca">
       <span class="marca-icone">🎢</span>
       <div>
@@ -19,29 +19,31 @@
     <button id="atualizar" class="botao-atualizar" title="Atualizar agora">↻</button>
   </header>
 
-  <nav class="abas" role="tablist">
+  <nav class="barra-abas">
+   <div class="abas faixa" role="tablist">
     <button class="aba ativa" data-aba="perto" role="tab">Melhores agora</button>
     <button class="aba" data-aba="parques" role="tab">Parques</button>
     <button class="aba" data-aba="roteiro" role="tab">Roteiro</button>
     <button class="aba" data-aba="vigias" role="tab">Vigias</button>
+   </div>
   </nav>
 
   <main>
-    <section id="painel-perto" class="painel" role="tabpanel">
+    <section id="painel-perto" class="painel faixa" role="tabpanel">
       <div id="perto-conteudo" class="conteudo">
         <p class="aviso">Permita o acesso à localização para ver o ranking do parque onde você está.</p>
       </div>
     </section>
 
-    <section id="painel-parques" class="painel oculto" role="tabpanel">
+    <section id="painel-parques" class="painel faixa oculto" role="tabpanel">
       <div id="parques-conteudo" class="conteudo"></div>
     </section>
 
-    <section id="painel-roteiro" class="painel oculto" role="tabpanel">
+    <section id="painel-roteiro" class="painel faixa oculto" role="tabpanel">
       <div id="roteiro-conteudo" class="conteudo"></div>
     </section>
 
-    <section id="painel-vigias" class="painel oculto" role="tabpanel">
+    <section id="painel-vigias" class="painel faixa oculto" role="tabpanel">
       <div id="vigias-conteudo" class="conteudo"></div>
       <p class="nota">
         Para criar ou cancelar uma vigia, use o Telegram:
@@ -51,7 +53,7 @@
     </section>
   </main>
 
-  <footer class="rodape">
+  <footer class="rodape faixa">
     <span id="atribuicao">Powered by Queue-Times.com</span>
     <span id="atualizado-em"></span>
   </footer>

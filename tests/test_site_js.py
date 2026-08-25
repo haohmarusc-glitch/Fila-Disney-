@@ -464,3 +464,38 @@ class TestCaminhadaNaAbaParques(unittest.TestCase):
         tela = self.tela(gps=True, aberta=False, wait=0)
         self.assertIn("fechada", tela["parques"])
         self.assertNotIn("↓5", tela["parques"])
+
+
+@unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
+class TestSeletorDeParque(unittest.TestCase):
+    """Como se escolhe o parque, nas duas telas.
+
+    No celular são sete pílulas ocupando sete linhas, empurrando as filas para
+    fora da tela; o seletor nativo gasta uma linha. As duas formas convivem no
+    DOM e o CSS mostra a que serve — testar as duas aqui garante que nenhuma
+    sumiu num refactor.
+    """
+
+    def tela(self, ativo="Epcot"):
+        caso = {"aba": "parques", "respostas": {
+            "/comandos": {"comandos": [], "parques":
+                          ["Epcot", "Disney Animal Kingdom", "Disney Magic Kingdom"]},
+            "/parque": parque_payload(park=ativo)}}
+        return render(caso)
+
+    def test_pilula_do_parque_atual_fica_marcada(self):
+        """A classe era "ativo" e o CSS pinta ".ativa": o parque escolhido
+        nunca apareceu destacado, e a captura de 25/08 confirmou — nenhuma
+        pílula azul na tela."""
+        tela = self.tela()
+        self.assertIn("chip ativa", tela["classes"])
+
+    def test_so_um_parque_fica_marcado(self):
+        marcados = [c for c in self.tela()["classes"] if c == "chip ativa"]
+        self.assertEqual(len(marcados), 1)
+
+    def test_existe_o_seletor_nativo_com_um_item_por_parque(self):
+        tela = self.tela()
+        self.assertEqual(tela["tags"].get("select"), 1)
+        self.assertEqual(tela["tags"].get("option"), 3)
+
