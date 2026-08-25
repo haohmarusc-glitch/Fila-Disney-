@@ -453,11 +453,18 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path not in ("/perto", "/vigias", "/parque", "/comando", "/comandos"):
             return self._send(404, {"error": "rota não encontrada"})
         agora = time.monotonic()
-        if bloqueado(agora):
-            return self._send(429, {"error": "muitas tentativas; tente mais tarde"})
+        # O token é conferido ANTES do bloqueio de propósito. Na ordem antiga
+        # o bloqueio vinha primeiro e valia para todo mundo: dez requisições
+        # com token errado — que qualquer pessoa na internet consegue mandar —
+        # derrubavam a família inteira por cinco minutos, de novo e de novo.
+        # O freio existe para quem está chutando o token; quem já tem o token
+        # certo passa por ele. Brute force continua barrado: cada erro conta,
+        # e enquanto o bloqueio durar nenhuma tentativa nova é avaliada.
         if not token_valido(self.headers.get("Authorization", "")):
+            if bloqueado(agora):
+                return self._send(429, {"error": "muitas tentativas; tente mais tarde"})
             if registrar_falha(agora):
-                log.warning("Bloqueando /perto por %ds: %d falhas de token na janela",
+                log.warning("Bloqueando token inválido por %ds: %d falhas na janela",
                             BLOQUEIO_S, FALHAS_MAX)
             return self._send(401, {"error": "não autorizado"})
         if excedeu_ritmo(agora):

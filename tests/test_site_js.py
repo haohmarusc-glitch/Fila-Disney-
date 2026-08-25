@@ -499,3 +499,56 @@ class TestSeletorDeParque(unittest.TestCase):
         self.assertEqual(tela["tags"].get("select"), 1)
         self.assertEqual(tela["tags"].get("option"), 3)
 
+
+
+class TestTokenForaDoNavegador(unittest.TestCase):
+    """O token da API não pode voltar para os estáticos.
+
+    Achado da auditoria de 25/08: o `config.example.js` mandava colar o
+    `WEB_API_TOKEN` num `config.js` que o próprio Caddy serve como arquivo
+    estático. Qualquer pessoa na internet abria
+    `https://filadisney.premercadosc.com/config.js` e levava a credencial da
+    família — a barreira do token não existia, porque o token estava do lado
+    de fora da porta. Quem injeta o header agora é o Caddy.
+    """
+
+    def ler(self, nome: str) -> str:
+        with open(f"site/{nome}", encoding="utf-8") as f:
+            return f.read()
+
+    def objeto_de_config(self) -> str:
+        """Só o corpo de `window.FILA_CONFIG = {...}`.
+
+        O arquivo CITA o WEB_API_TOKEN nos comentários, explicando que quem o
+        injeta é o Caddy — e deve citar. O que não pode voltar é o campo.
+        """
+        exemplo = self.ler("config.example.js")
+        corpo = re.search(r"window\.FILA_CONFIG\s*=\s*\{(.*?)\}", exemplo, re.S)
+        self.assertIsNotNone(corpo, "o config de exemplo perdeu o FILA_CONFIG")
+        return corpo.group(1)
+
+    def test_o_exemplo_nao_pede_token(self):
+        self.assertNotIn("token", self.objeto_de_config())
+        self.assertNotIn("COLE_AQUI_O_WEB_API_TOKEN", self.ler("config.example.js"))
+
+    def test_o_exemplo_explica_por_que(self):
+        """Sem o motivo escrito, alguém devolve o campo achando que faltou."""
+        exemplo = self.ler("config.example.js").lower()
+        self.assertIn("caddy", exemplo)
+
+    def test_nenhum_estatico_versionado_embute_credencial(self):
+        """Varre o que o Caddy publica. Procura credencial de verdade, não a
+        palavra: os comentários precisam poder falar do assunto."""
+        for nome in ("index.html", "app.js", "styles.css", "config.example.js"):
+            with self.subTest(arquivo=nome):
+                conteudo = self.ler(nome)
+                self.assertIsNone(
+                    re.search(r"""(?i)token\s*[:=]\s*["'][^"']{8,}["']""", conteudo),
+                    "um token literal apareceu num arquivo que o Caddy publica")
+
+    def test_o_app_so_manda_header_se_alguem_configurar(self):
+        """`CFG.token` sobrevive apenas como ponte durante a virada do Caddy:
+        o padrão, sem config.js, é não mandar Authorization nenhum."""
+        app = self.ler("app.js")
+        self.assertIn("CFG.token ?", app)
+        self.assertNotIn('Bearer ${CFG.token || ""}', app)
