@@ -264,19 +264,28 @@ main { flex: 1; }
 
 /* --------------------------------------------------- aba Parques */
 
-/* Barra de escolha: parques em cima, comandos embaixo. Rola na horizontal
-   porque são 7 parques e 11 comandos — quebrar em três linhas empurraria a
-   lista de filas para fora da tela do celular. */
+/* Barra de escolha. A primeira versão rolava na horizontal e escondia cinco
+   dos sete parques atrás de um gesto que nada anunciava: na tela só apareciam
+   "Animal Kingdom" e "Hollywood Studios", como se o resto não existisse.
+   Escolher parque não pode depender de descobrir que a faixa desliza.
+
+   Os parques agora quebram em linha; os comandos continuam rolando, porque
+   são onze e ocupariam quatro linhas antes da primeira fila aparecer — e ali
+   o gesto custa pouco: o botão importante já está visível. */
 .escolha {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 10px;
+}
+.escolha.comandos {
+  flex-wrap: nowrap;
   overflow-x: auto;
   padding-bottom: 8px;
-  margin-bottom: 10px;
+  margin-top: 14px;
   scrollbar-width: none;
 }
-.escolha::-webkit-scrollbar { display: none; }
-.escolha.comandos { margin-top: 14px; }
+.escolha.comandos::-webkit-scrollbar { display: none; }
 
 .chip {
   flex: 0 0 auto;

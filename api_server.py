@@ -248,7 +248,7 @@ def executar_comando(cmd: str, busca: str, conn, config: dict, park_ids: dict,
     elif cmd == "lotacao":
         texto = monitor.format_lotacao(conn, config, park, payload)
     elif cmd == "novidades":
-        texto = monitor.format_novidades(config, park, payload)
+        texto = monitor.format_novidades(config, park, payload, conn)
     elif cmd == "ranking":
         ranking = [(wait, ride, park)
                    for wait, ride in monitor.maiores_filas(payload, config, 10)]
