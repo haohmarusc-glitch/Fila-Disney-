@@ -114,8 +114,28 @@ def esperar_banco(espera_s: int = ESPERA_BANCO_S) -> None:
         time.sleep(2)
 
 
+def _caminhada(posicao, coords: dict, park: str, canonico: str,
+               coords_do_parque: dict) -> dict:
+    """Distância e minutos a pé até uma atração, ou vazio quando não dá.
+
+    Mesma conta do /perto e do Telegram: linha reta corrigida por um fator de
+    caminho, com a âncora de rota quando existe (o ponto onde a fila começa
+    não é o centro da atração). É estimativa, não rota — o Google Maps não
+    mapeia caminho interno de parque, e o campo `route_source` do /perto existe
+    justamente para dizer qual das duas foi usada.
+    """
+    coord = localizacao.coordenada_atracao(coords_do_parque, canonico)
+    if posicao is None or coord is None:
+        return {"walk": None, "meters": None}
+    ancora, extra_min, extra_m = localizacao.ancora_rota(coords, park, canonico, coord)
+    metros = localizacao.distancia_metros(posicao, ancora) + extra_m
+    return {"walk": localizacao.minutos_a_pe(metros) + extra_min,
+            "meters": round(metros)}
+
+
 def build_parque_payload(busca: str, conn, config: dict, park_ids: dict,
-                         coords: dict | None = None) -> dict:
+                         coords: dict | None = None,
+                         posicao: tuple[float, float] | None = None) -> dict:
     """As filas da watchlist de um parque, SEM precisar de GPS.
 
     É o /status em JSON: a aba Roteiro do site consulta qualquer dia da viagem
@@ -137,6 +157,12 @@ def build_parque_payload(busca: str, conn, config: dict, park_ids: dict,
     # sem `coordinate` e a tela não desenha link — apontar o mapa para o centro
     # do parque como se fosse a atração seria coordenada inventada (regra 12).
     coords_do_parque = (coords or {}).get("rides", {}).get(park, {})
+    # Caminhada só faz sentido de DENTRO do parque pedido. Quem abre a aba em
+    # casa e escolhe o Magic Kingdom teria "7.000 km a pé" — número correto e
+    # inútil. Fora do parque a caminhada simplesmente não sai, como no
+    # Telegram, onde ela depende de localização enviada.
+    if posicao is not None and localizacao.parque_mais_proximo(posicao, coords or {}) != park:
+        posicao = None
     itens = []
     for _land, ride in monitor.iter_rides(payload):
         canonico = monitor.nome_watchlist(park_cfg, ride["name"])
@@ -153,6 +179,10 @@ def build_parque_payload(busca: str, conn, config: dict, park_ids: dict,
             "pre_min": monitor.pre_da_atracao(duracoes, veiculos, park, canonico),
             "coordinate": list(coords_do_parque[canonico])
                           if canonico in coords_do_parque else None,
+            **_caminhada(posicao, coords or {}, park, canonico, coords_do_parque),
+            # A seta que o Telegram mostra ao lado da fila ("→", "↓5", "↑30").
+            # Vem vazia sem histórico suficiente — nunca uma seta chutada.
+            "tendencia": monitor.marca_tendencia(conn, park, canonico).strip(),
         })
     itens.sort(key=lambda i: (not i["aberta"], i["wait"] if i["wait"] is not None else 999,
                               i["ride"]))
@@ -354,6 +384,7 @@ def build_perto_payload(latitude: float, longitude: float, conn, config, park_id
             "meters": round(meters) if meters is not None else None,
             "total": total, "coordinate": list(coord) if coord else None,
             "route_source": source, "quality": scores.get(name),
+            "tendencia": monitor.marca_tendencia(conn, park_name, name).strip(),
         })
     # Lista vazia tem dois motivos muito diferentes — parque fechado, ou aberto
     # sem nada elegível (leitura velha, sem coordenada) — e o site precisa
@@ -436,10 +467,17 @@ class Handler(BaseHTTPRequestHandler):
                               {"Retry-After": str(PERTO_JANELA_S)})
         if parsed.path == "/parque":
             try:
-                nome = (parse_qs(parsed.query).get("nome") or [""])[0]
+                query = parse_qs(parsed.query)
+                nome = (query.get("nome") or [""])[0]
+                # lat/lon são opcionais: com eles a tela ganha caminhada, sem
+                # eles continua sendo a consulta de casa que sempre foi.
+                posicao = None
+                if "lat" in query and "lon" in query:
+                    posicao = (_number(query, "lat", -90, 90),
+                               _number(query, "lon", -180, 180))
                 return self._send(200, build_parque_payload(
                     nome, self.server.conn, self.server.config,
-                    self.server.park_ids, self.server.coords))
+                    self.server.park_ids, self.server.coords, posicao))
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
             except Exception:
