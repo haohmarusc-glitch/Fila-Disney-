@@ -336,3 +336,13 @@ main { flex: 1; }
   background: var(--fundo);
 }
 .telegram a { color: var(--acento); }
+
+/* Link do mapa: discreto ao lado do nome, mas com alvo de toque decente —
+   ele fica entre o nome e o número da fila num celular. */
+.mapa {
+  margin-left: 6px;
+  font-size: .78rem;
+  text-decoration: none;
+  color: var(--acento);
+  white-space: nowrap;
+}

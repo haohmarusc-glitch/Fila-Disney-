@@ -89,16 +89,12 @@ function cartaoAtracao(item, indice) {
   if (item.quality !== null) {
     selos.appendChild(texto("span", "selo", `qualidade da fila ⭐ ${item.quality}`));
   }
-  if (item.coordinate && posicao) {
+  if (item.coordinate) {
+    // Era `item.coordinate && posicao`: sem GPS o link sumia, embora o /perto
+    // só responda com GPS. Mantido pelo mesmo helper da aba Parques para as
+    // duas telas não divergirem no formato do link.
     const selo = texto("span", "selo");
-    const link = texto("a", null, "🗺️ Google Maps");
-    link.href = "https://www.google.com/maps/dir/?api=1"
-      + `&origin=${posicao[0]},${posicao[1]}`
-      + `&destination=${item.coordinate[0]},${item.coordinate[1]}`
-      + "&travelmode=walking";
-    link.target = "_blank";
-    link.rel = "noopener";
-    selo.appendChild(link);
+    selo.appendChild(linkDoMapa(item.coordinate, "🗺️ Google Maps"));
     selos.appendChild(selo);
   }
   if (selos.childElementCount) corpo.appendChild(selos);
@@ -273,9 +269,33 @@ function doTelegram(html) {
 let parqueAtivo = null;
 let comandosCache = null;
 
+/* Link do Google Maps para uma coordenada.
+ *
+ * Com GPS, rota a pé; sem GPS, o ponto no mapa. Essa é a diferença que torna
+ * o link útil fora do parque: `dir` exige origem e não abre nada sem ela,
+ * `search` só precisa do destino. Quem está em casa planejando quer ver ONDE
+ * fica; quem está lá dentro quer o caminho.
+ */
+function linkDoMapa(coordenada, rotulo) {
+  const [lat, lon] = coordenada;
+  const link = texto("a", "mapa", rotulo || "🗺️ mapa");
+  link.href = posicao
+    ? "https://www.google.com/maps/dir/?api=1"
+      + `&origin=${posicao[0]},${posicao[1]}`
+      + `&destination=${lat},${lon}&travelmode=walking`
+    : `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
+  link.target = "_blank";
+  link.rel = "noopener";
+  return link;
+}
+
 function linhaAtracao(item, mostraFila) {
   const linha = texto("div", "linha");
-  linha.appendChild(texto("span", null, item.ride));
+  const nome = texto("span", null, item.ride);
+  // Sem coordenada não há link: apontar o mapa para o centro do parque como
+  // se fosse a atração seria coordenada inventada (regra 12).
+  if (item.coordinate) nome.appendChild(linkDoMapa(item.coordinate));
+  linha.appendChild(nome);
   if (!mostraFila) {
     // Show, trilha, exposição: a fila é 0 permanente, então some o número.
     // "0 min" diria que não há espera onde não há medição (regra 15).
@@ -408,6 +428,7 @@ async function abrirFilasDoDia(dia, container, botao) {
       const partes = [];
       if (item.duracao_min !== null) partes.push(`~${item.duracao_min} min de atração`);
       if (partes.length) nome.appendChild(texto("small", "detalhe", ` ${partes.join(" · ")}`));
+      if (item.coordinate) nome.appendChild(linkDoMapa(item.coordinate));
       linha.appendChild(nome);
       const valor = !item.aberta ? "fechada"
         : item.wait === null ? "—"

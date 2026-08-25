@@ -60,6 +60,13 @@ function classesDe(no) {
 
 /* Serializa a árvore com as tags, para o teste ver que <b> virou <b> e que
  * <script> não virou nada. */
+/* Todos os href da árvore — para o teste afirmar que o link do mapa aponta
+ * para o lugar certo, e que muda de forma quando há GPS. */
+function linksDe(no) {
+  if (!no) return [];
+  return [no.href, ...no.children.flatMap(linksDe)].filter(Boolean);
+}
+
 function estruturaDe(no) {
   if (!no) return "";
   const dentro = no.children.map(estruturaDe).join("");
@@ -86,9 +93,17 @@ Object.defineProperty(globalThis, "navigator", {
   configurable: true,
   writable: true,
   value: {
+    // O app.js chama iniciarGPS() sozinho ao carregar, então quem decide se
+    // há posição é o stub, não uma chamada extra do teste: `gps: true`
+    // simula permissão concedida, a ausência simula permissão negada — que é
+    // o estado de quem abre a aba Parques em casa.
     geolocation: {
-      watchPosition(ok) {
-        ok({ coords: { latitude: 28.3575, longitude: -81.5906 } });
+      watchPosition(ok, falhou) {
+        if (caso.gps) {
+          ok({ coords: { latitude: 28.3575, longitude: -81.5906 } });
+        } else if (falhou) {
+          falhou({ code: 1, message: "permissão negada (teste)" });
+        }
       },
     },
   },
@@ -123,7 +138,6 @@ function textoDe(no) {
     process.exit(0);
   }
   if (caso.aba) trocarAba(caso.aba);
-  if (caso.gps) iniciarGPS();
   // As cargas são assíncronas e ninguém devolve promessa aqui; um tick de
   // folga basta porque o fetch é resolvido na hora pelo stub.
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -137,6 +151,8 @@ function textoDe(no) {
     perto: textoDe(elementos["perto-conteudo"]),
     parques: textoDe(elementos["parques-conteudo"]),
     classes: classesDe(elementos["parques-conteudo"]),
+    links: linksDe(elementos["parques-conteudo"]).concat(
+      linksDe(elementos["perto-conteudo"])),
     vigias: textoDe(elementos["vigias-conteudo"]),
     subtitulo: elementos["subtitulo"] ? elementos["subtitulo"].textContent : "",
   }));
