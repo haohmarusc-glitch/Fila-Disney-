@@ -27,7 +27,13 @@ cd "$PROJETO" 2>/dev/null || erro "não achei $PROJETO"
 [[ -f "$CADDYFILE" ]] || erro "não achei $CADDYFILE"
 command -v docker >/dev/null || erro "docker não está no PATH"
 
-dc_pre() { docker compose --project-directory "$PREMERCADO" -f "$PREMERCADO/docker-compose.yml" "$@"; }
+# Entra no diretório em vez de apontar o arquivo com -f. Passar `-f` faz o
+# Compose parar de carregar o `docker-compose.override.yml` — e é o override
+# que entrega o WEB_API_TOKEN ao Caddy. Com `-f`, o Caddy subia sem a variável,
+# `{env.WEB_API_TOKEN}` virava string vazia, a API recebia "Bearer " e devolvia
+# 401 em tudo. Medido em 25/08/2026: `docker compose -f docker-compose.yml
+# config` não mostra nenhuma `environment`; sem o `-f`, mostra.
+dc_pre() { (cd "$PREMERCADO" && docker compose "$@"); }
 
 # ---------------------------------------------------------------- 1. Caddyfile
 passo "1/5 bloco do Caddy"
@@ -207,6 +213,27 @@ dc_pre up -d caddy
 
 echo
 echo "== conferindo"
+
+# Primeiro o que dá para saber sem a senha: o Caddy recebeu mesmo o token?
+# Sem isto a conferência não distingue "senha protegendo" de "token não
+# injetado" — as duas devolvem 401, em camadas diferentes, e foi assim que a
+# versão anterior deu o deploy por bom com a injeção quebrada.
+NO_CADDY="$(dc_pre exec -T caddy printenv WEB_API_TOKEN 2>/dev/null | tr -d '\r\n' || true)"
+if [[ -z "$NO_CADDY" ]]; then
+    echo "!! O container do Caddy não tem WEB_API_TOKEN no ambiente."
+    echo "   O override não foi carregado; o /api/* vai devolver 401 em tudo."
+    echo "   Confira $OVERRIDE e o WEB_API_TOKEN em $PREMERCADO/.env, e rode:"
+    echo "   cd $PREMERCADO && docker compose up -d caddy"
+    exit 1
+elif [[ "$NO_CADDY" != "$TOKEN_NOVO" ]]; then
+    echo "!! O WEB_API_TOKEN do Caddy é diferente do que acabou de ser gravado."
+    echo "   O container subiu com o valor antigo. Rode:"
+    echo "   cd $PREMERCADO && docker compose up -d caddy"
+    exit 1
+else
+    echo "   token no Caddy -> confere com o .env"
+fi
+unset NO_CADDY
 
 # Conecta em 127.0.0.1 mantendo o nome real: de dentro da VPS o DNS pode não
 # voltar para a própria máquina, e aí o curl falha sem chegar no Caddy.
