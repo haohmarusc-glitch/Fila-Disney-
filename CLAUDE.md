@@ -122,6 +122,14 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
   `/health` por HTTP, o do monitor mede se a coleta está viva
 - `watchlist.json` — config declarativa (parques, atrações, thresholds, dias)
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
+- `scripts/fechar_token.sh` — o deploy do site na VPS: bloco do Caddy com
+  `basic_auth`, token novo nos dois `.env`, remoção do `config.js` e restart.
+  Rodar duas vezes é seguro, e é assim que se troca o token. `--conferir`
+  mostra o diff do Caddyfile sem aplicar
+- `scripts/caddy_bloco.py` — troca o bloco do site no Caddyfile **no lugar**.
+  O Caddyfile é do Premercado: dois blocos com o mesmo hostname fazem o Caddy
+  recusar a config inteira e derrubam o `premercadosc.com` junto, que é o que o
+  `cat >>` do runbook antigo produzia na segunda execução
 - `coords.py` — script avulso (roda uma vez) que busca coordenadas no OpenStreetMap
 - `duracoes.py` — script avulso (roda uma vez) que coleta duração das páginas
   públicas "Attraction Durations" do TouringPlans. A Queue-Times e a

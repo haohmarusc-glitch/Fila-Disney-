@@ -41,34 +41,45 @@ versionado e sob o mesmo Caddy da VPS.
   "Powered by Queue-Times.com" no rodapé (regra 2), fila ausente vira "—",
   nunca 0 (regra 15).
 
-## Instalação na VPS (uma vez)
+## Instalação na VPS
 
 ```bash
-# 1. o site chega com o git pull normal do Fila-Disney-
 cd ~/Fila-Disney- && git pull
+./scripts/fechar_token.sh --conferir   # mostra o diff do Caddyfile, não aplica
+./scripts/fechar_token.sh              # aplica
+```
 
-# 2. o site NÃO tem mais config.js com token. Se existir um de antes, apague:
-rm -f ~/Fila-Disney-/site/config.js
+O script faz os cinco passos de uma vez: bloco do Caddy, `docker-compose.override.yml`,
+token novo nos dois `.env`, remoção do `site/config.js` e restart dos dois
+containers. Na primeira vez ele pede a senha da família (usuário `familia`);
+depois reaproveita o hash que já está no Caddyfile e só troca o token.
 
-# 3. senha da página (uma vez). Guarde a senha; o hash é o que vai no Caddyfile
-caddy hash-password --plaintext 'SENHA_DA_FAMILIA'
+Rodar de novo é seguro — é o mesmo comando para trocar o token depois. **Rode-o
+pelo menos uma vez**: o token antigo esteve público em `/config.js` enquanto o
+site esteve no ar, então ele é comprometido.
 
-# 4. bloco no Caddyfile do Premercado (uma vez)
-#    Troque COLE_O_HASH pela saída do passo 3.
-cat >> /opt/premercado/Caddyfile <<'EOF'
+Três cuidados estão dentro do script porque o Caddyfile é do Premercado, e uma
+config recusada derruba o `premercadosc.com` junto:
 
+- O bloco é **trocado no lugar**, nunca acrescentado (`scripts/caddy_bloco.py`).
+  O runbook antigo mandava `cat >>`, que na segunda execução criava dois blocos
+  com o mesmo hostname — exatamente o que o Caddy recusa.
+- `caddy validate` roda **antes** do reload, com cópia de segurança datada ao
+  lado do Caddyfile e restauração automática se recusar.
+- `basic_auth` é a diretiva do Caddy 2.8+; antes chamava-se `basicauth`. O
+  script lê a versão e, se o `validate` ainda assim recusar, tenta a outra forma
+  antes de desistir.
+
+O bloco resultante, para conferência:
+
+```
 filadisney.premercadosc.com {
     encode zstd gzip
-
-    # A senha protege a página inteira, inclusive o /api/*. É ela que substitui
-    # o token que ficava no JavaScript.
     basic_auth {
-        familia COLE_O_HASH
+        familia <hash bcrypt>
     }
-
     handle /api/* {
         uri strip_prefix /api
-        # Quem injeta o token é AQUI, no servidor. O navegador nunca o vê.
         reverse_proxy fila-disney-api:8080 {
             header_up Authorization "Bearer {env.WEB_API_TOKEN}"
         }
@@ -76,45 +87,14 @@ filadisney.premercadosc.com {
     root * /srv/filadisney
     file_server
 }
-EOF
-
-# 5. monta a pasta e passa o token ao container do Caddy (uma vez)
-cat > /opt/premercado/docker-compose.override.yml <<'EOF'
-services:
-  caddy:
-    volumes:
-      - /root/Fila-Disney-/site:/srv/filadisney:ro
-    environment:
-      - WEB_API_TOKEN=${WEB_API_TOKEN}
-EOF
-
-# 6. o WEB_API_TOKEN precisa existir no .env DO PREMERCADO, que é onde este
-#    docker compose lê as variáveis:
-grep ^WEB_API_TOKEN ~/Fila-Disney-/.env >> /opt/premercado/.env
-
-# 7. aplica
-cd /opt/premercado && docker compose up -d caddy
 ```
 
-`basic_auth` é a diretiva do Caddy 2.8+; em versões anteriores chama-se
-`basicauth`, com a mesma sintaxe. Confira com `docker compose exec caddy caddy
-version` antes de recarregar — nome errado faz o Caddy recusar a config
-inteira, e aí o `premercadosc.com` cai junto.
+O `WEB_API_TOKEN` precisa existir no `.env` **do Premercado** além do daqui — é
+de lá que aquele compose lê as variáveis. O script escreve nos dois.
 
-## Trocar o token (obrigatório uma vez)
-
-O token antigo esteve público em `/config.js` enquanto o site esteve no ar.
-Trate-o como comprometido:
-
-```bash
-# 1. gera um novo
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-
-# 2. troca nos DOIS .env (o do projeto e o do Premercado, que o Caddy lê)
-#    e sobe os containers de novo
-cd ~/Fila-Disney- && docker compose up -d --build fila-disney-api
-cd /opt/premercado && docker compose up -d caddy
-```
+Depois, `curl https://filadisney.premercadosc.com/config.js` tem que dar 401 (a
+senha do Caddy) ou 404 (arquivo apagado). 200 com um token dentro é o defeito de
+volta.
 
 O override existe para não editar o `docker-compose.yml` do Premercado, que
 tem drift próprio em relação ao GitHub. O Caddyfile da VPS também divergiu do
