@@ -114,7 +114,8 @@ def esperar_banco(espera_s: int = ESPERA_BANCO_S) -> None:
         time.sleep(2)
 
 
-def build_parque_payload(busca: str, conn, config: dict, park_ids: dict) -> dict:
+def build_parque_payload(busca: str, conn, config: dict, park_ids: dict,
+                         coords: dict | None = None) -> dict:
     """As filas da watchlist de um parque, SEM precisar de GPS.
 
     É o /status em JSON: a aba Roteiro do site consulta qualquer dia da viagem
@@ -132,6 +133,10 @@ def build_parque_payload(busca: str, conn, config: dict, park_ids: dict) -> dict
     limite_obsoleto = config.get("alert", {}).get("max_staleness_minutes", 20)
     duracoes = monitor.carregar_duracoes()
     veiculos = monitor.carregar_veiculos()
+    # Só a watchlist tem coordenada no coords.json (54 de 54). Quem não tem sai
+    # sem `coordinate` e a tela não desenha link — apontar o mapa para o centro
+    # do parque como se fosse a atração seria coordenada inventada (regra 12).
+    coords_do_parque = (coords or {}).get("rides", {}).get(park, {})
     itens = []
     for _land, ride in monitor.iter_rides(payload):
         canonico = monitor.nome_watchlist(park_cfg, ride["name"])
@@ -146,6 +151,8 @@ def build_parque_payload(busca: str, conn, config: dict, park_ids: dict) -> dict
             "obsoleta": monitor.leitura_obsoleta(ride, limite_obsoleto),
             "duracao_min": monitor.duracao_da_atracao(duracoes, park, canonico),
             "pre_min": monitor.pre_da_atracao(duracoes, veiculos, park, canonico),
+            "coordinate": list(coords_do_parque[canonico])
+                          if canonico in coords_do_parque else None,
         })
     itens.sort(key=lambda i: (not i["aberta"], i["wait"] if i["wait"] is not None else 999,
                               i["ride"]))
@@ -431,7 +438,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 nome = (parse_qs(parsed.query).get("nome") or [""])[0]
                 return self._send(200, build_parque_payload(
-                    nome, self.server.conn, self.server.config, self.server.park_ids))
+                    nome, self.server.conn, self.server.config,
+                    self.server.park_ids, self.server.coords))
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
             except Exception:

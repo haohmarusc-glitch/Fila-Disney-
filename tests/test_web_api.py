@@ -599,3 +599,38 @@ class TestParquePayloadCompleto(unittest.TestCase):
         r = self.montar()
         todos = [i["ride"] for i in r["items"] + r["outras"] + r["shows"]]
         self.assertNotIn("Test Track Single Rider", todos)
+
+
+class TestCoordenadaNoParque(unittest.TestCase):
+    """A coordenada que vira link do Google Maps na tela."""
+
+    def setUp(self):
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
+
+    def montar(self, coords):
+        config = {"parks": {"Epcot": {"attractions": {"Test Track": 30}}},
+                  "alert": {"max_staleness_minutes": 20}}
+        payload = {"lands": [{"rides": [
+            {"name": "Test Track", "is_open": True, "wait_time": 40}]}]}
+        with patch("api_server.monitor.fetch_queue_times", return_value=payload), \
+             patch("api_server.monitor.horario_operacao", return_value=None), \
+             patch("api_server.monitor.calcular_lotacao", return_value=None):
+            return api_server.build_parque_payload(
+                "Epcot", banco(), config, {"Epcot": 5}, coords)
+
+    def test_atracao_com_coordenada_leva_o_par(self):
+        r = self.montar({"rides": {"Epcot": {"Test Track": [28.3747, -81.5494]}}})
+        self.assertEqual(r["items"][0]["coordinate"], [28.3747, -81.5494])
+
+    def test_sem_coordenada_o_campo_e_none(self):
+        """Regra 12: sem coordenada real a tela não desenha link. Apontar o
+        mapa para o centro do parque como se fosse a atração seria inventar."""
+        r = self.montar({"rides": {"Epcot": {}}})
+        self.assertIsNone(r["items"][0]["coordinate"])
+
+    def test_sem_coords_json_nenhum_o_parque_ainda_responde(self):
+        """O coords.json é opcional (só o /perto depende dele)."""
+        r = self.montar(None)
+        self.assertIsNone(r["items"][0]["coordinate"])
+        self.assertEqual(r["items"][0]["wait"], 40)

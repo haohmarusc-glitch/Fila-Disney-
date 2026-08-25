@@ -315,3 +315,64 @@ class TestEstiloCompartilhado(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
+class TestLinkDoMapa(unittest.TestCase):
+    """Link do Google Maps por atração, nas telas que têm coordenada.
+
+    Só a watchlist tem coordenada no coords.json. Quem não tem fica sem link:
+    apontar o mapa para o centro do parque como se fosse a atração seria
+    coordenada inventada (regra 12).
+    """
+
+    def tela(self, **item):
+        base = {"ride": "Test Track", "wait": 40, "threshold": 30, "aberta": True,
+                "obsoleta": False, "duracao_min": 4, "pre_min": None,
+                "coordinate": [28.3747, -81.5494]}
+        base.update(item)
+        return render({"aba": "parques", "respostas": {
+            "/comandos": {"comandos": [], "parques": ["Epcot"]},
+            "/parque": {"park": "Epcot", "horario": None, "lotacao": None,
+                        "items": [base], "outras": [], "shows": [],
+                        "attribution": "Powered by Queue-Times.com"}}})
+
+    def test_sem_gps_abre_o_ponto_no_mapa(self):
+        """`dir` exige origem e não abre nada sem ela; `search` só precisa do
+        destino. Quem planeja de casa quer ver ONDE fica."""
+        tela = self.tela()
+        links = [l for l in tela["links"] if "google.com/maps" in l]
+        self.assertEqual(len(links), 1)
+        self.assertIn("maps/search/", links[0])
+        self.assertIn("query=28.3747,-81.5494", links[0])
+
+    def test_sem_coordenada_nao_ha_link(self):
+        tela = self.tela(coordinate=None)
+        self.assertEqual([l for l in tela["links"] if "google.com/maps" in l], [])
+
+    def test_show_sem_coordenada_tambem_nao_inventa(self):
+        tela = render({"aba": "parques", "respostas": {
+            "/comandos": {"comandos": [], "parques": ["Epcot"]},
+            "/parque": {"park": "Epcot", "horario": None, "lotacao": None,
+                        "items": [], "outras": [],
+                        "shows": [{"ride": "Awesome Planet", "aberta": True}],
+                        "attribution": "Powered by Queue-Times.com"}}})
+        self.assertIn("Awesome Planet", tela["parques"])
+        self.assertEqual([l for l in tela["links"] if "google.com/maps" in l], [])
+
+    def test_com_gps_o_link_vira_rota_a_pe(self):
+        """Na aba "Melhores agora" o GPS já foi lido, e ali o que se quer é o
+        caminho, não o ponto."""
+        item = {"name": "Expedition Everest", "wait": 25, "walk": 6,
+                "meters": 430, "total": 31, "coordinate": [28.3583, -81.5876],
+                "route_source": "estimada", "quality": 72}
+        tela = render({"aba": "perto", "gps": True, "respostas": {
+            "/perto": {"park": "Disney Animal Kingdom", "items": [item],
+                       "abertas": 12, "source": "fila-disney-vps",
+                       "attribution": "Powered by Queue-Times.com"}}})
+        links = [l for l in tela["links"] if "google.com/maps" in l]
+        self.assertEqual(len(links), 1)
+        self.assertIn("maps/dir/", links[0])
+        self.assertIn("travelmode=walking", links[0])
+        self.assertIn("origin=28.3575,-81.5906", links[0])
+        self.assertIn("destination=28.3583,-81.5876", links[0])
