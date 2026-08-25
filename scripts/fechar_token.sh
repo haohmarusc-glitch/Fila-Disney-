@@ -57,6 +57,12 @@ elif [[ -n "$HASH_EXISTENTE" ]]; then
     # Já tem senha configurada: reaproveita o hash em vez de pedir de novo.
     HASH="$HASH_EXISTENTE"
     echo "   senha: reaproveitando o hash que já está no Caddyfile"
+elif (( CONFERIR )); then
+    # Conferência não aplica nada, então não tem por que pedir a senha — pedir
+    # aqui obriga a digitá-la duas vezes, uma para ver o diff e outra para
+    # valer, gerando dois hashes diferentes da mesma senha.
+    HASH='$2a$14$<hash da senha que o modo de aplicar vai pedir>'
+    echo "   senha: será pedida ao aplicar (aqui entra um marcador no lugar do hash)"
 else
     read -rsp "   senha da família (a que todo mundo vai digitar no site): " SENHA; echo
     [[ -n "$SENHA" ]] || erro "senha vazia"
@@ -201,10 +207,42 @@ dc_pre up -d caddy
 
 echo
 echo "== conferindo"
-CODIGO="$(curl -s -o /dev/null -w '%{http_code}' "https://$HOST/config.js" || echo erro)"
+
+# Bate em localhost com o Host na mão, não no nome público: de dentro da VPS o
+# DNS pode não voltar para a própria máquina, e aí o curl falha sem chegar no
+# Caddy — devolvendo 000, que não diz nada sobre o site. O `-k` é porque o
+# certificado é do nome público, não de "localhost".
+codigo_de() {
+    curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "Host: $1" "https://localhost${2}" 2>/dev/null || echo 000
+}
+
+# O container acabou de subir; o Caddy leva alguns segundos para ouvir.
+for _ in $(seq 12); do
+    [[ "$(codigo_de "$HOST" /)" != "000" ]] && break
+    sleep 2
+done
+
+CODIGO="$(codigo_de "$HOST" /config.js)"
 echo "   GET /config.js -> $CODIGO   (401 = atrás da senha, 404 = apagado; 200 seria o defeito de volta)"
-CODIGO="$(curl -s -o /dev/null -w '%{http_code}' "https://$HOST/" || echo erro)"
-echo "   GET /         -> $CODIGO   (401 esperado, agora que a senha existe)"
+CODIGO="$(codigo_de "$HOST" /)"
+echo "   GET /          -> $CODIGO   (401 esperado, agora que a senha existe)"
+# O Premercado divide este Caddy: se ele parou de responder, a suspeita é esta
+# mudança. Só vale checar o hostname que estiver mesmo no Caddyfile — inventar
+# um nome daria 000 sempre, e um alarme falso aqui manda desfazer o que deu
+# certo.
+VIZINHO="$(grep -oE '^[a-z0-9.-]*premercadosc\.com' "$CADDYFILE" | grep -v "^$HOST\$" | head -1 || true)"
+if [[ -n "$VIZINHO" ]]; then
+    CODIGO="$(codigo_de "$VIZINHO" /)"
+    echo "   $VIZINHO -> $CODIGO   (qualquer código serve; 000 é o Caddy sem responder)"
+    if [[ "$CODIGO" == "000" ]]; then
+        echo
+        echo "!! $VIZINHO parou de responder, e ele divide este Caddy. Para voltar atrás:"
+        echo "   cp $BACKUP $CADDYFILE && cd $PREMERCADO && docker compose up -d caddy"
+        exit 1
+    fi
+fi
+
 echo
 echo "Abra https://$HOST no navegador, entre com usuário 'familia' e a senha,"
 echo "e confira que as filas aparecem. Se algo falhar: cp $BACKUP $CADDYFILE"
