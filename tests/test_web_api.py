@@ -634,3 +634,63 @@ class TestCoordenadaNoParque(unittest.TestCase):
         r = self.montar(None)
         self.assertIsNone(r["items"][0]["coordinate"])
         self.assertEqual(r["items"][0]["wait"], 40)
+
+
+class TestCaminhadaNoParque(unittest.TestCase):
+    """A caminhada opcional do /parque — a mesma conta do /perto."""
+
+    def setUp(self):
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
+
+    COORDS = {"parks": {"Disney Animal Kingdom": [28.3580, -81.5900]},
+              "rides": {"Disney Animal Kingdom": {
+                  "Kilimanjaro Safaris": [28.3600, -81.5920]}}}
+
+    def montar(self, posicao):
+        config = {"parks": {"Disney Animal Kingdom": {
+                      "attractions": {"Kilimanjaro Safaris": 35}}},
+                  "alert": {"max_staleness_minutes": 20}}
+        payload = {"lands": [{"rides": [
+            {"name": "Kilimanjaro Safaris", "is_open": True, "wait_time": 10}]}]}
+        with patch("api_server.monitor.fetch_queue_times", return_value=payload), \
+             patch("api_server.monitor.horario_operacao", return_value=None), \
+             patch("api_server.monitor.calcular_lotacao", return_value=None):
+            return api_server.build_parque_payload(
+                "Animal", banco(), config, {"Disney Animal Kingdom": 8},
+                self.COORDS, posicao)
+
+    def test_de_dentro_do_parque_calcula_a_caminhada(self):
+        r = self.montar((28.3585, -81.5905))
+        item = r["items"][0]
+        self.assertIsNotNone(item["walk"])
+        self.assertIsNotNone(item["meters"])
+        self.assertGreater(item["walk"], 0)
+
+    def test_de_casa_a_caminhada_nao_sai(self):
+        """Quem abre a aba no Brasil e escolhe o Animal Kingdom teria
+        "7.000 km a pé" — número correto e inútil. Fora do parque pedido a
+        posição é descartada, como no Telegram."""
+        r = self.montar((-27.6, -48.5))   # Florianópolis
+        self.assertIsNone(r["items"][0]["walk"])
+        self.assertIsNone(r["items"][0]["meters"])
+
+    def test_sem_posicao_o_payload_e_o_de_sempre(self):
+        r = self.montar(None)
+        self.assertIsNone(r["items"][0]["walk"])
+        self.assertEqual(r["items"][0]["wait"], 10)
+
+    def test_atracao_sem_coordenada_fica_sem_caminhada(self):
+        """Regra 12 de novo: sem coordenada real não há distância."""
+        config = {"parks": {"Disney Animal Kingdom": {
+                      "attractions": {"Expedition Everest": 30}}},
+                  "alert": {"max_staleness_minutes": 20}}
+        payload = {"lands": [{"rides": [
+            {"name": "Expedition Everest", "is_open": True, "wait_time": 20}]}]}
+        with patch("api_server.monitor.fetch_queue_times", return_value=payload), \
+             patch("api_server.monitor.horario_operacao", return_value=None), \
+             patch("api_server.monitor.calcular_lotacao", return_value=None):
+            r = api_server.build_parque_payload(
+                "Animal", banco(), config, {"Disney Animal Kingdom": 8},
+                self.COORDS, (28.3585, -81.5905))
+        self.assertIsNone(r["items"][0]["walk"])

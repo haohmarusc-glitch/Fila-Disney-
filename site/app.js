@@ -74,13 +74,7 @@ function cartaoAtracao(item, indice) {
 
   const corpo = texto("div", "corpo");
   corpo.appendChild(texto("h2", null, item.name));
-  const partes = [];
-  partes.push(item.wait !== null ? `fila ${item.wait} min` : "fila —");
-  if (item.walk !== null && item.meters !== null) {
-    const fonte = item.route_source === "google" ? "Google" : "estimada";
-    partes.push(`caminhada ${fonte} ${item.walk} min (${item.meters} m)`);
-  }
-  corpo.appendChild(texto("p", "detalhe", partes.join(" · ")));
+  corpo.appendChild(texto("p", "detalhe", filaECaminhada(item)));
 
   const selos = texto("div", "selos");
   if (item.quality !== null && item.quality >= 60) {
@@ -289,9 +283,48 @@ function linkDoMapa(coordenada, rotulo) {
   return link;
 }
 
+/* "fila 10 min → · 🚶 12 min (842 m, rota Google)" — a MESMA frase que o
+ * /perto manda no Telegram, com a seta de tendência e a origem da rota. Duas
+ * telas para a mesma pergunta que descrevem o número de formas diferentes é
+ * como se compara errado dentro do parque.
+ */
+function filaECaminhada(item) {
+  const seta = item.tendencia ? ` ${item.tendencia}` : "";
+  const partes = [item.wait !== null && item.wait !== undefined
+    ? `fila ${item.wait} min${seta}` : "fila —"];
+  if (item.walk !== null && item.walk !== undefined
+      && item.meters !== null && item.meters !== undefined) {
+    // "rota Google" vs "estimativa interna": o Google não mapeia caminho
+    // interno de parque, então dizer qual das duas foi usada muda o quanto se
+    // confia no número.
+    const fonte = item.route_source === "google" ? "rota Google" : "estimativa interna";
+    partes.push(`🚶 ${item.walk} min (${item.meters} m, ${fonte})`);
+  }
+  return partes.join(" · ");
+}
+
+/* Detalhe curto da linha de lista: duração e caminhada, sem repetir a fila —
+ * ela já aparece na coluna da direita. */
+function detalheDaLinha(item) {
+  const partes = [];
+  if (item.duracao_min !== null && item.duracao_min !== undefined) {
+    partes.push(`~${item.duracao_min} min de atração`);
+  }
+  if (item.walk !== null && item.walk !== undefined
+      && item.meters !== null && item.meters !== undefined) {
+    const fonte = item.route_source === "google" ? "rota Google" : "estimativa interna";
+    partes.push(`🚶 ${item.walk} min (${item.meters} m, ${fonte})`);
+  }
+  return partes;
+}
+
 function linhaAtracao(item, mostraFila) {
   const linha = texto("div", "linha");
   const nome = texto("span", null, item.ride);
+  const detalhes = detalheDaLinha(item);
+  if (detalhes.length) {
+    nome.appendChild(texto("small", "detalhe", ` ${detalhes.join(" · ")}`));
+  }
   // Sem coordenada não há link: apontar o mapa para o centro do parque como
   // se fosse a atração seria coordenada inventada (regra 12).
   if (item.coordinate) nome.appendChild(linkDoMapa(item.coordinate));
@@ -303,7 +336,9 @@ function linhaAtracao(item, mostraFila) {
                             item.aberta ? "em cartaz" : "fechada"));
     return linha;
   }
-  const valor = !item.aberta ? "fechada" : item.wait === null ? "—" : `${item.wait} min`;
+  const seta = item.aberta && item.tendencia ? ` ${item.tendencia}` : "";
+  const valor = !item.aberta ? "fechada"
+    : item.wait === null ? "—" : `${item.wait} min${seta}`;
   linha.appendChild(texto("span", classeDaFila(item),
                           item.obsoleta ? `${valor} ⏳` : valor));
   return linha;
@@ -349,7 +384,11 @@ async function carregarParques() {
     }
     tudo.appendChild(seletor);
 
-    const dados = await api(`/parque?nome=${encodeURIComponent(parqueAtivo)}`);
+    // Com GPS a API devolve caminhada por atração; sem GPS, a mesma tela de
+    // sempre. A própria API descarta a posição se ela não for do parque
+    // escolhido, então mandar daqui é seguro.
+    const dados = await api(`/parque?nome=${encodeURIComponent(parqueAtivo)}`
+      + (posicao ? `&lat=${posicao[0]}&lon=${posicao[1]}` : ""));
     el("subtitulo").textContent = dados.park;
     el("atribuicao").textContent = dados.attribution;
 
@@ -415,7 +454,8 @@ async function abrirFilasDoDia(dia, container, botao) {
   botao.disabled = true;
   botao.textContent = "carregando…";
   try {
-    const dados = await api(`/parque?nome=${encodeURIComponent(dia.parque)}`);
+    const dados = await api(`/parque?nome=${encodeURIComponent(dia.parque)}`
+      + (posicao ? `&lat=${posicao[0]}&lon=${posicao[1]}` : ""));
     const bloco = texto("div", "filas-live");
     const meta = [];
     if (dados.horario) meta.push(`opera ~${String(dados.horario.abre).padStart(2, "0")}h–${String(dados.horario.fecha).padStart(2, "0")}h pelo histórico`);
@@ -425,8 +465,7 @@ async function abrirFilasDoDia(dia, container, botao) {
     for (const item of dados.items) {
       const linha = texto("div", "linha");
       const nome = texto("span", null, item.ride);
-      const partes = [];
-      if (item.duracao_min !== null) partes.push(`~${item.duracao_min} min de atração`);
+      const partes = detalheDaLinha(item);
       if (partes.length) nome.appendChild(texto("small", "detalhe", ` ${partes.join(" · ")}`));
       if (item.coordinate) nome.appendChild(linkDoMapa(item.coordinate));
       linha.appendChild(nome);

@@ -376,3 +376,91 @@ class TestLinkDoMapa(unittest.TestCase):
         self.assertIn("travelmode=walking", links[0])
         self.assertIn("origin=28.3575,-81.5906", links[0])
         self.assertIn("destination=28.3583,-81.5876", links[0])
+
+
+@unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
+class TestFormatoIgualAoTelegram(unittest.TestCase):
+    """O site descreve fila e caminhada com a MESMA frase do /perto.
+
+    Duas telas para a mesma pergunta que descrevem o número de formas
+    diferentes é como se compara errado dentro do parque. No Telegram:
+
+        fila 10 min → · 🚶 12 min (842 m, rota Google)
+    """
+
+    def perto(self, **item):
+        base = {"name": "Kilimanjaro Safaris", "wait": 10, "walk": 12,
+                "meters": 842, "total": 22, "coordinate": None,
+                "route_source": "google", "quality": 50, "tendencia": "→"}
+        base.update(item)
+        return render({"aba": "perto", "gps": True, "respostas": {
+            "/perto": {"park": "Disney Animal Kingdom", "items": [base],
+                       "abertas": 12, "source": "fila-disney-vps",
+                       "attribution": "Powered by Queue-Times.com"}}})
+
+    def test_traz_seta_de_tendencia_ao_lado_da_fila(self):
+        tela = self.perto()
+        self.assertIn("fila 10 min →", tela["perto"])
+
+    def test_variacao_aparece_junto_da_seta(self):
+        tela = self.perto(tendencia="↓5")
+        self.assertIn("fila 10 min ↓5", tela["perto"])
+
+    def test_sem_historico_nao_inventa_seta(self):
+        tela = self.perto(tendencia="")
+        self.assertIn("fila 10 min", tela["perto"])
+        self.assertNotIn("fila 10 min ", tela["perto"].split("·")[0].rstrip())
+
+    def test_diz_se_a_rota_e_do_google_ou_estimada(self):
+        """O Google não mapeia caminho interno de parque; saber qual das duas
+        foi usada muda o quanto se confia no número."""
+        self.assertIn("🚶 12 min (842 m, rota Google)", self.perto()["perto"])
+        self.assertIn("🚶 12 min (842 m, estimativa interna)",
+                      self.perto(route_source="estimada")["perto"])
+
+    def test_fila_ausente_continua_travessao(self):
+        """Regra 15 sobrevive à mudança de formato."""
+        tela = self.perto(wait=None)
+        self.assertIn("fila —", tela["perto"])
+
+
+@unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
+class TestCaminhadaNaAbaParques(unittest.TestCase):
+    """Caminhada por atração na aba Parques, quando há GPS."""
+
+    def tela(self, *, gps, **item):
+        base = {"ride": "Kilimanjaro Safaris", "wait": 10, "threshold": 35,
+                "aberta": True, "obsoleta": False, "duracao_min": 20,
+                "pre_min": None, "coordinate": [28.36, -81.59],
+                "walk": 12, "meters": 842, "route_source": "estimada",
+                "tendencia": "↓5"}
+        base.update(item)
+        caso = {"aba": "parques", "respostas": {
+            "/comandos": {"comandos": [], "parques": ["Disney Animal Kingdom"]},
+            "/parque": {"park": "Disney Animal Kingdom", "horario": None,
+                        "lotacao": None, "items": [base], "outras": [], "shows": [],
+                        "attribution": "Powered by Queue-Times.com"}}}
+        if gps:
+            caso["gps"] = True
+        return render(caso)
+
+    def test_mostra_caminhada_e_duracao_na_mesma_linha(self):
+        tela = self.tela(gps=True)
+        self.assertIn("~20 min de atração", tela["parques"])
+        self.assertIn("🚶 12 min (842 m, estimativa interna)", tela["parques"])
+
+    def test_a_seta_acompanha_a_fila_na_coluna(self):
+        tela = self.tela(gps=True)
+        self.assertIn("10 min ↓5", tela["parques"])
+
+    def test_sem_caminhada_a_linha_nao_fica_torta(self):
+        """Fora do parque a API não manda walk; a linha mostra só a duração."""
+        tela = self.tela(gps=False, walk=None, meters=None)
+        self.assertIn("~20 min de atração", tela["parques"])
+        self.assertNotIn("🚶", tela["parques"])
+
+    def test_fechada_nao_ganha_seta(self):
+        """Seta de tendência em atração parada sugeriria fila se movendo."""
+        tela = self.tela(gps=True, aberta=False, wait=0)
+        self.assertIn("fechada", tela["parques"])
+        self.assertNotIn("↓5", tela["parques"])
