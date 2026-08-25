@@ -107,10 +107,19 @@ Está escrito aqui porque cada tropeço custou tempo e o mesmo caminho vale
 para qualquer subdomínio novo no Cloudflare.
 
 1. Antes de mexer no DNS, teste pelo IP com SNI:
-   `curl -k -H "Host: filadisney.premercadosc.com" https://IP_DA_VPS/` — ou,
-   de dentro da VPS, `curl -si -H "Host: ..." http://localhost/`, que deve
-   voltar `308` para o HTTPS. Isso prova que o Caddy reconhece o hostname
+   `curl -k --resolve filadisney.premercadosc.com:443:IP_DA_VPS https://filadisney.premercadosc.com/`
+   — ou, de dentro da VPS, `curl -si -H "Host: ..." http://localhost/`, que
+   deve voltar `308` para o HTTPS. Isso prova que o Caddy reconhece o hostname
    antes de qualquer questão de certificado.
+
+   **Em HTTPS tem que ser `--resolve`, nunca `-H "Host: ..."`.** O `-H` corrige
+   o cabeçalho HTTP e não o SNI: contra `https://localhost` o curl apresenta
+   "localhost" no handshake, o Caddy não tem certificado para esse nome e
+   recusa a conexão antes de existir qualquer HTTP. O curl devolve `000` com o
+   site perfeitamente no ar — em 25/08/2026 isso foi lido duas vezes como "o
+   Premercado caiu", e a medição que desfez o engano foi a porta 80 (que não
+   tem SNI) respondendo `308` enquanto o 443 dava `000`. Em HTTP o `-H` está
+   certo, porque ali não há handshake.
 2. No Cloudflare, o registro era `CNAME filadisney → custom-domains.chatgpt.site`.
    Trocado por **A → IP da VPS**, com Proxy status **DNS only** (nuvem cinza).
    Proxy ligado (nuvem laranja) quebra o ACME e o Caddy nunca emite nada.
