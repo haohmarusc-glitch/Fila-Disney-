@@ -10,6 +10,12 @@ on:
     branches: [main]
   pull_request:
 
+# Permissão mínima explícita: sem isto o token do workflow herda o padrão do
+# repositório, que pode ser de escrita. Nada aqui empurra commit, comenta em PR
+# ou publica imagem — só lê o código e roda teste.
+permissions:
+  contents: read
+
 jobs:
   testes:
     runs-on: ubuntu-latest

@@ -694,3 +694,49 @@ class TestCaminhadaNoParque(unittest.TestCase):
                 "Animal", banco(), config, {"Disney Animal Kingdom": 8},
                 self.COORDS, (28.3585, -81.5905))
         self.assertIsNone(r["items"][0]["walk"])
+
+
+class TestBloqueioNaoDerrubaQuemTemToken(unittest.TestCase):
+    """O freio de chute não pode virar botão de desligar a API.
+
+    Achado da auditoria de 25/08: o bloqueio era conferido ANTES do token e
+    valia para todo mundo. Dez requisições com token errado — que qualquer
+    pessoa na internet consegue mandar, já que a API tem hostname público —
+    derrubavam a família inteira por cinco minutos, repetíveis à vontade.
+    """
+
+    def setUp(self):
+        api_server.limpar_estado()
+        self.addCleanup(api_server.limpar_estado)
+
+    def esgotar_tentativas(self, agora=100.0):
+        for i in range(api_server.FALHAS_MAX):
+            api_server.registrar_falha(agora + i)
+        self.assertTrue(api_server.bloqueado(agora + 10), "o freio deve estar armado")
+
+    def test_token_certo_atravessa_o_bloqueio(self):
+        """O requisito que faltava: o ataque não pode atingir quem tem a chave."""
+        with patch.object(api_server, "TOKEN", "segredo"):
+            self.esgotar_tentativas()
+            self.assertTrue(api_server.token_valido("Bearer segredo"))
+
+    def test_o_freio_continua_valendo_para_quem_chuta(self):
+        """A correção não pode abrir o brute force: token errado durante o
+        bloqueio nem chega a ser contado de novo."""
+        with patch.object(api_server, "TOKEN", "segredo"):
+            self.esgotar_tentativas()
+            self.assertFalse(api_server.token_valido("Bearer chute"))
+            self.assertTrue(api_server.bloqueado(200.0))
+
+
+class TestOrdemDeAutenticacaoNoServidor(TestServidorHTTP):
+    """A ordem real do do_GET, pelo servidor de verdade."""
+
+    def test_ataque_de_token_errado_nao_derruba_o_token_certo(self):
+        with patch.object(api_server, "TOKEN", "segredo"):
+            for _ in range(api_server.FALHAS_MAX + 2):
+                self.pedir("/comandos", token="Bearer errado")
+            # O atacante levou o 429 dele...
+            self.assertEqual(self.pedir("/comandos", token="Bearer errado")[0], 429)
+            # ...e a família continua entrando.
+            self.assertEqual(self.pedir("/comandos", token="Bearer segredo")[0], 200)

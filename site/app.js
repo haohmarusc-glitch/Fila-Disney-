@@ -1,11 +1,12 @@
 /* Fila Disney — painel móvel.
  *
  * Fala com a API pelo MESMO domínio (`/api/*`, repassado pelo Caddy ao
- * container fila-disney-api): sem CORS, sem segundo hostname. O token vem do
- * config.js, que NÃO é versionado — o repositório publica só o exemplo.
+ * container fila-disney-api): sem CORS, sem segundo hostname. O token da API
+ * NÃO passa por aqui — quem injeta o header é o Caddy, e quem protege a
+ * página é a senha dele. Ver docs/SITE.md.
  *
  * Somente leitura, como a API: criar e cancelar vigia é no Telegram, porque o
- * alerta precisa de um chat de destino e o site tem um token só para todos.
+ * alerta precisa de um chat de destino e o site é da família inteira.
  */
 "use strict";
 
@@ -20,10 +21,21 @@ let timer = null;
 
 /* ---------------------------------------------------------------- comum */
 
+/* O navegador NÃO carrega o token da API.
+ *
+ * Ele ficava no config.js, que o Caddy serve como arquivo estático: qualquer
+ * pessoa na internet abria /config.js e levava a credencial da família
+ * inteira — a proteção "atrás do token" não existia, porque o token estava do
+ * lado de fora da porta. Agora o header é injetado pelo Caddy no repasse de
+ * /api/*, e quem protege a página é a senha do próprio Caddy.
+ *
+ * `CFG.token` continua sendo enviado se existir, e só por isso: numa VPS que
+ * ainda não recebeu o Caddyfile novo o site segue funcionando durante a
+ * virada. Assim que o config.js for apagado, o token some do navegador.
+ */
 async function api(caminho) {
-  const resp = await fetch(`${API}${caminho}`, {
-    headers: { Authorization: `Bearer ${CFG.token || ""}` },
-  });
+  const headers = CFG.token ? { Authorization: `Bearer ${CFG.token}` } : {};
+  const resp = await fetch(`${API}${caminho}`, { headers });
   if (!resp.ok) {
     let corpo = null;
     try { corpo = await resp.json(); } catch { /* corpo não-JSON: mantém null */ }
@@ -36,7 +48,9 @@ async function api(caminho) {
 
 function mensagemDeErro(erro) {
   if (erro.status === 401) {
-    return "Token inválido. Confira o config.js do site.";
+    // Quem injeta o Authorization é o Caddy: 401 aqui é configuração do
+    // servidor, não algo que o usuário resolva no celular.
+    return "A API recusou a autenticação. Confira o header do Caddy (docs/SITE.md).";
   }
   if (erro.status === 429) {
     return "Muitos pedidos agora — a página tenta de novo sozinha em instantes.";

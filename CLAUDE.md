@@ -91,8 +91,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `analyze.py` — CLI de análise do histórico
 - `site/` — o frontend (filadisney.premercadosc.com): três estáticos sem
   framework, servidos pelo Caddy do Premercado com `/api/*` repassado à API —
-  mesmo domínio, sem CORS. O `config.js` (token) não é versionado. Instalação e
-  virada de DNS em `docs/SITE.md`. O `app.js` é testado de verdade:
+  mesmo domínio, sem CORS. O token da API **não** vai para o navegador: quem
+  injeta o header é o Caddy, e quem protege a página é o `basic_auth` dele.
+  Até 25/08/2026 o token era colado num `config.js` que o próprio Caddy servia
+  como estático — qualquer um na internet lia `/config.js` e levava a
+  credencial. Instalação e virada de DNS em `docs/SITE.md`. O `app.js` é testado de verdade:
   `tests/harness_site.js` monta um DOM mínimo e roda o arquivo no `node`, que
   o runner do CI já tem — o teste é pulado onde não houver, nunca falso-verde.
   Existe porque dois defeitos passaram por 469 testes de Python e só
