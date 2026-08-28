@@ -34,7 +34,12 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     `requests.get` direto — com **uma** exceção escrita: `enviar_heartbeat`, que
     não busca JSON e não pode ter retry. Heartbeat retentado mente sobre o ciclo
     em que foi gerado, e um watchdog que recebe batida atrasada é pior que um que
-    não recebe nada. Exceção nova só existe se entrar nesta regra.
+    não recebe nada. Exceção nova só existe se entrar nesta regra. A URL passa
+    por `url_do_heartbeat`, que corta a query: o painel do Kuma entrega a Push
+    URL já com `?status=up&msg=OK&ping=`, e somar `params` a isso manda `status`
+    duplicado — o Kuma grava DOWN e responde `{"ok":true}` na mesma. Ficou 8
+    dias assim (21 a 28/08/2026) com a coleta perfeita e o painel vermelho.
+    Vale para qualquer serviço que entregue URL com query pronta.
 12. Distância/tempo a pé só sai de coordenada real do `coords.json`, e duração de
     atração só sai do `duracoes.json`. A duração **quer ser** o tempo total —
     pré-show obrigatório, a atração e a folga para sair —, não o ciclo do

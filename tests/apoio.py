@@ -63,6 +63,10 @@ class RequestsFalso(types.ModuleType):
     def get(self, url, params=None, timeout=None, headers=None):
         self.gets.append(url)
         self.headers_enviados = headers
+        # Guardado porque só a URL não bastava: o heartbeat mandava `status`
+        # duplicado por 8 dias e todo teste passava, já que a duplicação
+        # acontece entre a query da URL e estes params.
+        self.params_enviados = params
         return self.roteador(url)
 
     def post(self, url, json=None, data=None, timeout=None, headers=None):
