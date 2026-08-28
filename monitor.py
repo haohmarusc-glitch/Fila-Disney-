@@ -3391,17 +3391,44 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
     return payloads
 
 
+def url_do_heartbeat(bruta: str) -> str:
+    """A Push URL sem a query que o painel do Uptime Kuma já embute nela.
+
+    O Kuma entrega a URL pronta para copiar, terminando em
+    `?status=up&msg=OK&ping=`. Mandar `params` por cima disso faz `status`
+    chegar duas vezes; o Express o entrega como lista, a comparação com "up"
+    falha e o Kuma grava a batida como **DOWN** — respondendo `{"ok":true}` do
+    mesmo jeito, porque a requisição em si é válida. O monitor coleta normal e
+    o painel acusa queda: o pior dos dois mundos.
+
+    Medido em 28/08/2026 no monitor real, mesma URL e 78 segundos de
+    diferença: com a query, `status=0` e `msg=[object Object]`; sem ela,
+    `status=1` e a mensagem correta. Ficou 8 dias assim.
+
+    Limpar aqui, e não no `.env`, porque copiar a URL do painel é o caminho
+    natural — quem refizer isso amanhã copia com a query de novo.
+    """
+    return bruta.split("?", 1)[0]
+
+
 def enviar_heartbeat(payloads: dict[str, dict], park_ids: dict[str, int]) -> None:
     """Confirma ao Uptime Kuma somente um ciclo completo e persistido.
 
     URL ausente desativa o recurso. Qualquer falha fica no log e nunca pode
     interromper coleta, alertas ou comandos.
     """
-    if not UPTIME_KUMA_PUSH_URL or len(payloads) != len(park_ids):
+    if not UPTIME_KUMA_PUSH_URL:
+        return
+    if len(payloads) != len(park_ids):
+        # Sem esta linha, "ciclo incompleto" e "tudo certo" produzem o mesmo
+        # log vazio — e a diferença entre as duas é justamente o que se quer
+        # saber quando o painel está vermelho.
+        log.warning("Heartbeat suprimido: ciclo incompleto (%d de %d parques)",
+                    len(payloads), len(park_ids))
         return
     try:
         resposta = requests.get(
-            UPTIME_KUMA_PUSH_URL,
+            url_do_heartbeat(UPTIME_KUMA_PUSH_URL),
             params={"status": "up", "msg": f"ciclo completo: {len(payloads)} parques"},
             timeout=10,
         )

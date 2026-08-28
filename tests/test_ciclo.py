@@ -108,6 +108,29 @@ class TestHeartbeatUptimeKuma(BaseTeste):
         self.requests.roteador = lambda _url: Resposta(status=500)
         self.monitor.enviar_heartbeat({"Epcot": {}, "Magic Kingdom": {}}, self.parques)
 
+    def test_url_copiada_do_painel_nao_duplica_status(self):
+        """O painel do Kuma entrega a URL já com `?status=up&msg=OK&ping=`.
+
+        Somada aos `params`, o `status` chegava duas vezes e o Kuma gravava a
+        batida como DOWN — respondendo ok. Oito dias de painel vermelho com a
+        coleta perfeita; os testes antigos não pegaram porque todos usavam uma
+        URL sem query.
+        """
+        self.monitor.UPTIME_KUMA_PUSH_URL = (
+            "http://uptime-kuma/api/push/token?status=up&msg=OK&ping=")
+        self.monitor.enviar_heartbeat({"Epcot": {}, "Magic Kingdom": {}}, self.parques)
+        self.assertEqual(self.requests.gets, ["http://uptime-kuma/api/push/token"])
+        self.assertEqual(self.requests.params_enviados["status"], "up")
+
+    def test_mensagem_diz_quantos_parques_fecharam(self):
+        self.monitor.enviar_heartbeat({"Epcot": {}, "Magic Kingdom": {}}, self.parques)
+        self.assertEqual(self.requests.params_enviados["msg"], "ciclo completo: 2 parques")
+
+    def test_ciclo_incompleto_deixa_rastro_no_log(self):
+        with self.assertLogs(self.monitor.log, level="WARNING") as capturado:
+            self.monitor.enviar_heartbeat({"Epcot": {}}, self.parques)
+        self.assertIn("ciclo incompleto (1 de 2 parques)", "\n".join(capturado.output))
+
 
 if __name__ == "__main__":
     unittest.main()
