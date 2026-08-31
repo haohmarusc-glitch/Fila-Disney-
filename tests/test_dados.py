@@ -38,6 +38,68 @@ class TestValidacaoDaConfig(BaseTeste):
         cfg = dict(self.config, parks={})
         self.assertTrue(any("parks" in p for p in self.monitor.validar_config(cfg)))
 
+    def test_trip_end_ausente_e_apontado(self):
+        """É `trip.end` que destrava a poda; sem ele o histórico nunca expira."""
+        cfg = dict(self.config, trip={"timezone": "America/New_York"})
+        self.assertTrue(any("trip.end" in p for p in self.monitor.validar_config(cfg)))
+
+    def test_trip_end_fora_do_formato_iso(self):
+        cfg = dict(self.config, trip=dict(self.config["trip"], end="25/10/2026"))
+        self.assertTrue(any("25/10/2026" in p for p in self.monitor.validar_config(cfg)))
+
+
+class TestPodaDoHistorico(BaseTeste):
+    """A poda de `wait_times` é o único lugar que pode apagar histórico."""
+
+    def semear_historico(self):
+        """Grava direto, sem passar pelo fetch: o que se testa aqui é a poda.
+
+        Uma versão anterior destes testes chamava `run_cycle`, o fetch falhava
+        no harness e a tabela ficava vazia — `0 == 0` passava com qualquer poda.
+        """
+        agora = self.monitor.utc_now()
+        for dias in (400, 200, 1):
+            self.gravar("Epcot", "Test Track", 30, agora - dt.timedelta(days=dias))
+        return self.conn.execute("SELECT COUNT(*) FROM wait_times").fetchone()[0]
+
+    def test_nao_poda_antes_de_30_dias_apos_a_viagem(self):
+        """Há linha de 400 dias atrás, mais velha que qualquer retenção."""
+        antes = self.semear_historico()
+        self.assertEqual(antes, 3)
+        self.monitor.maybe_maintain_db(self.conn, self.config)
+        depois = self.conn.execute("SELECT COUNT(*) FROM wait_times").fetchone()[0]
+        self.assertEqual(depois, 3, "histórico não pode sumir antes da viagem")
+
+    def test_sem_trip_end_a_manutencao_roda_e_nao_poda(self):
+        """`date.max` fazia `date.max + 30 dias` estourar OverflowError.
+
+        O efeito não era apagar demais — era a manutenção inteira morrer todo
+        dia, deixando as tabelas de log crescerem sem poda, em silêncio.
+        """
+        cfg = dict(self.config, trip={"timezone": "America/New_York"})
+        antes = self.semear_historico()
+        self.monitor.maybe_maintain_db(self.conn, cfg)   # não pode levantar
+        depois = self.conn.execute("SELECT COUNT(*) FROM wait_times").fetchone()[0]
+        self.assertEqual(depois, antes)
+
+    def test_poda_de_verdade_depois_da_janela(self):
+        """Com a viagem no passado, o que passou da retenção sai — e só isso."""
+        agora = self.monitor.utc_now()
+        cfg = dict(self.config,
+                   trip=dict(self.config["trip"],
+                             end=(agora.date() - dt.timedelta(days=60)).isoformat()),
+                   database={"raw_retention_days": 300})
+        self.semear_historico()
+        self.monitor.maybe_maintain_db(self.conn, cfg)
+        restantes = [r[0] for r in
+                     self.conn.execute("SELECT ts FROM wait_times ORDER BY ts")]
+        # Retenção de 300 dias põe a fronteira entre as linhas de 400 e 200:
+        # sai só a mais velha. Com 180 as duas sairiam, e o teste não distinguiria
+        # "poda pelo corte" de "poda tudo".
+        self.assertEqual(len(restantes), 2, "só a linha de 400 dias deveria sair")
+        mais_velha = agora - dt.timedelta(days=200)
+        self.assertEqual(restantes[0][:10], mais_velha.date().isoformat())
+
 
 class TestTendencia(BaseTeste):
     def gravar_serie(self, valores):
