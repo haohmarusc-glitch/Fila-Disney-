@@ -77,6 +77,17 @@ def validar_config(config: dict) -> list[str]:
         problemas.append("watchlist.json sem nenhum parque em 'parks'")
     if not config.get("trip", {}).get("timezone"):
         problemas.append("trip.timezone ausente — sem ele não dá para saber a hora do parque")
+    # `trip.end` é o que destrava a poda do histórico bruto. Ausente, o monitor
+    # coleta igual e nunca poda — consequência silenciosa, que é o critério
+    # desta função.
+    fim = config.get("trip", {}).get("end")
+    if fim is None:
+        problemas.append("trip.end ausente — sem ele o histórico bruto nunca expira")
+    else:
+        try:
+            date.fromisoformat(fim)
+        except (TypeError, ValueError):
+            problemas.append(f"trip.end = {fim!r} não é uma data ISO (AAAA-MM-DD)")
     for dia, parques in config.get("park_days", {}).items():
         try:
             date.fromisoformat(dia)
@@ -3440,6 +3451,10 @@ def enviar_heartbeat(payloads: dict[str, dict], park_ids: dict[str, int]) -> Non
 
 RETENCAO_GPS_DIAS = 7        # posição da família não é log: expira rápido
 VACUUM_MIN_LIVRE_MB = 50     # abaixo disso o VACUUM custa mais do que devolve
+# Sem `trip.end` legível, a poda do histórico bruto nunca deve destravar. Não é
+# `date.max` porque a comparação soma 30 dias — e `date.max + 1 dia` é
+# OverflowError, não uma data maior ainda.
+SEM_FIM_DE_VIAGEM = date(9000, 1, 1)
 
 
 def paginas_livres_mb(conn: sqlite3.Connection) -> float:
@@ -3541,7 +3556,12 @@ def maybe_maintain_db(conn: sqlite3.Connection, config: dict) -> None:
     try:
         fim_viagem = date.fromisoformat(config["trip"]["end"])
     except (KeyError, ValueError):
-        fim_viagem = date.max
+        # "Nunca podar" precisa de uma data distante que ainda aceite soma:
+        # `date.max` estoura em `date.max + timedelta(days=30)` com
+        # OverflowError, e aí a manutenção inteira morre todo dia em vez de
+        # apenas não podar. Falha branda — a coleta segue e o except do chamador
+        # loga —, mas as tabelas de log param de expirar em silêncio.
+        fim_viagem = SEM_FIM_DE_VIAGEM
     if utc_now().date() > fim_viagem + timedelta(days=30):
         corte_raw = (utc_now() - timedelta(days=retencao)).isoformat()
         apagadas += conn.execute("DELETE FROM wait_times WHERE ts < ?", (corte_raw,)).rowcount
