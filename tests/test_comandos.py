@@ -252,3 +252,67 @@ class TestNotifier(BaseComando):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFilaDeUmaAtracao(BaseComando):
+    """`/fila` é o único comando que busca fora da watchlist.
+
+    `/vigiar` e `/confianca` resolvem só na watchlist porque precisam de
+    threshold e de perfil histórico. Este existe para as ~60 atrações por
+    parque que a watchlist não cobre.
+    """
+
+    def conhecer(self, park, ride):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO atracoes_conhecidas (park, ride, visto_em, avisado) "
+            "VALUES (?, ?, ?, 1)",
+            (park, ride, self.monitor.utc_now().isoformat()),
+        )
+        self.conn.commit()
+
+    def test_acha_atracao_fora_da_watchlist(self):
+        self.conhecer("Disney Hollywood Studios", "Muppet*Vision 3D")
+        resposta = self.cmd("/fila muppet")
+        self.assertIn("Muppet*Vision 3D", resposta)
+        self.assertIn("5 min", resposta)
+        self.assertNotIn("alerta ≤", resposta, "fora da watchlist não tem threshold")
+
+    def test_atracao_da_watchlist_mostra_o_alvo(self):
+        self.conhecer("Disney Hollywood Studios", "Slinky Dog Dash")
+        resposta = self.cmd("/fila slinky")
+        self.assertIn("55 min", resposta)
+        self.assertIn("alerta ≤", resposta)
+
+    def test_fechada_nunca_vira_zero(self):
+        self.conhecer("Disney Hollywood Studios", "Indiana Jones Stunt Spectacular")
+        resposta = self.cmd("/fila indiana")
+        self.assertIn("fechada", resposta)
+        self.assertNotIn("0 min", resposta)
+
+    def test_fila_paralela_nao_e_encontravel(self):
+        """Regra 10: single rider não aparece em nada que o usuário vê."""
+        self.conhecer("Disney Hollywood Studios",
+                      "Test Track Presented by Chevrolet Single Rider")
+        self.assertIn("Não achei", self.cmd("/fila single rider"))
+
+    def test_nome_exato_ganha_de_parcial(self):
+        self.conhecer("Disney Hollywood Studios", "Star Tours")
+        self.conhecer("Disney Hollywood Studios", "Star Tours Express")
+        resposta = self.cmd("/fila star tours")
+        self.assertIn("10 min", resposta, "o nome exato não devia virar ambiguidade")
+
+    def test_ambiguidade_lista_em_vez_de_escolher(self):
+        self.conhecer("Disney Hollywood Studios", "Toy Story Mania!")
+        self.conhecer("Epcot", "Toy Story Land Tour")
+        resposta = self.cmd("/fila toy story")
+        self.assertIn("mais de uma", resposta)
+        self.assertIn("Toy Story Mania!", resposta)
+
+    def test_sem_argumento_ensina_o_uso(self):
+        self.assertIn("/fila", self.cmd("/fila"))
+
+    def test_nome_inexistente_nao_quebra(self):
+        self.assertIn("Não achei", self.cmd("/fila jurassic park"))
+
+    def test_esta_no_help(self):
+        self.assertIn("/fila", self.monitor.HELP)
