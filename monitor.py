@@ -952,6 +952,71 @@ def resolver_atracao(config: dict, query: str) -> list[tuple[str, str]]:
     ]
 
 
+def resolver_atracao_conhecida(conn: sqlite3.Connection, query: str) -> list[tuple[str, str]]:
+    """Resolve trecho do nome em TODAS as atrações já vistas, não só na watchlist.
+
+    `resolver_atracao` procura na watchlist porque `/vigiar` e `/confianca` só
+    fazem sentido ali — precisam de threshold e de perfil histórico. Aqui é o
+    oposto: ver a fila de qualquer atração do parque, inclusive as ~60 do Magic
+    Kingdom que a watchlist não cobre.
+
+    Nome exato ganha de parcial: quem digita "Test Track" inteiro não deve
+    receber a lista de ambiguidade por causa de "Test Track Single Rider" —
+    que aliás nem chega aqui, porque fila paralela não aparece em nada que o
+    usuário vê (regra 10).
+    """
+    q = query.strip().lower()
+    if not q:
+        return []
+    conhecidas = [
+        (park, ride)
+        for park, ride in conn.execute(
+            "SELECT park, ride FROM atracoes_conhecidas ORDER BY park, ride"
+        )
+        if not fila_paralela(ride)
+    ]
+    exatos = [(p, r) for p, r in conhecidas if r.lower() == q]
+    return exatos or [(p, r) for p, r in conhecidas if q in r.lower()]
+
+
+def format_fila(conn: sqlite3.Connection, config: dict, park: str, ride_nome: str,
+                payload: dict, duracoes: dict | None = None) -> str:
+    """Fila de UMA atração: o número de agora, com o contexto que já existe."""
+    atual = next((r for _land, r in iter_rides(payload) if r["name"] == ride_nome), None)
+    if atual is None:
+        return (f"<b>{notifier.esc(ride_nome)}</b> não veio na resposta atual da API.\n"
+                f"{notifier.esc(park)}")
+
+    linhas = [f"🎢 <b>{notifier.esc(atual['name'])}</b>", notifier.esc(park), ""]
+    wait = atual.get("wait_time")
+    if not atual.get("is_open") or wait is None:
+        # Fechada nunca vira "0 min" (regra 15), e sem fila publicada tampouco.
+        linhas.append("🔒 <b>fechada</b> ou sem fila publicada")
+    else:
+        limite = config.get("alert", {}).get("max_staleness_minutes", OBSOLETO_MINUTOS_PADRAO)
+        seta = marca_tendencia(conn, park, atual["name"])
+        linhas.append(f"⏱ <b>{wait} min</b>{seta}")
+        if leitura_obsoleta(atual, limite):
+            linhas.append("⏳ dado desatualizado — a API não atualiza esta atração há um tempo")
+        threshold = get_threshold(config["parks"].get(park, {}), atual["name"])
+        if threshold is not None:
+            marca = "✅ no ponto de ir" if wait <= threshold else "▫️ acima do alvo"
+            linhas.append(f"{marca} (alerta ≤ {threshold})")
+
+    duracoes = carregar_duracoes() if duracoes is None else duracoes
+    canonico = nome_watchlist(config["parks"].get(park, {}), atual["name"]) or atual["name"]
+    minutos = duracao_da_atracao(duracoes, park, canonico)
+    if minutos is not None:
+        detalhe = f"🎬 atração ~{minutos} min"
+        pre = pre_da_atracao(duracoes, carregar_veiculos(), park, canonico)
+        if pre is not None:
+            detalhe += f" · ~{pre} de pré-show/embarque"
+        linhas.append(detalhe)
+
+    linhas += ["", "Powered by Queue-Times.com"]
+    return "\n".join(linhas)
+
+
 def _format_opcoes_atracao(matches: list[tuple[str, str]]) -> str:
     return "\n".join(
         f"• {notifier.esc(ride)} — {notifier.esc(park)}" for park, ride in matches[:12]
@@ -2698,6 +2763,8 @@ HELP = (
     "/fechadas &lt;parque&gt; — o que está fechado AGORA, duração e instabilidade\n"
     "/quebras &lt;parque&gt; — quais atrações quebram MAIS, pelo histórico\n"
     "/janela &lt;parque&gt; — a hora em que a fila do parque cai, pelo histórico\n"
+    "/fila &lt;atração&gt; — fila de UMA atração, em qualquer parque "
+    "(ex.: <code>/fila haunted mansion</code>)\n"
     "/vigiar &lt;atração&gt; — avisa uma vez quando a atração reabrir\n"
     "/vigiar &lt;atração&gt; &lt;min&gt; — avisa quando a fila cair a esse valor (ex.: 40)\n"
     "/vigiar &lt;atração&gt; &lt;N&gt;% — avisa quando a fila cair a N% do típico do horário\n"
@@ -3138,6 +3205,28 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         if limite is not None:
             return vigiar_fila(conn, park, ride, limite, percentual, chat_id)
         return vigiar_atracao(conn, park, ride, chat_id)
+
+    if cmd == "/fila":
+        if not arg:
+            return ("Use <code>/fila &lt;atração&gt;</code> "
+                    "(ex.: <code>/fila haunted mansion</code>).")
+        matches = resolver_atracao_conhecida(conn, arg)
+        if not matches:
+            return (f"Não achei atração com “{notifier.esc(arg)}”.\n"
+                    "O nome vem da API; tente um pedaço menor, ou veja "
+                    "<code>/novidades &lt;parque&gt;</code>.")
+        if len(matches) > 1:
+            return (f"“{notifier.esc(arg)}” casa com mais de uma:\n"
+                    + _format_opcoes_atracao(matches))
+        park, ride = matches[0]
+        if park not in park_ids:
+            return f"{notifier.esc(park)} não está entre os parques monitorados agora."
+        try:
+            payload = fetch_queue_times(park_ids[park])
+        except requests.RequestException as exc:
+            log.error("Falha ao buscar %s para /fila: %s", park, exc)
+            return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
+        return format_fila(conn, config, park, ride, payload)
 
     if cmd == "/confianca":
         if not arg:
