@@ -162,6 +162,21 @@ def conectar_somente_leitura() -> sqlite3.Connection:
     return conn
 
 
+def migrar_coluna(conn: sqlite3.Connection, tabela: str, coluna: str, tipo: str) -> bool:
+    """Acrescenta uma coluna se ela ainda não existir. Devolve True se criou.
+
+    Bancos em produção já têm anos de linhas; `CREATE TABLE IF NOT EXISTS` não
+    as alcança. As linhas antigas ficam com NULL, que é honesto — não sabemos o
+    valor delas e inventar seria pior que não ter.
+    """
+    existentes = {linha[1] for linha in conn.execute(f"PRAGMA table_info({tabela})")}
+    if coluna in existentes:
+        return False
+    conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
+    log.info("Coluna %s.%s criada; linhas antigas ficam NULL", tabela, coluna)
+    return True
+
+
 def init_db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -169,15 +184,30 @@ def init_db() -> sqlite3.Connection:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS wait_times (
-            ts        TEXT NOT NULL,          -- ISO UTC
+            ts        TEXT NOT NULL,          -- ISO UTC: quando NÓS coletamos
             park      TEXT NOT NULL,
             land      TEXT,
             ride      TEXT NOT NULL,
             wait_time INTEGER,
-            is_open   INTEGER NOT NULL
+            is_open   INTEGER NOT NULL,
+            source_updated_at TEXT     -- last_updated da fonte; NULL se ausente
         )
         """
     )
+    # `ts` é quando coletamos; `source_updated_at` é o last_updated que a
+    # Queue-Times publicou junto com o número. Os dois divergem, e às vezes por
+    # horas: no Epic Universe a API já ficou congelada, devolvendo o mesmo
+    # "Mine-Cart Madness 155 min" das 14h46 até depois das 19h. Gravando só o
+    # `ts`, cada ciclo escrevia aquilo como se fosse observação nova, e o
+    # histórico passava a dizer que às 19h15 a fila era 155 — quando às 19h15 a
+    # fonte simplesmente não tinha atualizado desde as 14h46.
+    #
+    # `leitura_obsoleta` já protegia alerta e ranking; não protegia o histórico,
+    # de propósito (gravar tudo é o certo). O que faltava era registrar a IDADE
+    # do dado, para quem lê depois poder distinguir leitura nova de repetição.
+    # Coluna nova, não renomeação: `ts` é lido por monitor, analyze, api_server,
+    # localizacao e healthcheck, e trocar o nome custaria muito sem mudar nada.
+    migrar_coluna(conn, "wait_times", "source_updated_at", "TEXT")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_wait_park_ride_ts ON wait_times (park, ride, ts)"
     )
@@ -3445,9 +3475,13 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
         ).fetchall()) if ultimo_ts else {}
         for land, ride in iter_rides(payload):
             anterior = estados_anteriores.get(ride["name"])
-            rows.append(
-                (ts, park_name, land, ride["name"], ride.get("wait_time"), int(ride.get("is_open", False)))
-            )
+            rows.append((
+                ts, park_name, land, ride["name"], ride.get("wait_time"),
+                int(ride.get("is_open", False)),
+                # Cru, como veio: normalizar aqui perderia a informação de que a
+                # fonte não mandou nada. Ausente fica NULL, nunca `ts`.
+                ride.get("last_updated"),
+            ))
             maybe_alertar_reabertura(
                 conn, config, park_name, ride, anterior, parque_operava, estado_atual
             )
@@ -3475,7 +3509,9 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
 
         if rows:
             conn.executemany(
-                "INSERT INTO wait_times (ts, park, land, ride, wait_time, is_open) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO wait_times "
+                "(ts, park, land, ride, wait_time, is_open, source_updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
             conn.commit()

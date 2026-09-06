@@ -3,7 +3,7 @@ import datetime as dt
 import unittest
 from zoneinfo import ZoneInfo
 
-from tests.apoio import BaseTeste
+from tests.apoio import BaseTeste, Resposta
 
 EDT = dt.timezone(dt.timedelta(hours=-4))
 
@@ -216,3 +216,64 @@ class TestResumoDiario(BaseTeste):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIdadeDoDado(BaseTeste):
+    """`ts` é quando coletamos; `source_updated_at` é quando a fonte atualizou.
+
+    Sem a segunda, uma API congelada contamina o histórico: cada ciclo regrava
+    o mesmo número com carimbo novo, e depois não há como distinguir observação
+    nova de repetição. Visto no Epic Universe em 06/09/2026 — a mesma leitura
+    das 14h46 ainda sendo servida às 19h.
+    """
+
+    PAYLOAD = {"lands": [{"name": "L", "rides": [
+        {"name": "Mine-Cart Madness", "wait_time": 155, "is_open": True,
+         "last_updated": "2026-09-06T14:46:00.000Z"},
+        {"name": "Stardust Racers", "wait_time": 15, "is_open": True},
+    ]}]}
+
+    def coletar(self):
+        self.requests.roteador = lambda _url: Resposta(self.PAYLOAD)
+        self.monitor.run_cycle(self.conn, self.config, {"Epcot": 5})
+
+    def test_grava_o_last_updated_da_fonte(self):
+        self.coletar()
+        linha = self.conn.execute(
+            "SELECT ts, source_updated_at FROM wait_times WHERE ride = 'Mine-Cart Madness'"
+        ).fetchone()
+        self.assertEqual(linha[1], "2026-09-06T14:46:00.000Z")
+        self.assertNotEqual(linha[0], linha[1], "coleta e fonte são momentos diferentes")
+
+    def test_sem_last_updated_fica_nulo_nunca_o_ts(self):
+        """Regra 15 aplicada à idade: ausência não vira o horário da coleta."""
+        self.coletar()
+        valor = self.conn.execute(
+            "SELECT source_updated_at FROM wait_times WHERE ride = 'Stardust Racers'"
+        ).fetchone()[0]
+        self.assertIsNone(valor)
+
+    def test_migracao_alcanca_banco_que_ja_existe(self):
+        """`CREATE TABLE IF NOT EXISTS` não alcança tabela já criada."""
+        import sqlite3
+        antigo = sqlite3.connect(":memory:")
+        antigo.execute(
+            "CREATE TABLE wait_times (ts TEXT NOT NULL, park TEXT NOT NULL, "
+            "land TEXT, ride TEXT NOT NULL, wait_time INTEGER, is_open INTEGER NOT NULL)"
+        )
+        antigo.execute("INSERT INTO wait_times VALUES ('2026-08-01T12:00:00','Epcot',"
+                       "'L','Test Track',30,1)")
+        self.assertTrue(self.monitor.migrar_coluna(antigo, "wait_times",
+                                                   "source_updated_at", "TEXT"))
+        self.assertIsNone(
+            antigo.execute("SELECT source_updated_at FROM wait_times").fetchone()[0],
+            "linha antiga fica NULL: não sabemos a idade dela",
+        )
+
+    def test_migracao_rodando_duas_vezes_nao_quebra(self):
+        """`init_db` roda a cada partida do container."""
+        self.assertFalse(
+            self.monitor.migrar_coluna(self.conn, "wait_times",
+                                       "source_updated_at", "TEXT"),
+            "a segunda chamada não deve tentar criar de novo",
+        )
