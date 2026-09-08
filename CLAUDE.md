@@ -93,7 +93,10 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
   (`/status`, `/parques`, `/help`) — mesma thread, sem concorrência com o SQLite
 - `notifier.py` — transporte Telegram: `send`, `get_updates`, `esc` (env:
   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
-- `analyze.py` — CLI de análise do histórico
+- `analyze.py` — CLI de análise do histórico. `--idade` mede a defasagem
+  entre `ts` e `source_updated_at` por parque: existe como comando, e não
+  como consulta avulsa, porque a decisão de filtrar a previsão sai desses
+  números e refazer a conta de cabeça daria outro corte
 - `site/` — o frontend (filadisney.premercadosc.com): três estáticos sem
   framework, servidos pelo Caddy do Premercado com `/api/*` repassado à API —
   mesmo domínio, sem CORS. O token da API **não** vai para o navegador: quem

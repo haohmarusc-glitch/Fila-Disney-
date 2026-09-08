@@ -5,12 +5,14 @@ Uso:
     python analyze.py                     # resumo de todos os parques
     python analyze.py "Epcot"             # detalhe de um parque
     python analyze.py "Epcot" "Frozen"    # melhor horário de uma atração
+    python analyze.py --idade             # quão velho é o dado da fonte, por parque
 
 Saída: média de espera por hora do dia (horário do parque, America/New_York),
 para você planejar rope drop, almoço e fim de tarde antes da viagem.
 """
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -99,12 +101,76 @@ def ride_detail(conn: sqlite3.Connection, park: str, ride: str) -> None:
         print(f"  {hora:02d}h  {media:>6.1f} min  {barra}  (n={n})")
 
 
+def frescor(conn: sqlite3.Connection) -> None:
+    """Quão velho é o dado que a Queue-Times nos entrega, por parque.
+
+    `ts` é quando coletamos; `source_updated_at` é o `last_updated` que a fonte
+    publicou junto. A diferença é a idade do dado — e ela não é uniforme: medido
+    em 06/09/2026 com 8h de coleta, os quatro parques Disney tinham pior caso de
+    7 min, enquanto Islands of Adventure chegava a 1094 min e Universal Studios
+    a 2029. A mediana de ~3 min em todos é só a fase do nosso ciclo de 5 min,
+    não qualidade da fonte: o problema mora inteiro na cauda.
+
+    A segunda tabela é a que decide se isso importa. A maioria das leituras
+    velhas está marcada como aberta mas com `wait_time` 0 — filas paralelas e
+    shows, que a regra 10 já descarta de tudo que o usuário vê. O que
+    contamina o perfil histórico são só as velhas COM fila positiva.
+
+    Existe para ser rodado de novo depois de mais dias, com o mesmo critério:
+    a decisão de filtrar (ou não) a previsão sai destes números, e refazer a
+    conta de cabeça em outra ocasião daria outro corte.
+    """
+    por_parque: dict[str, list] = {}
+    medidas = 0
+    for park, ts, src, aberta, wait in conn.execute(
+        "SELECT park, ts, source_updated_at, is_open, wait_time FROM wait_times "
+        "WHERE source_updated_at IS NOT NULL"
+    ):
+        try:
+            idade = (datetime.fromisoformat(ts)
+                     - datetime.fromisoformat(src.replace("Z", ""))).total_seconds() / 60
+        except ValueError:  # carimbo da fonte fora do ISO: não é medível
+            continue
+        por_parque.setdefault(park, []).append((idade, aberta, wait))
+        medidas += 1
+
+    # Conta o que deu para MEDIR, não o que tem carimbo. Os dois divergem
+    # quando a fonte manda data ilegível, e anunciar "n leituras" acima de uma
+    # tabela vazia é o tipo de saída que faz duvidar do banco em vez do parser.
+    if not medidas:
+        print("Nenhuma leitura com idade medível — a coluna é de 06/09/2026 e as")
+        print("linhas anteriores ficam NULL de propósito: não sabemos a idade delas.")
+        return
+
+    print(f"Idade do dado na origem — {medidas:,} leituras medidas")
+    print(f"{'parque':<42}{'n':>7}{'mediana':>9}{'p90':>7}{'pior':>8}")
+    for park in sorted(por_parque):
+        idades = sorted(i for i, _a, _w in por_parque[park])
+        n = len(idades)
+        print(f"{park:<42}{n:>7}{idades[n // 2]:>8.0f}m"
+              f"{idades[int(n * 0.9)]:>6.0f}m{idades[-1]:>7.0f}m")
+
+    limite = monitor.OBSOLETO_MINUTOS_PADRAO
+    print(f"\nLeituras com mais de {limite} min de idade — só as com fila positiva")
+    print("contaminam o perfil histórico; as de fila 0 já são descartadas (regra 10).")
+    print(f"{'parque':<42}{'velhas':>8}{'abertas':>9}{'c/fila>0':>10}")
+    for park in sorted(por_parque):
+        velhas = [(a, w) for i, a, w in por_parque[park] if i > limite]
+        if not velhas:
+            continue
+        abertas = [(a, w) for a, w in velhas if a]
+        com_fila = [w for a, w in abertas if w]
+        print(f"{park:<42}{len(velhas):>8}{len(abertas):>9}{len(com_fila):>10}")
+
+
 def main() -> None:
     if not DB_PATH.exists():
         raise SystemExit("Sem histórico ainda — rode o monitor primeiro.")
     conn = sqlite3.connect(DB_PATH)
     args = sys.argv[1:]
-    if len(args) == 0:
+    if args and args[0] == "--idade":
+        frescor(conn)
+    elif len(args) == 0:
         summary(conn)
     elif len(args) == 1:
         park_detail(conn, args[0])
