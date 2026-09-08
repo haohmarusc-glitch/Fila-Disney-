@@ -168,3 +168,59 @@ class TestFusoDaAnalise(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFrescorDoDado(unittest.TestCase):
+    """`analyze.py --idade` mede a defasagem entre coleta e fonte.
+
+    Existe como comando, não como consulta avulsa, porque a decisão de filtrar
+    a previsão sai destes números — e refazer a conta de cabeça daqui a uma
+    semana daria outro corte, que é o jeito clássico de duas medidas do mesmo
+    nome divergirem.
+    """
+
+    def banco(self, linhas=()):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE wait_times (ts TEXT, park TEXT, land TEXT, "
+                     "ride TEXT, wait_time INTEGER, is_open INTEGER, "
+                     "source_updated_at TEXT)")
+        for linha in linhas:
+            conn.execute("INSERT INTO wait_times VALUES (?,?,?,?,?,?,?)", linha)
+        return conn
+
+    def saida(self, conn):
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            analyze.frescor(conn)
+        return buf.getvalue()
+
+    def test_sem_carimbo_explica_em_vez_de_quebrar(self):
+        texto = self.saida(self.banco())
+        self.assertIn("Nenhuma leitura", texto)
+
+    def test_mede_a_defasagem_em_minutos(self):
+        texto = self.saida(self.banco([
+            ("2026-09-06T19:15:00", "Universal Epic Universe", "L", "Mine-Cart",
+             155, 1, "2026-09-06T14:46:00.000Z"),
+        ]))
+        self.assertIn("269m", texto, "19h15 menos 14h46 são 269 minutos")
+
+    def test_separa_fila_positiva_das_de_valor_zero(self):
+        """A de fila 0 é single rider/show: já descartada, não contamina."""
+        texto = self.saida(self.banco([
+            ("2026-09-06T19:15:00", "Epcot", "L", "Real", 40, 1,
+             "2026-09-06T14:00:00.000Z"),
+            ("2026-09-06T19:15:00", "Epcot", "L", "Single Rider", 0, 1,
+             "2026-09-06T14:00:00.000Z"),
+        ]))
+        linha = [l for l in texto.splitlines() if l.startswith("Epcot")][-1]
+        self.assertEqual(linha.split()[-3:], ["2", "2", "1"],
+                         "duas velhas, duas abertas, só uma com fila")
+
+    def test_carimbo_ilegivel_e_pulado_sem_derrubar(self):
+        texto = self.saida(self.banco([
+            ("2026-09-06T19:15:00", "Epcot", "L", "X", 40, 1, "ontem de manhã"),
+        ]))
+        self.assertIn("Nenhuma leitura", texto)
