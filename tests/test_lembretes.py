@@ -215,7 +215,10 @@ class TestFrescorDoDado(unittest.TestCase):
             ("2026-09-06T19:15:00", "Epcot", "L", "Single Rider", 0, 1,
              "2026-09-06T14:00:00.000Z"),
         ]))
-        linha = [l for l in texto.splitlines() if l.startswith("Epcot")][-1]
+        # Diz de QUAL tabela fala: a saída tem três, e pegar a última linha
+        # "Epcot" quebrou quando a tabela de custo foi acrescentada no fim.
+        secao = texto.split("Leituras com mais de")[1]
+        linha = [l for l in secao.splitlines() if l.startswith("Epcot")][0]
         self.assertEqual(linha.split()[-3:], ["2", "2", "1"],
                          "duas velhas, duas abertas, só uma com fila")
 

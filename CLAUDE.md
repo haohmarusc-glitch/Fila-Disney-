@@ -68,7 +68,17 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
     segundos com a mesma fila. Ela serve para dizer o compromisso de tempo e
     para o "cabe antes de fechar".
 13. Coordenada de parque vinda da API passa por sanidade (`coordenadas_sanas`): o `parks.json` já entregou o Epic Universe com longitude positiva. Ponto fora da curva é isolado com aviso, nunca corrigido em silêncio.
-14. `last_updated` da API é levado a sério: leitura velha não alerta e não entra em ranking (`leitura_obsoleta`).
+14. `last_updated` da API é levado a sério: leitura velha não alerta e não
+    entra em ranking (`leitura_obsoleta`), e desde 10/09/2026 também não
+    entra no perfil percentual (`repeticao_da_fonte`). A fonte congela: com
+    4 dias e 209 mil leituras, a Disney nunca passou de 7 min de defasagem
+    e o Islands of Adventure teve p90 de 532 min e pior caso de 5417 —
+    quase quatro dias servindo o mesmo carimbo. Sessenta cópias da mesma
+    leitura não são sessenta observações, e o perfil precisa de só 12 por
+    balde. O histórico continua gravando tudo, de propósito: quem filtra é
+    quem lê. Linha sem `source_updated_at` (anterior à coluna) entra, porque
+    não dá para julgar a idade dela. `analyze.py --idade` mede a defasagem e
+    o custo do filtro em baldes perdidos.
 15. Ausência de dado **nunca** vira 0 min: `wait_time` None fica None, no banco e na mensagem.
 16. Mudou comportamento? Teste em `tests/` junto. O CI barra o merge se quebrar.
 17. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.

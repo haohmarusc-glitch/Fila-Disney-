@@ -248,6 +248,33 @@ def percentil(valores: list[int], proporcao: float) -> float:
     return ordenados[inferior] * (1 - peso) + ordenados[superior] * peso
 
 
+def repeticao_da_fonte(coletado: str, publicado: str | None) -> bool:
+    """True quando a leitura já era velha no momento em que a gravamos.
+
+    O histórico grava tudo, de propósito. Mas o perfil percentual pergunta
+    "como costuma ser a fila nesta atração, neste dia da semana, nesta hora" —
+    e para isso a mesma leitura repetida sessenta vezes não são sessenta
+    observações, é uma só, contada sessenta vezes no balde errado.
+
+    Medido em 10/09/2026 com 4 dias e 209 mil leituras: a Disney nunca passa de
+    7 min de defasagem, enquanto o Islands of Adventure tem p90 de 532 min e
+    pior caso de 5417 — quase quatro dias servindo o mesmo carimbo. O corte de
+    30 min (`OBSOLETO_MINUTOS_PADRAO`, o mesmo do alerta e do ranking) não
+    alcança nada legítimo e pega o congelamento inteiro.
+
+    Sem carimbo da fonte não dá para julgar, e presumir seria inventar: as
+    linhas anteriores a 06/09/2026 continuam entrando.
+    """
+    if not publicado:
+        return False
+    try:
+        a = dt.datetime.fromisoformat(coletado)
+        b = dt.datetime.fromisoformat(publicado.replace("Z", ""))
+    except (TypeError, ValueError):
+        return False
+    return (a - b).total_seconds() / 60 > monitor.OBSOLETO_MINUTOS_PADRAO
+
+
 def perfil_historico(conn, config: dict, park: str, ride: str,
                      fila_agora: int, agora=None) -> dict | None:
     """Percentis da mesma atração, hora local e dia da semana.
@@ -264,7 +291,9 @@ def perfil_historico(conn, config: dict, park: str, ride: str,
              - dt.timedelta(days=PERFIL_LOOKBACK_DIAS)).isoformat()
     def filtrar(rows):
         valores = []
-        for timestamp, espera in rows:
+        for timestamp, espera, publicado in rows:
+            if repeticao_da_fonte(timestamp, publicado):
+                continue
             try:
                 instante = dt.datetime.fromisoformat(timestamp)
                 if instante.tzinfo is None:
@@ -277,7 +306,7 @@ def perfil_historico(conn, config: dict, park: str, ride: str,
         return valores
 
     base_sql = (
-        "SELECT ts, wait_time FROM wait_times "
+        "SELECT ts, wait_time, source_updated_at FROM wait_times "
         "WHERE park = ? AND ride = ? AND is_open = 1 AND wait_time IS NOT NULL"
     )
     rows = conn.execute(base_sql + " AND ts >= ?", (park, ride, corte)).fetchall()
