@@ -257,6 +257,44 @@ class TestPercentisPorHorario(BaseTeste):
         self.assertIsNone(perfil)
         self.assertIsNone(self.loc.classificar_fila(20, perfil))
 
+    def congelar(self, valor, quantas, idade_min):
+        """Leituras que a fonte já servia velhas quando as gravamos."""
+        inicio = dt.datetime(2026, 7, 21, 18, 0)
+        for i in range(quantas):
+            instante = inicio + dt.timedelta(weeks=i, minutes=i % 12 * 5)
+            publicado = instante - dt.timedelta(minutes=idade_min)
+            self.conn.execute(
+                "INSERT INTO wait_times (ts, park, land, ride, wait_time, is_open, "
+                "source_updated_at) VALUES (?, 'Epcot', 'L', 'Test Track', ?, 1, ?)",
+                (instante.isoformat(), valor, publicado.isoformat() + "Z"),
+            )
+        self.conn.commit()
+
+    def test_repeticao_da_fonte_nao_entra_no_perfil(self):
+        """O Universal serve a mesma leitura por horas; 60 cópias não são 60
+        observações. Medido em 10/09/2026: p90 de 532 min no Islands of
+        Adventure contra 5 min na Disney."""
+        self.serie([40] * 12)
+        self.congelar(500, 40, idade_min=300)   # 5h de defasagem
+        perfil = self.loc.perfil_historico(
+            self.conn, self.config, "Epcot", "Test Track", 40)
+        self.assertEqual(perfil["n"], 12, "as 40 congeladas não podem contar")
+        self.assertEqual(perfil["mediana"], 40)
+
+    def test_defasagem_pequena_continua_valendo(self):
+        """O corte é 30 min; a Disney inteira fica abaixo de 7."""
+        self.congelar(55, 12, idade_min=5)
+        perfil = self.loc.perfil_historico(
+            self.conn, self.config, "Epcot", "Test Track", 55)
+        self.assertEqual(perfil["n"], 12)
+
+    def test_linha_sem_carimbo_da_fonte_continua_entrando(self):
+        """As 477 mil anteriores a 06/09/2026 têm NULL: não dá para julgar."""
+        self.serie([40] * 12)          # self.gravar não preenche source_updated_at
+        perfil = self.loc.perfil_historico(
+            self.conn, self.config, "Epcot", "Test Track", 40)
+        self.assertEqual(perfil["n"], 12)
+
 
 class TestRotasGoogleSeguras(BaseTeste):
     PARK = "Islands Of Adventure At Universal Orlando"

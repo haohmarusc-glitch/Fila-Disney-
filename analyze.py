@@ -12,10 +12,11 @@ para você planejar rope drop, almoço e fim de tarde antes da viagem.
 """
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import localizacao
 import monitor
 
 DB_PATH = Path(__file__).parent / "data" / "history.db"
@@ -161,6 +162,61 @@ def frescor(conn: sqlite3.Connection) -> None:
         abertas = [(a, w) for a, w in velhas if a]
         com_fila = [w for a, w in abertas if w]
         print(f"{park:<42}{len(velhas):>8}{len(abertas):>9}{len(com_fila):>10}")
+
+    custo_do_filtro(conn)
+
+
+def custo_do_filtro(conn: sqlite3.Connection) -> None:
+    """O que se perde ao descartar repetição da fonte no perfil percentual.
+
+    Filtrar não é de graça. `perfil_historico` exige 12 leituras comparáveis
+    num balde (atração × dia da semana × hora local); tirando as repetições,
+    alguns baldes caem abaixo disso e o `/confianca` e o modo `50%` do
+    `/vigiar` passam a responder "sem dados suficientes" onde antes
+    respondiam.
+
+    Trocar um número contaminado por nenhum número é quase sempre certo — mas
+    é uma troca, e quem decide precisa ver o tamanho dela antes.
+    """
+    zona = fuso()
+    limite = monitor.OBSOLETO_MINUTOS_PADRAO
+    baldes: dict[tuple, list[int]] = {}
+    for park, ride, ts, src in conn.execute(
+        "SELECT park, ride, ts, source_updated_at FROM wait_times "
+        "WHERE is_open = 1 AND wait_time IS NOT NULL"
+    ):
+        try:
+            instante = datetime.fromisoformat(ts).replace(tzinfo=dt_timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        local = instante.astimezone(zona)
+        chave = (park, ride, local.weekday(), local.hour)
+        par = baldes.setdefault(chave, [0, 0])
+        par[0] += 1
+        idade = None
+        if src:
+            try:
+                idade = (datetime.fromisoformat(ts)
+                         - datetime.fromisoformat(src.replace("Z", ""))).total_seconds() / 60
+            except (TypeError, ValueError):
+                idade = None
+        # Sem carimbo não dá para julgar: a linha entra, como no perfil.
+        if idade is None or idade <= limite:
+            par[1] += 1
+
+    minimo = localizacao.MIN_AMOSTRAS_FAIXA
+    print(f"\nCusto do filtro — baldes (atração × dia × hora) com {minimo}+ leituras")
+    print(f"{'parque':<42}{'antes':>8}{'depois':>8}{'perdidos':>10}")
+    por_parque: dict[str, list[int]] = {}
+    for (park, _ride, _dia, _hora), (antes, depois) in baldes.items():
+        linha = por_parque.setdefault(park, [0, 0])
+        linha[0] += antes >= minimo
+        linha[1] += depois >= minimo
+    for park in sorted(por_parque):
+        antes, depois = por_parque[park]
+        perdidos = antes - depois
+        marca = f'{perdidos:>10}' if perdidos else f'{"—":>10}'
+        print(f'{park:<42}{antes:>8}{depois:>8}{marca}')
 
 
 def main() -> None:
