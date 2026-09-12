@@ -66,3 +66,12 @@ class TestRoteiroDoSite(unittest.TestCase):
         self.assertEqual(self.watchlist["park_days"]["2026-10-18"], [ioa])
         self.assertEqual(self.watchlist["park_days"]["2026-10-19"], [ioa, usf])
         self.assertEqual(self.watchlist["park_days"]["2026-10-20"], [usf])
+
+    def test_detalhes_das_fotos_substituem_o_planejamento_antigo(self):
+        jantar = self.dias["2026-10-18"]["timeline"]
+        self.assertTrue(any(p["hora"] == "19h30" and "California Grill" in p["texto"]
+                            for p in jantar))
+        self.assertIn("ainda não comprado", self.dias["2026-10-21"]["furafila"])
+        self.assertIn("compra adiada", self.dias["2026-10-21"]["destaque"])
+        self.assertTrue(any(p["hora"] == "26/10 · 00h20"
+                            for p in self.dias["2026-10-25"]["timeline"]))

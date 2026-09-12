@@ -35,5 +35,21 @@ sincronizados. Detalhes do planejamento anterior são mantidos quando compatíve
 ## Reservas e horários
 
 Conferir voos, reservas, jogo de basquete, horários oficiais dos parques e fogos
-nos comprovantes e aplicativos. A foto não permite transcrever com segurança
-os textos menores. O cronograma não confirma compra nem disponibilidade.
+nos comprovantes e aplicativos. As fotos detalhadas permitem transcrever os horários planejados; eles não
+substituem os comprovantes nem confirmam disponibilidade.
+
+- 16/10: Magic × Heat às 19h; ingressos a comprar. Pré-venda dos 2 iPhone Duo
+  às 08h (5h PT), para retirada em 23/10, conforme o plano da família.
+- 17/10: entrada na abertura oficial, sem madrugada após o NBA.
+- 18/10: sair do Islands por volta das 18h; California Grill às 19h30, mesa para 8.
+- 19/10: USF pela manhã e Islands à tarde via Hogwarts Express.
+- 21/10: Express Pass previsto, compra adiada.
+- 22/10: saída de Kissimmee às 07h; check-in em North Miami Beach às 16h.
+- 23/10: Apple Aventura, Best Buy, Bal Harbour e jantar na Lincoln Road.
+- 24/10: checkout até 11h, Ocean Drive e retorno à casa em Kissimmee.
+- 25/10: CM 435 sai de MCO às 08h01, conexão de 4h42 no Panamá; CM 423
+  chega em Florianópolis às 00h20 de 26/10.
+
+Ainda em aberto no cronograma: reserva de SUV, ingressos de NBA, Lightning
+Lane, Express Pass e seguro Visa Infinite. Pré-venda e retirada de produtos
+devem ser confirmadas com a loja.
