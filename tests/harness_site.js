@@ -35,6 +35,15 @@ function criar(tag) {
     addEventListener(tipo, fn) { this.ouvintes[tipo] = fn; },
     click() { if (this.ouvintes.click) this.ouvintes.click(); },
     scrollIntoView() {},
+    querySelector(seletor) {
+      const classes = seletor.split(".").filter(Boolean);
+      for (const filho of this.children) {
+        if (classes.every(c => filho.className.split(" ").includes(c))) return filho;
+        const encontrado = filho.querySelector(seletor);
+        if (encontrado) return encontrado;
+      }
+      return null;
+    },
     querySelectorAll() { return []; },
   };
 }
@@ -164,6 +173,7 @@ function textoDe(no) {
     links: linksDe(elementos["parques-conteudo"]).concat(
       linksDe(elementos["perto-conteudo"])),
     vigias: textoDe(elementos["vigias-conteudo"]),
+    roteiro: textoDe(elementos["roteiro-conteudo"]),
     subtitulo: elementos["subtitulo"] ? elementos["subtitulo"].textContent : "",
   }));
   process.exit(0); // o app.js deixa um setInterval de pé, que seguraria o node
