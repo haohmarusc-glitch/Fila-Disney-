@@ -563,9 +563,11 @@ function cartaoDia(dia, hoje) {
   if (dia.analise_troca) {
     cartao.appendChild(texto("p", "dia-troca", `🔀 ${dia.analise_troca}`));
   }
-  if (dia.parque) {
-    const botao = texto("button", "botao-filas", "ver filas agora");
-    botao.addEventListener("click", () => abrirFilasDoDia(dia, cartao, botao));
+  const parques = dia.parques || (dia.parque ? [dia.parque] : []);
+  for (const parque of parques) {
+    const rotulo = parques.length > 1 ? `ver filas: ${parque}` : "ver filas agora";
+    const botao = texto("button", "botao-filas", rotulo);
+    botao.addEventListener("click", () => abrirFilasDoDia({ ...dia, parque }, cartao, botao));
     cartao.appendChild(botao);
   }
   return cartao;

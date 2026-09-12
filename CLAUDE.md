@@ -190,6 +190,6 @@ docker compose exec fila-disney python analyze.py   # análise
 ## Datas críticas
 
 - Disney: 13/out HS, 14/out AK, 15/out EPCOT, 17/out MK (16/out sem parque). Lightning Lane compra 3 dias antes, manual, ~7h da manhã
-- Universal: 19/out IOA, 20/out USF, 21/out EU (Express Pass só no EU)
-- 16, 18 e 22–25/out não têm parque: modo coleta apenas
+- Universal: 18/out IOA, 19/out Park-to-Park (IOA + USF), 20/out USF, 21/out EU (Express Pass só no EU)
+- 12, 16 e 22–25/out não têm parque: modo coleta apenas
 - Antes de 12/out: modo coleta. Durante: modo alerta automático via `park_days`.

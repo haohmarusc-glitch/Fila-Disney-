@@ -29,10 +29,21 @@ HARNESS = os.path.join(os.path.dirname(__file__), "harness_site.js")
 def render(caso: dict) -> dict:
     saida = subprocess.run(
         [NODE, HARNESS, json.dumps(caso)],
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, encoding="utf-8", timeout=30)
     if saida.returncode != 0:
         raise AssertionError(f"o harness falhou:\n{saida.stderr}")
     return json.loads(saida.stdout)
+
+
+@unittest.skipUnless(NODE, "Node necessário para testar o site")
+class TestRoteiroParkToPark(unittest.TestCase):
+    def test_oferece_filas_dos_dois_parques(self):
+        with open("site/roteiro.json", encoding="utf-8") as arquivo:
+            roteiro = json.load(arquivo)
+        tela = render({"aba": "roteiro", "respostas": {"roteiro.json": roteiro}})
+        self.assertIn("ver filas: Islands Of Adventure At Universal Orlando", tela["roteiro"])
+        self.assertIn("ver filas: Universal Studios At Universal Orlando", tela["roteiro"])
+        self.assertIn("Ocean Drive e estrada", tela["roteiro"])
 
 
 def vigia(**campos) -> dict:

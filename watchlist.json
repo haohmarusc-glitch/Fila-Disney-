@@ -4,7 +4,7 @@
     "end": "2026-10-25",
     "timezone": "America/New_York"
   },
-  "_comment": "park_days segue o Roteiro dos Parques (Opcao B, 17/08/2026) — ver docs/ROTEIRO.md. Dias sem parque (16, 18, 22-25/10) ficam fora: nesses dias o monitor so coleta historico, sem alertar.",
+  "_comment": "park_days segue o cronograma da família enviado em 12/09/2026 — ver docs/ROTEIRO.md. Dias sem parque (12, 16 e 22–25/10): coleta de histórico, sem alertas de parque.",
   "park_days": {
     "2026-10-13": [
       "Disney Hollywood Studios"
@@ -18,8 +18,12 @@
     "2026-10-17": [
       "Disney Magic Kingdom"
     ],
-    "2026-10-19": [
+    "2026-10-18": [
       "Islands Of Adventure At Universal Orlando"
+    ],
+    "2026-10-19": [
+      "Islands Of Adventure At Universal Orlando",
+      "Universal Studios At Universal Orlando"
     ],
     "2026-10-20": [
       "Universal Studios At Universal Orlando"

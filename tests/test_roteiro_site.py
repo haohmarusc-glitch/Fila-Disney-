@@ -28,7 +28,8 @@ class TestRoteiroDoSite(unittest.TestCase):
             with self.subTest(data=data):
                 self.assertIn(data, self.watchlist["park_days"],
                               f"{data} tem parque no site mas não no park_days")
-                self.assertIn(dia["parque"], self.watchlist["park_days"][data])
+                self.assertEqual(dia.get("parques", [dia["parque"]]),
+                                 self.watchlist["park_days"][data])
 
     def test_todo_park_days_esta_no_site(self):
         """A regra vale nos dois sentidos: dia de alerta sem página no site
@@ -37,13 +38,15 @@ class TestRoteiroDoSite(unittest.TestCase):
             for parque in parques:
                 with self.subTest(data=data):
                     self.assertIn(data, self.dias)
-                    self.assertEqual(self.dias[data]["parque"], parque)
+                    dia = self.dias[data]
+                    self.assertIn(parque, dia.get("parques", [dia["parque"]]))
 
     def test_nome_de_parque_existe_na_watchlist(self):
         """Nome errado aqui quebraria o botão 'ver filas' em silêncio."""
         for dia in self.dias.values():
             if dia["parque"] is not None:
-                self.assertIn(dia["parque"], self.watchlist["parks"])
+                for parque in dia.get("parques", [dia["parque"]]):
+                    self.assertIn(parque, self.watchlist["parks"])
 
     def test_a_viagem_inteira_esta_coberta(self):
         datas = sorted(self.dias)
@@ -53,6 +56,13 @@ class TestRoteiroDoSite(unittest.TestCase):
 
     def test_dias_sem_parque_sao_os_de_descanso(self):
         sem_parque = {d for d, v in self.dias.items() if v["parque"] is None}
-        self.assertEqual(sem_parque, {"2026-10-12", "2026-10-16", "2026-10-18",
+        self.assertEqual(sem_parque, {"2026-10-12", "2026-10-16",
                                       "2026-10-22", "2026-10-23", "2026-10-24",
                                       "2026-10-25"})
+
+    def test_cronograma_universal_da_familia(self):
+        ioa = "Islands Of Adventure At Universal Orlando"
+        usf = "Universal Studios At Universal Orlando"
+        self.assertEqual(self.watchlist["park_days"]["2026-10-18"], [ioa])
+        self.assertEqual(self.watchlist["park_days"]["2026-10-19"], [ioa, usf])
+        self.assertEqual(self.watchlist["park_days"]["2026-10-20"], [usf])
