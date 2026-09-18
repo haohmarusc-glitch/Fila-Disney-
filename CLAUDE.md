@@ -70,15 +70,38 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 13. Coordenada de parque vinda da API passa por sanidade (`coordenadas_sanas`): o `parks.json` já entregou o Epic Universe com longitude positiva. Ponto fora da curva é isolado com aviso, nunca corrigido em silêncio.
 14. `last_updated` da API é levado a sério: leitura velha não alerta e não
     entra em ranking (`leitura_obsoleta`), e desde 10/09/2026 também não
-    entra no perfil percentual (`repeticao_da_fonte`). A fonte congela: com
-    4 dias e 209 mil leituras, a Disney nunca passou de 7 min de defasagem
-    e o Islands of Adventure teve p90 de 532 min e pior caso de 5417 —
-    quase quatro dias servindo o mesmo carimbo. Sessenta cópias da mesma
-    leitura não são sessenta observações, e o perfil precisa de só 12 por
-    balde. O histórico continua gravando tudo, de propósito: quem filtra é
-    quem lê. Linha sem `source_updated_at` (anterior à coluna) entra, porque
-    não dá para julgar a idade dela. `analyze.py --idade` mede a defasagem e
-    o custo do filtro em baldes perdidos.
+    entra no perfil percentual (`repeticao_da_fonte`). A fonte congela, e a
+    medida de 18/09/2026 (628 mil leituras carimbadas) é esta:
+
+    | parque | mediana | p90 | pior |
+    |---|---:|---:|---:|
+    | Disney (4 parques) | 3m | 5m | 7m — **menos o AK, abaixo** |
+    | Universal Studios | 3m | 6m | 3046m |
+    | Epic Universe | 4m | 323m | 996m |
+    | Islands of Adventure | 3m | **521m** | 10079m |
+
+    **A medida de 4 dias dizia "a Disney nunca passou de 7 min" e isso está
+    errado**: com 3x mais dado o Animal Kingdom aparece com pior caso de 8783
+    min — seis dias com o mesmo carimbo. O que se sustenta é mais estreito e
+    mais útil: a defasagem da Disney só acontece em atração FECHADA. Das 1743
+    leituras velhas do AK, `abertas = 0`; os outros três parques não têm
+    nenhuma. É o padrão "parque fechou, a API repete o último carimbo", e
+    leitura fechada já não entra no perfil. Por isso o corte de 30 min
+    (`OBSOLETO_MINUTOS_PADRAO`) continua servindo: nenhum parque tem
+    defasagem legítima perto disso com a atração aberta.
+
+    Sessenta cópias da mesma leitura não são sessenta observações, e o perfil
+    precisa de só 12 por balde. O histórico continua gravando tudo, de
+    propósito: quem filtra é quem lê. Linha sem `source_updated_at` (anterior
+    à coluna) entra, porque não dá para julgar a idade dela.
+
+    O filtro custou **144 baldes de 17.550 (0,8%)**, medido em 18/09/2026:
+    141 no Islands of Adventure (5,7% dos dele), 3 no Epic Universe, zero nos
+    outros cinco. E o volume de contaminação **não** prevê o estrago — o
+    Universal Studios tem mais leituras contaminantes que o IOA (2203 contra
+    1686) e não perdeu balde nenhum. O que decide é se as repetições se
+    empilham no mesmo balde ou se espalham. `analyze.py --idade` remede as
+    três coisas: defasagem, leituras contaminantes e baldes perdidos.
 15. Ausência de dado **nunca** vira 0 min: `wait_time` None fica None, no banco e na mensagem.
 16. Mudou comportamento? Teste em `tests/` junto. O CI barra o merge se quebrar.
 17. `park_days` tem que refletir `docs/ROTEIRO.md`. Mudou o roteiro, muda os dois juntos — alertar o parque errado no dia é pior que não alertar.
