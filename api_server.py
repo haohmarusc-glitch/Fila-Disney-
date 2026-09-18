@@ -237,6 +237,11 @@ def build_parque_payload(busca: str, conn, config: dict, park_ids: dict,
 #
 # Cada entrada diz como chamar o formatador, porque as assinaturas divergem:
 # alguns querem o payload da Queue-Times, outros só o histórico do banco.
+# `entrada` diz o que o comando recebe, e é o que o site usa para desenhar o
+# controle: "parque" (o padrão) usa o parque já escolhido na barra de cima;
+# "texto" pede uma caixa, porque o alvo é um nome livre e não um dos sete
+# parques. Fica aqui, e não no JavaScript, pelo mesmo motivo que o `rotulo`:
+# comando novo na API aparece na tela sem mexer no `app.js`.
 COMANDOS_SITE = {
     "status":    {"payload": True,  "rotulo": "Status"},
     "menores":   {"payload": True,  "rotulo": "Menores filas"},
@@ -249,7 +254,16 @@ COMANDOS_SITE = {
     "resumo":    {"payload": False, "rotulo": "Resumo"},
     "janela":    {"payload": False, "rotulo": "Janela"},
     "quebras":   {"payload": False, "rotulo": "Quebras"},
+    # Único que não é do parque escolhido: procura a atração nos sete, porque
+    # é assim que ele serve dentro do parque — quem digita "velocicoaster"
+    # quer a fila dela, não precisa saber que ela é do Islands of Adventure.
+    "fila":      {"payload": False, "rotulo": "Buscar atração",
+                  "entrada": "texto"},
 }
+
+
+def entrada_do_comando(cmd: str) -> str:
+    return COMANDOS_SITE[cmd].get("entrada", "parque")
 
 
 def executar_comando(cmd: str, busca: str, conn, config: dict, park_ids: dict,
@@ -266,6 +280,19 @@ def executar_comando(cmd: str, busca: str, conn, config: dict, park_ids: dict,
     """
     if cmd not in COMANDOS_SITE:
         raise ValueError(f"comando não disponível no site: {cmd!r}")
+
+    if entrada_do_comando(cmd) == "texto":
+        # `responder_fila` é a mesma do Telegram: resolver o nome, decidir
+        # ambiguidade e escrever o texto vivem no monitor. O que muda é só de
+        # onde vem o payload — aqui, do cache de 60s, para um clique repetido
+        # não virar uma chamada nova na Queue-Times a cada vez.
+        agora = time.monotonic()
+        texto = monitor.responder_fila(
+            conn, config, park_ids, busca,
+            lambda park_id: payload_do_parque(park_id, agora))
+        return {"comando": cmd, "busca": busca, "texto": texto,
+                "attribution": "Powered by Queue-Times.com"}
+
     matches = monitor.match_parks(busca, park_ids)
     if not matches:
         raise ValueError(f"parque não encontrado: {busca!r}")
@@ -494,14 +521,18 @@ class Handler(BaseHTTPRequestHandler):
             # O site desenha os botões a partir daqui: comando novo na API
             # aparece na tela sem mexer no JavaScript.
             return self._send(200, {
-                "comandos": [{"cmd": c, "rotulo": COMANDOS_SITE[c]["rotulo"]}
+                "comandos": [{"cmd": c, "rotulo": COMANDOS_SITE[c]["rotulo"],
+                              "entrada": entrada_do_comando(c)}
                              for c in COMANDOS_SITE],
                 "parques": sorted(self.server.park_ids)})
         if parsed.path == "/comando":
             try:
                 query = parse_qs(parsed.query)
                 cmd = (query.get("cmd") or [""])[0]
-                nome = (query.get("parque") or [""])[0]
+                # Um argumento só, com o sentido que o comando der: `parque`
+                # continua aceito porque é o que o JavaScript já publicado
+                # manda, e o navegador pode estar com a página em cache.
+                nome = (query.get("busca") or query.get("parque") or [""])[0]
                 return self._send(200, executar_comando(
                     cmd, nome, self.server.conn, self.server.config,
                     self.server.park_ids, self.server.coords))

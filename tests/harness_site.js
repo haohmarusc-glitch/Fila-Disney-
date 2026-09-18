@@ -26,6 +26,11 @@ function criar(tag) {
     href: "",
     target: "",
     rel: "",
+    // O <input> da busca por atração: o app lê `value` e chama setAttribute
+    // para o aria-label. Sem os dois o painel nem monta.
+    value: "",
+    setAttribute(nome, valor) { this.atributos[nome] = valor; },
+    atributos: {},
     children: [],
     appendChild(filho) { this.children.push(filho); return filho; },
     replaceChildren(...filhos) { this.children = filhos; },
@@ -127,7 +132,11 @@ Object.defineProperty(globalThis, "navigator", {
   },
 });
 
+// Guardado porque só o texto da tela não bastava: o teste precisa afirmar
+// QUE a busca digitada chegou na URL, e não só que algum texto voltou.
+const pedidos = [];
 globalThis.fetch = async (url) => {
+  pedidos.push(String(url));
   const rota = String(url).replace(/^\/api/, "").split("?")[0];
   const corpo = caso.respostas[rota];
   if (corpo === undefined) {
@@ -159,6 +168,11 @@ function textoDe(no) {
   // As cargas são assíncronas e ninguém devolve promessa aqui; um tick de
   // folga basta porque o fetch é resolvido na hora pelo stub.
   await new Promise((resolve) => setTimeout(resolve, 50));
+  if (caso.digitar !== undefined) {
+    const campo = elementos[`${caso.aba}-conteudo`].querySelector(".campo-busca");
+    if (!campo) throw new Error("não achei a caixa de busca na tela");
+    campo.value = caso.digitar;
+  }
   if (caso.clicar) {
     const botao = acharPorTexto(elementos[`${caso.aba}-conteudo`], caso.clicar);
     if (!botao) throw new Error(`não achei o botão "${caso.clicar}" na tela`);
@@ -175,6 +189,7 @@ function textoDe(no) {
     vigias: textoDe(elementos["vigias-conteudo"]),
     roteiro: textoDe(elementos["roteiro-conteudo"]),
     subtitulo: elementos["subtitulo"] ? elementos["subtitulo"].textContent : "",
+    pedidos,
   }));
   process.exit(0); // o app.js deixa um setInterval de pé, que seguraria o node
 })();

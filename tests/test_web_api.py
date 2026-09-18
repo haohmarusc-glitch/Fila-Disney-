@@ -227,6 +227,36 @@ class TestServidorHTTP(unittest.TestCase):
                 with self.subTest(rota=rota):
                     self.assertEqual(self.pedir(rota)[0], 401)
 
+    def test_comando_de_texto_chega_pela_query_busca(self):
+        with patch.object(api_server, "TOKEN", "segredo"), \
+             patch("api_server.monitor.responder_fila", return_value="texto") as resp:
+            status, corpo, _ = self.pedir(
+                "/comando?cmd=fila&busca=velocicoaster", token="Bearer segredo")
+        self.assertEqual(status, 200)
+        self.assertIn(b"velocicoaster", corpo)
+        self.assertEqual(resp.call_args[0][3], "velocicoaster")
+
+    def test_parque_continua_aceito_para_o_javascript_em_cache(self):
+        """O navegador pode estar servindo o app.js antigo, que manda
+        `parque=`. Recusar aí quebraria os botões de quem não recarregou."""
+        with patch.object(api_server, "TOKEN", "segredo"), \
+             patch("api_server.executar_comando", return_value={"ok": True}) as exe:
+            status, _corpo, _ = self.pedir(
+                "/comando?cmd=status&parque=Epcot", token="Bearer segredo")
+        self.assertEqual(status, 200)
+        self.assertEqual(exe.call_args[0][1], "Epcot")
+
+    def test_comandos_publica_a_entrada_de_cada_um(self):
+        """O site desenha caixa ou botão a partir daqui — sem o campo, o /fila
+        viraria um botão que busca a palavra vazia."""
+        with patch.object(api_server, "TOKEN", "segredo"):
+            _status, corpo, _ = self.pedir("/comandos", token="Bearer segredo")
+        import json as _json
+        comandos = _json.loads(corpo)["comandos"]
+        por_cmd = {c["cmd"]: c["entrada"] for c in comandos}
+        self.assertEqual(por_cmd["fila"], "texto")
+        self.assertEqual(por_cmd["status"], "parque")
+
     def test_rota_inexistente_continua_404(self):
         with patch.object(api_server, "TOKEN", "segredo"):
             self.assertEqual(
@@ -550,6 +580,61 @@ class TestComandosDoSite(unittest.TestCase):
         eles seria pedido de rede à toa numa API que a família recarrega."""
         api_server.executar_comando("janela", "Epcot", None, {}, {"Epcot": 5}, {})
         self.assertFalse(fetch.called)
+
+    def test_fila_e_o_unico_de_texto_livre(self):
+        """Os outros recebem um dos sete parques; o /fila recebe nome digitado.
+        Quem desenha o controle é o site, lendo este campo."""
+        self.assertEqual(api_server.entrada_do_comando("fila"), "texto")
+        for cmd in api_server.COMANDOS_SITE:
+            if cmd != "fila":
+                with self.subTest(cmd=cmd):
+                    self.assertEqual(api_server.entrada_do_comando(cmd), "parque")
+
+    def test_busca_de_atracao_nao_passa_por_match_parks(self):
+        """Sem o desvio, "velocicoaster" morreria em "parque não encontrado" —
+        é o defeito que aparece ao simplesmente pôr o fila na whitelist."""
+        with patch("api_server.monitor.responder_fila", return_value="ok") as resp:
+            r = api_server.executar_comando(
+                "fila", "velocicoaster", None, {}, {"Epcot": 5}, {})
+        self.assertEqual(r["texto"], "ok")
+        self.assertEqual(r["busca"], "velocicoaster")
+        self.assertNotIn("parque", r)   # o parque sai resolvido dentro do texto
+        self.assertTrue(resp.called)
+
+    def test_fila_usa_o_cache_e_nao_uma_chamada_por_clique(self):
+        """É a única diferença entre o /fila do site e o do Telegram: lá o
+        payload vem do fetch cru, aqui do cache de 60s por parque. Sem isso
+        cada toque no botão viraria uma chamada nova na Queue-Times."""
+        payload = {"lands": [{"rides": [
+            {"name": "Jurassic World VelociCoaster", "wait_time": 60, "is_open": True}]}]}
+        with patch("api_server.monitor.fetch_queue_times",
+                   return_value=payload) as fetch, \
+             patch("api_server.monitor.resolver_atracao_conhecida",
+                   return_value=[("Epcot", "Jurassic World VelociCoaster")]), \
+             patch("api_server.monitor.format_fila", return_value="texto"):
+            for _ in range(3):
+                api_server.executar_comando(
+                    "fila", "veloci", None, {}, {"Epcot": 5}, {})
+        self.assertEqual(fetch.call_count, 1, "cada clique gastou uma chamada externa")
+
+    def test_o_texto_do_fila_e_o_mesmo_do_telegram(self):
+        """O site não reimplementa a busca: chama a `responder_fila` do
+        monitor, a mesma que o /fila do Telegram chama."""
+        conn = banco()  # o format_fila consulta a tendência em wait_times
+        conn.execute("CREATE TABLE atracoes_conhecidas (park TEXT, ride TEXT, "
+                     "visto_em TEXT, avisado INTEGER)")
+        conn.execute("INSERT INTO atracoes_conhecidas VALUES "
+                     "('Epcot', 'Test Track', '2026-09-01T12:00:00+00:00', 1)")
+        payload = {"lands": [{"rides": [
+            {"name": "Test Track", "wait_time": 40, "is_open": True}]}]}
+        config = {"parks": {"Epcot": {}}}
+        with patch("api_server.monitor.fetch_queue_times", return_value=payload):
+            do_site = api_server.executar_comando(
+                "fila", "test track", conn, config, {"Epcot": 5}, {})["texto"]
+        do_telegram = monitor.responder_fila(
+            conn, config, {"Epcot": 5}, "test track", lambda _pid: payload)
+        self.assertEqual(do_site, do_telegram)
+        self.assertIn("Test Track", do_site)
 
 
 class TestParquePayloadCompleto(unittest.TestCase):
