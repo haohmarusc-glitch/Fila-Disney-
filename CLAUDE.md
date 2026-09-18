@@ -101,8 +101,19 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
 - `monitor.py` — loop de 5 min: fetch → grava SQLite → checa thresholds → alerta.
   Entre um ciclo e outro fica em long polling do Telegram atendendo comandos
   (`/status`, `/parques`, `/help`) — mesma thread, sem concorrência com o SQLite
-- `notifier.py` — transporte Telegram: `send`, `get_updates`, `esc` (env:
-  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
+- `notifier.py` — transporte Telegram: `send`, `get_updates`, `esc`,
+  `set_my_commands` (env: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). O
+  `set_my_commands` publica no boot a lista que faz aparecer o botão "Menu" do
+  Telegram, e ela sai do próprio `HELP` (`comandos_do_menu`) — uma lista escrita
+  à mão divergiria do `/help` no dia em que alguém comparasse os dois dentro do
+  parque. Cada comando entra uma vez, pela **primeira** linha que o descreve,
+  porque é ela que descreve a forma pelada: tocar no menu manda o comando sem
+  argumento. Por isso o que escreve ou administra fica de fora (`FORA_DO_MENU`):
+  um toque em `/teste_alertas` dispararia alertas para a família inteira, um em
+  `/entrar` queimaria uma das 5 tentativas por hora e um em `/sair` revogaria o
+  próprio acesso — tudo sem confirmação. Continuam valendo digitados e
+  continuam no `/help`. Item fora do formato do Telegram é descartado com log,
+  nunca deixado passar: o Telegram recusa a chamada inteira por causa de um.
 - `analyze.py` — CLI de análise do histórico. `--idade` mede a defasagem
   entre `ts` e `source_updated_at` por parque: existe como comando, e não
   como consulta avulsa, porque a decisão de filtrar a previsão sai desses

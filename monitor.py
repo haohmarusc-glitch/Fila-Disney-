@@ -10,6 +10,7 @@ Modos de operação (automáticos, por data):
 Nos dois modos o bot atende comandos no Telegram (/status, /parques, /help)
 enquanto espera o próximo ciclo de coleta.
 """
+import html
 import json
 import hmac
 import logging
@@ -2795,6 +2796,7 @@ HELP = (
     "/janela &lt;parque&gt; — a hora em que a fila do parque cai, pelo histórico\n"
     "/fila &lt;atração&gt; — fila de UMA atração, em qualquer parque "
     "(ex.: <code>/fila haunted mansion</code>)\n"
+    "/vigiar — as vigias que você já tem\n"
     "/vigiar &lt;atração&gt; — avisa uma vez quando a atração reabrir\n"
     "/vigiar &lt;atração&gt; &lt;min&gt; — avisa quando a fila cair a esse valor (ex.: 40)\n"
     "/vigiar &lt;atração&gt; &lt;N&gt;% — avisa quando a fila cair a N% do típico do horário\n"
@@ -2808,6 +2810,7 @@ HELP = (
     "/parques — parques monitorados\n"
     "/perto — melhor atração agora considerando fila + caminhada\n"
     "/personagens_perto — encontros abertos perto da sua localização\n"
+    "/alerta_personagens — mostra se os avisos por proximidade estão ligados\n"
     "/alerta_personagens on|off — liga ou desliga avisos por proximidade\n"
     "/grupo — onde está a família (só entre quem compartilha)\n"
     "/grupo on|off — entra ou sai do compartilhamento de posição\n"
@@ -2818,11 +2821,51 @@ HELP = (
     "/entrar &lt;senha&gt; — libera este chat para uso familiar\n"
     "/sair — remove este chat da lista de liberados\n"
     "/revogar &lt;chat_id&gt; — só no chat principal: tira o acesso de outro chat\n"
-    "/help — esta mensagem\n\n"
+    "/help — a lista de comandos\n\n"
     "Os alertas automáticos continuam rodando sozinhos nos dias de parque.\n"
     "Powered by Queue-Times.com"
 )
 
+
+# Comandos que o /help documenta mas que NÃO entram no menu do Telegram. O menu
+# dispara na hora do toque, sem confirmação e sem espaço para argumento, e cada
+# um destes vira um tiro no pé assim:
+#   /teste_alertas e /teste_park_to_park escrevem — o primeiro dispara alertas
+#     para todos os chats liberados;
+#   /entrar sem senha conta como erro e queima uma das 5 tentativas por hora;
+#   /sair revoga o acesso de quem tocou, junto com a posição e o nome;
+#   /revogar é só do chat principal e pede um chat_id.
+# Continuam valendo digitados, e continuam no /help.
+FORA_DO_MENU = frozenset({
+    "teste_alertas", "teste_park_to_park", "entrar", "sair", "revogar",
+})
+
+
+def comandos_do_menu(texto: str = HELP) -> list[tuple[str, str]]:
+    """O menu do Telegram derivado do próprio /help — uma lista só.
+
+    Manter uma segunda lista escrita à mão significaria que um comando novo
+    entraria no /help e não no menu (ou o contrário) no dia em que alguém
+    comparasse os dois dentro do parque. Aqui o /help é a fonte: a ordem é a
+    dele, e cada comando entra uma vez, pela PRIMEIRA linha que o descreve —
+    as seguintes são variações com argumento ("/status <parque>"), que no menu
+    seriam o mesmo item repetido.
+    """
+    menu: dict[str, str] = {}
+    for linha in texto.splitlines():
+        linha = linha.strip()
+        if not linha.startswith("/") or "—" not in linha:
+            continue
+        esquerda, _, descricao = linha.partition("—")
+        nome = esquerda.split()[0].lstrip("/").lower()
+        if nome in menu or nome in FORA_DO_MENU:
+            continue
+        # o /help é HTML; o menu é texto puro, e <code> cru apareceria na tela
+        descricao = re.sub(r"<[^>]+>", "", descricao)
+        descricao = " ".join(html.unescape(descricao).split())
+        if nome and descricao:
+            menu[nome] = descricao
+    return list(menu.items())
 
 DISCO_LIVRE_ALERTA_GB = 2.0
 
@@ -3751,6 +3794,10 @@ def main() -> None:
         log.info("coords.json: %d atrações com coordenada — /perto ativo", com_coord)
     else:
         log.info("Sem coords.json — /perto vai pedir para rodar coords.py")
+
+    # Publica o botão "Menu" do Telegram. Uma vez por container: o Telegram
+    # guarda a lista do lado dele, então não custa nada ao ciclo.
+    notifier.set_my_commands(comandos_do_menu())
 
     notifier.send(
         "✅ Monitor de filas iniciado. Mande /status para ver a fila agora.\n"
