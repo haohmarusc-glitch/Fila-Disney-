@@ -163,6 +163,18 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
   alertas para os chats), e `/vigiar`, `/entrar` e `/revogar` precisam de um
   chat de destino que o site não tem — o token é da família inteira, não de
   uma pessoa.
+  O `/fila` entrou em 18/09/2026 e é o único que **não** é do parque escolhido
+  na barra: ele procura a atração nos sete, porque quem digita "velocicoaster"
+  dentro do parque quer a fila dela, não precisa saber que ela é do Islands of
+  Adventure. Por isso cada entrada do `COMANDOS_SITE` declara `entrada`
+  (`"parque"` ou `"texto"`) e o `/comandos` publica esse campo: é a API que
+  decide se a tela desenha um botão ou uma caixa, como já era com o `rotulo` —
+  o `app.js` não conhece o `/fila`. A busca chama a `monitor.responder_fila`,
+  a **mesma** do Telegram; o que muda é só de onde vem o payload, que aqui é
+  o cache de 60s, senão cada toque no botão viraria uma chamada nova na
+  Queue-Times. Ambiguidade e "não achei" saem como texto 200, não como erro:
+  a lista de opções é HTML do Telegram e no canal de erro do site sairia com
+  as tags cruas.
   Processo separado, container `fila-disney-api`, **somente leitura** no mesmo
   SQLite. Publicada pelo Caddy do Premercado em `api-filadisney.premercadosc.com`
   — ou seja, encara a internet: token por `hmac.compare_digest`, freio de chute

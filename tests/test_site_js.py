@@ -198,6 +198,73 @@ class TestAbaParques(unittest.TestCase):
 
 
 @unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
+class TestBuscaDeAtracao(unittest.TestCase):
+    """O comando de nome livre: caixa de texto em vez de usar o parque da barra.
+
+    Quem está no parque digita "velocicoaster" e quer a fila dela — não devia
+    precisar saber que ela é do Islands of Adventure nem trocar o parque
+    escolhido antes de buscar.
+    """
+
+    def tela(self, *, digitar=None, clicar=None, texto="🎢 <b>Jurassic World VelociCoaster</b>"):
+        respostas = {
+            "/comandos": {"comandos": [
+                {"cmd": "menores", "rotulo": "Menores filas", "entrada": "parque"},
+                {"cmd": "fila", "rotulo": "Buscar atração", "entrada": "texto"}],
+                "parques": ["Epcot", "Disney Animal Kingdom"]},
+            "/parque": parque_payload(),
+            "/comando": {"comando": "fila", "busca": "velocicoaster",
+                         "texto": texto,
+                         "attribution": "Powered by Queue-Times.com"},
+        }
+        caso = {"aba": "parques", "respostas": respostas}
+        if digitar is not None:
+            caso["digitar"] = digitar
+        if clicar:
+            caso["clicar"] = clicar
+        return render(caso)
+
+    def test_comando_de_texto_ganha_caixa_e_sai_dos_chips(self):
+        """Sem sair dos chips, o botão dispararia a busca com a caixa vazia."""
+        tela = self.tela()
+        self.assertIn("input", tela["tags"], "a caixa de busca não foi montada")
+        self.assertIn("campo-busca", tela["classes"])
+        self.assertIn("busca-comando", tela["classes"])
+        # Sem esta linha o teste passava com o chip duplicado — e o chip manda
+        # o PARQUE como busca, que foi exatamente o defeito procurado aqui.
+        self.assertEqual(tela["parques"].count("Buscar atração"), 1,
+                         "o comando de texto continuou também entre os chips")
+
+    def test_texto_digitado_chega_na_url_e_o_parque_escolhido_nao(self):
+        """A busca varre os sete parques: mandar o parque da barra junto faria
+        a API procurar a atração no lugar errado."""
+        tela = self.tela(digitar="velocicoaster", clicar="Buscar atração")
+        pedido = [u for u in tela["pedidos"] if "cmd=fila" in u]
+        self.assertTrue(pedido, f"nenhum pedido de /fila em {tela['pedidos']}")
+        self.assertIn("busca=velocicoaster", pedido[0])
+        self.assertNotIn("Epcot", pedido[0])
+
+    def test_mostra_o_texto_que_o_telegram_mandaria(self):
+        tela = self.tela(digitar="velocicoaster", clicar="Buscar atração")
+        self.assertIn("Jurassic World VelociCoaster", tela["parques"])
+
+    def test_caixa_vazia_nao_gasta_pedido(self):
+        """Toque sem digitar nada não pode virar chamada à Queue-Times."""
+        tela = self.tela(digitar="   ", clicar="Buscar atração")
+        self.assertEqual([u for u in tela["pedidos"] if "cmd=fila" in u], [])
+
+    def test_ambiguidade_da_api_aparece_na_tela(self):
+        """A API devolve 200 com o texto do Telegram, não um erro: a lista de
+        opções é HTML e no canal de erro sairia com as tags cruas."""
+        tela = self.tela(
+            digitar="harry",
+            clicar="Buscar atração",
+            texto="“harry” casa com mais de uma:\n• Harry Potter and the Escape — IOA")
+        self.assertIn("casa com mais de uma", tela["parques"])
+        self.assertIn("Harry Potter and the Escape", tela["parques"])
+
+
+@unittest.skipUnless(NODE, "node não disponível — teste de tela pulado")
 class TestHtmlDoTelegram(unittest.TestCase):
     """O site mostra o MESMO texto que o Telegram, e o converte sem innerHTML.
 

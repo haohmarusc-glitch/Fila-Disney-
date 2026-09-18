@@ -3168,6 +3168,42 @@ def format_status(park_name: str, payload: dict, config: dict,
     return "\n".join(linhas)
 
 
+def responder_fila(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int],
+                   arg: str, buscar_payload) -> str:
+    """A resposta inteira do `/fila`, do nome digitado ao texto final.
+
+    `buscar_payload` recebe o id do parque e devolve o payload da Queue-Times.
+    O Telegram passa o `fetch_queue_times` cru; a API do site passa o dela, que
+    tem cache de 60s por parque e não pode gastar uma chamada externa por
+    clique. É o único ponto em que os dois divergem — resolver o nome, decidir
+    ambiguidade e escrever o texto acontece aqui, uma vez só.
+
+    Foi duplicar regra entre o monitor e quem lê o histórico que produziu o
+    offset -4 cravado do resumo diário; o site chama os formatadores do
+    monitor pelo mesmo motivo.
+    """
+    if not arg:
+        return ("Use <code>/fila &lt;atração&gt;</code> "
+                "(ex.: <code>/fila haunted mansion</code>).")
+    matches = resolver_atracao_conhecida(conn, arg)
+    if not matches:
+        return (f"Não achei atração com “{notifier.esc(arg)}”.\n"
+                "O nome vem da API; tente um pedaço menor, ou veja "
+                "<code>/novidades &lt;parque&gt;</code>.")
+    if len(matches) > 1:
+        return (f"“{notifier.esc(arg)}” casa com mais de uma:\n"
+                + _format_opcoes_atracao(matches))
+    park, ride = matches[0]
+    if park not in park_ids:
+        return f"{notifier.esc(park)} não está entre os parques monitorados agora."
+    try:
+        payload = buscar_payload(park_ids[park])
+    except requests.RequestException as exc:
+        log.error("Falha ao buscar %s para /fila: %s", park, exc)
+        return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
+    return format_fila(conn, config, park, ride, payload)
+
+
 def handle_command(text: str, conn: sqlite3.Connection, config: dict,
                    park_ids: dict[str, int], coords: dict | None = None,
                    chat_id=None) -> str | None:
@@ -3280,26 +3316,7 @@ def handle_command(text: str, conn: sqlite3.Connection, config: dict,
         return vigiar_atracao(conn, park, ride, chat_id)
 
     if cmd == "/fila":
-        if not arg:
-            return ("Use <code>/fila &lt;atração&gt;</code> "
-                    "(ex.: <code>/fila haunted mansion</code>).")
-        matches = resolver_atracao_conhecida(conn, arg)
-        if not matches:
-            return (f"Não achei atração com “{notifier.esc(arg)}”.\n"
-                    "O nome vem da API; tente um pedaço menor, ou veja "
-                    "<code>/novidades &lt;parque&gt;</code>.")
-        if len(matches) > 1:
-            return (f"“{notifier.esc(arg)}” casa com mais de uma:\n"
-                    + _format_opcoes_atracao(matches))
-        park, ride = matches[0]
-        if park not in park_ids:
-            return f"{notifier.esc(park)} não está entre os parques monitorados agora."
-        try:
-            payload = fetch_queue_times(park_ids[park])
-        except requests.RequestException as exc:
-            log.error("Falha ao buscar %s para /fila: %s", park, exc)
-            return "Não consegui falar com a API do Queue-Times agora. Tenta de novo em 1 min."
-        return format_fila(conn, config, park, ride, payload)
+        return responder_fila(conn, config, park_ids, arg, fetch_queue_times)
 
     if cmd == "/confianca":
         if not arg:

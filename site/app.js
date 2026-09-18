@@ -366,13 +366,17 @@ function secao(titulo, itens, mostraFila) {
   return bloco;
 }
 
-async function rodarComando(cmd, botao, destino) {
+async function rodarComando(cmd, botao, destino, busca) {
   const anterior = botao.textContent;
   botao.disabled = true;
   botao.textContent = "…";
   try {
+    // Um argumento só: para quase todo comando é o parque da barra de cima,
+    // e para o de caixa de texto é o que a pessoa digitou. Quem decide o
+    // sentido é a API, pelo `entrada` que ela mesma declarou.
+    const alvo = busca === undefined ? parqueAtivo : busca;
     const dados = await api(
-      `/comando?cmd=${encodeURIComponent(cmd)}&parque=${encodeURIComponent(parqueAtivo)}`);
+      `/comando?cmd=${encodeURIComponent(cmd)}&busca=${encodeURIComponent(alvo)}`);
     destino.replaceChildren(doTelegram(dados.texto));
     marcaAtualizado();
   } catch (erro) {
@@ -439,11 +443,37 @@ async function carregarParques() {
     const botoes = texto("div", "escolha comandos");
     const saida = texto("div", "saida-comando");
     for (const item of comandosCache.comandos) {
+      if (item.entrada === "texto") continue;  // esses vêm com caixa, abaixo
       const b = texto("button", "chip", item.rotulo);
       b.addEventListener("click", () => rodarComando(item.cmd, b, saida));
       botoes.appendChild(b);
     }
     tudo.appendChild(botoes);
+
+    // Comando de nome livre: a caixa sai daqui porque a API disse
+    // `entrada: "texto"`, não porque o app.js conhece o /fila. A busca varre
+    // os sete parques, então ela NÃO depende do parque escolhido acima.
+    for (const item of comandosCache.comandos) {
+      if (item.entrada !== "texto") continue;
+      const linha = texto("div", "busca-comando");
+      const campo = texto("input", "campo-busca");
+      campo.type = "search";
+      campo.placeholder = "atração em qualquer parque (ex.: velocicoaster)";
+      campo.setAttribute("aria-label", item.rotulo);
+      const b = texto("button", "chip", item.rotulo);
+      const disparar = () => {
+        const alvo = campo.value.trim();
+        if (alvo) rodarComando(item.cmd, b, saida, alvo);
+      };
+      b.addEventListener("click", disparar);
+      // No celular o teclado mostra "buscar"; sem isto ele não faria nada.
+      campo.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") disparar();
+      });
+      linha.appendChild(campo);
+      linha.appendChild(b);
+      tudo.appendChild(linha);
+    }
     tudo.appendChild(saida);
 
     const grupos = texto("div", "grupos");

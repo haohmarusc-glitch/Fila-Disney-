@@ -354,6 +354,31 @@ main { flex: 1; }
 }
 .chip:disabled { opacity: .55; cursor: default; }
 
+/* A busca por atração: caixa e botão na mesma linha, porque o alvo é um nome
+   digitado e não um dos sete parques da barra de cima. No celular a caixa
+   toma a largura que sobra e o botão não quebra para a linha de baixo. */
+.busca-comando {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.campo-busca {
+  flex: 1 1 auto;
+  min-width: 0;               /* sem isto o flex não deixa a caixa encolher */
+  min-height: 40px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: .87rem;
+  color: var(--texto);
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 999px;
+}
+.campo-busca:focus {
+  outline: none;
+  border-color: var(--acento);
+}
+
 /* Cada seção é um cartão: no monitor a lista solta no fundo da página não
    dizia onde uma terminava e a outra começava. */
 .grupo {
