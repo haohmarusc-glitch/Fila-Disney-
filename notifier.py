@@ -2,6 +2,7 @@
 import html
 import logging
 import os
+import re
 
 import requests
 
@@ -56,6 +57,59 @@ def send(text: str, reply_markup: dict | None = None, chat_id=None) -> bool:
         return True
     except requests.RequestException as exc:
         log.error("Falha ao enviar Telegram: %s", exc)
+        return False
+
+
+COMANDO_MENU_RE = re.compile(r"^[a-z0-9_]{1,32}$")  # o que o Telegram aceita
+DESCRICAO_MENU_MAX = 256
+MENU_MAX = 100
+
+
+def set_my_commands(comandos: list[tuple[str, str]]) -> bool:
+    """Publica a lista de comandos do bot — é ela que faz aparecer o botão
+    "Menu" azul ao lado do campo de texto no Telegram.
+
+    Sem essa chamada o bot funciona igual, mas quem não decorou os comandos
+    precisa mandar /help para descobrir o que existe.
+
+    Só o token importa aqui: o menu é propriedade do bot, não de um chat, e
+    vale para todo mundo que abrir a conversa. Por isso não passa por
+    `configured()`, que também exige o TELEGRAM_CHAT_ID.
+
+    Entrada inválida é descartada, não derrubada: o Telegram recusa a chamada
+    INTEIRA se um item estiver fora do formato, e um menu a menos não pode
+    impedir o monitor de subir.
+    """
+    if not BOT_TOKEN:
+        log.warning("TELEGRAM_BOT_TOKEN ausente: menu de comandos não publicado")
+        return False
+
+    validos = []
+    for nome, descricao in comandos:
+        nome = nome.lstrip("/")
+        descricao = " ".join(str(descricao).split())
+        if not COMANDO_MENU_RE.match(nome) or not descricao:
+            log.warning("Comando fora do menu (formato inválido): %r", nome)
+            continue
+        validos.append({"command": nome, "description": descricao[:DESCRICAO_MENU_MAX]})
+
+    if not validos:
+        log.warning("Nenhum comando válido para o menu — nada publicado")
+        return False
+    if len(validos) > MENU_MAX:
+        log.warning("Menu truncado em %d comandos (o Telegram é o limite)", MENU_MAX)
+        validos = validos[:MENU_MAX]
+
+    try:
+        resp = requests.post(f"{API_BASE}/setMyCommands",
+                             json={"commands": validos}, timeout=HTTP_TIMEOUT)
+        if resp.status_code != 200:
+            log.error("setMyCommands HTTP %s: %s", resp.status_code, resp.text[:200])
+            return False
+        log.info("Menu do Telegram publicado com %d comandos", len(validos))
+        return True
+    except requests.RequestException as exc:
+        log.error("Falha ao publicar o menu de comandos: %s", exc)
         return False
 
 
