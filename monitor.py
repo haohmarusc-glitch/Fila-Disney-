@@ -244,6 +244,12 @@ def init_db() -> sqlite3.Connection:
         """
     )
     conn.execute(
+        # Presença = parque parado E já avisado. A linha some quando ele volta,
+        # então a tabela nunca cresce e não precisa entrar na poda.
+        "CREATE TABLE IF NOT EXISTS coleta_alertas ("
+        "park TEXT PRIMARY KEY, alertado_em TEXT NOT NULL)"
+    )
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS top_alert_park ("
         "park TEXT PRIMARY KEY, sent_at TEXT NOT NULL)"
     )
@@ -2902,6 +2908,13 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
     else:
         saude, coleta = "🔴", "nunca"
 
+    # O MAX(ts) acima é de TODOS os parques juntos: seis coletando e um morto
+    # davam 🟢, e era justamente este comando que se abriria para conferir a
+    # suspeita. Um parque atrasado pinta o painel inteiro de vermelho.
+    atrasados = parques_parados(conn, park_ids, POLL_INTERVAL_SECONDS / 60 * 2)
+    if atrasados:
+        saude = "🔴"
+
     alertas = conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0]
     rotas_rejeitadas = conn.execute(
         "SELECT COUNT(*) FROM route_rejections").fetchone()[0]
@@ -2917,6 +2930,7 @@ def format_health(conn: sqlite3.Connection, config: dict, park_ids: dict[str, in
         f"{saude} <b>Monitor de filas</b>",
         "",
         f"Última coleta: {coleta}",
+        *[f"🔴 {notifier.esc(p)}: sem gravar há {m:.0f} min" for p, m in atrasados],
         f"Parques resolvidos: {len(park_ids)}/{esperados}",
         f"Histórico: {total:,} leituras em {dias} dia(s) · {tamanho_mb:.1f} MB".replace(",", "."),
         f"Alertas já enviados: {alertas}",
@@ -3587,6 +3601,88 @@ def run_cycle(conn: sqlite3.Connection, config: dict, park_ids: dict[str, int]) 
     return payloads
 
 
+# 6 ciclos. Um ciclo falho é rotina — a Queue-Times cai e volta —, e avisar a
+# cada tropeço treina a família a ignorar o aviso. Meia hora sem gravar nada
+# não é tropeço.
+COLETA_PARADA_MINUTOS = 30
+
+
+def parques_parados(conn: sqlite3.Connection, park_ids: dict[str, int],
+                    limite_min: float = COLETA_PARADA_MINUTOS) -> list[tuple[str, float]]:
+    """(parque, minutos sem gravar) de quem vinha coletando e parou.
+
+    Sai do BANCO, não do resultado do ciclo, de propósito: assim pega também o
+    parque cujo fetch responde 200 com zero atrações. Nesse caso não há linha
+    para inserir, o ciclo se declara completo e o heartbeat continua batendo —
+    o Kuma fica verde com o parque morto.
+
+    Parque que nunca gravou nada fica de fora: isso é nome que não resolveu na
+    API, que o log do boot já denuncia, e alertar sobre ele encheria o chat com
+    sete avisos na primeira subida de um banco vazio.
+    """
+    agora = utc_now()
+    parados = []
+    for park in park_ids:
+        ultimo = conn.execute(
+            "SELECT MAX(ts) FROM wait_times WHERE park = ?", (park,)).fetchone()[0]
+        if not ultimo:
+            continue
+        atraso = (agora - datetime.fromisoformat(ultimo)).total_seconds() / 60
+        if atraso > limite_min:
+            parados.append((park, atraso))
+    return parados
+
+
+def maybe_alertar_coleta_parada(conn: sqlite3.Connection, config: dict,
+                                park_ids: dict[str, int]) -> None:
+    """Avisa UMA vez quando um parque para de gravar, e outra quando ele volta.
+
+    Vai só para o chat principal: é informação de operação, não de passeio.
+
+    No quiet hours nada sai e nada é marcado como avisado — o aviso então sai
+    no primeiro ciclo depois, em vez de acordar alguém de madrugada por um
+    parque que estava fechado de qualquer forma. Como a marca só existe quando
+    o aviso saiu, a volta também não anuncia a recuperação de uma queda que
+    ninguém chegou a ver.
+    """
+    parados = dict(parques_parados(conn, park_ids))
+    avisados = {linha[0] for linha in conn.execute("SELECT park FROM coleta_alertas")}
+
+    # Parque que saiu da watchlist não "voltou a coletar": só deixou de existir
+    # aqui. Limpar em silêncio evita um 🟢 sobre parque que ninguém monitora.
+    for park in avisados - set(park_ids):
+        conn.execute("DELETE FROM coleta_alertas WHERE park = ?", (park,))
+        conn.commit()
+        avisados.discard(park)
+
+    for park in sorted(avisados - set(parados)):
+        if notifier.send(f"🟢 <b>Coleta retomada</b>\n{notifier.esc(park)} "
+                         "voltou a gravar leituras."):
+            conn.execute("DELETE FROM coleta_alertas WHERE park = ?", (park,))
+            conn.commit()
+            log.info("Coleta retomada em %s", park)
+
+    if in_quiet_hours(config):
+        return
+    for park, atraso in sorted(parados.items()):
+        if park in avisados:
+            continue
+        linhas = [
+            "🔴 <b>Coleta parada</b>",
+            f"{notifier.esc(park)} está há <b>{atraso:.0f} min</b> sem gravar leitura.",
+        ]
+        if len(parados) > 1:
+            linhas.append(f"({len(parados)} de {len(park_ids)} parques parados)")
+        # Só marca se o envio deu certo: Telegram fora do ar não pode engolir o
+        # aviso, senão o parque fica parado e silencioso para sempre.
+        if notifier.send("\n".join(linhas)):
+            conn.execute(
+                "INSERT OR REPLACE INTO coleta_alertas (park, alertado_em) VALUES (?, ?)",
+                (park, utc_now().isoformat()))
+            conn.commit()
+            log.warning("ALERTA: coleta parada em %s há %.0f min", park, atraso)
+
+
 def url_do_heartbeat(bruta: str) -> str:
     """A Push URL sem a query que o painel do Uptime Kuma já embute nela.
 
@@ -3829,6 +3925,10 @@ def main() -> None:
         except Exception:  # noqa: BLE001 — loop nunca deve morrer
             log.exception("Erro no ciclo de coleta")
         enviar_heartbeat(payloads, park_ids)
+        try:
+            maybe_alertar_coleta_parada(conn, config, park_ids)
+        except Exception:  # noqa: BLE001 — aviso nunca derruba o loop
+            log.exception("Falha ao checar coleta parada")
         try:
             maybe_send_top_alert(conn, config, park_ids, payloads)
         except Exception:  # noqa: BLE001 — alerta quebrado não pode parar a coleta

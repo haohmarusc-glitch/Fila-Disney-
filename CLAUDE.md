@@ -183,7 +183,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
   proximidade quando a família compartilha localização
 - `localizacao.py` — tudo que fala de geografia (distância, rota, ranking)
 - `healthcheck.py` / `healthcheck_api.py` — um por container; o da API bate em
-  `/health` por HTTP, o do monitor mede se a coleta está viva
+  `/health` por HTTP, o do monitor mede se a coleta está viva. **Os dois olham
+  o conjunto**, nunca parque a parque: o `healthcheck.py` usa `MAX(ts)` de
+  todos juntos e o heartbeat só se cala quando um *fetch* falha. Com seis
+  parques gravando e um morto, ambos ficam verdes — é o que
+  `maybe_alertar_coleta_parada` cobre
 - `watchlist.json` — config declarativa (parques, atrações, thresholds, dias)
 - `docs/ROTEIRO.md` — roteiro da viagem; é a fonte de verdade do `park_days`
 - `scripts/fechar_token.sh` — o deploy do site na VPS: bloco do Caddy com
@@ -219,6 +223,22 @@ que treina a previsão — e as tabelas de GPS (`user_locations`,
 `character_last_checks`, `character_alerts`) em 7 dias, porque nenhum leitor olha
 além de 180 min e é posição de gente real. O `VACUUM` não é rotina: só roda
 quando há espaço morto de verdade e disco para a cópia que ele monta.
+
+Parque que para de coletar rende **um** aviso no Telegram e outro quando volta
+(`maybe_alertar_coleta_parada`, tabela `coleta_alertas`, desde 25/09/2026). O
+corte é 30 min — 6 ciclos —, porque um ciclo falho é rotina e avisar a cada
+tropeço treina a família a ignorar o aviso. A checagem sai do **banco**, não do
+resultado do ciclo: assim pega também o parque cujo fetch responde 200 com zero
+atrações, caso em que não há linha para gravar, o ciclo se declara completo e o
+Kuma segue verde. Parque que nunca gravou nada não alerta — isso é nome que não
+resolveu na API, que o log do boot já denuncia, e alertaria sete vezes na
+primeira subida de um banco vazio. No quiet hours nada sai **e** nada é marcado
+como avisado, então o aviso sai no primeiro ciclo depois em vez de acordar
+alguém por um parque que estava fechado de qualquer jeito; como a marca só
+existe quando o aviso saiu, a volta também não anuncia recuperação de queda que
+ninguém viu. O `/health` deixou de responder 🟢 com um parque morto: ele
+mostrava só o `MAX(ts)` global, e era justamente o comando que se abriria para
+conferir a suspeita.
 
 `run_cycle` devolve os payloads que buscou; o alerta de menores filas consome esse dicionário em vez de refazer o fetch. Se um parque falhou no ciclo, ele simplesmente não está no dicionário e o alerta pula a rodada.
 
