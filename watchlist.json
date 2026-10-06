@@ -4,13 +4,13 @@
     "end": "2026-10-25",
     "timezone": "America/New_York"
   },
-  "_comment": "park_days segue o cronograma da família enviado em 12/09/2026 — ver docs/ROTEIRO.md. Dias sem parque (12, 16 e 22–25/10): coleta de histórico, sem alertas de parque.",
+  "_comment": "park_days segue o \"Calendário mestre FIRME v11\" enviado pela família em 06/10/2026 — ver docs/ROTEIRO.md. Dias sem parque (12, 16 e 22–25/10): coleta de histórico, sem alertas de parque.",
   "park_days": {
     "2026-10-13": [
-      "Disney Hollywood Studios"
+      "Disney Animal Kingdom"
     ],
     "2026-10-14": [
-      "Disney Animal Kingdom"
+      "Disney Hollywood Studios"
     ],
     "2026-10-15": [
       "Epcot"
@@ -22,14 +22,13 @@
       "Islands Of Adventure At Universal Orlando"
     ],
     "2026-10-19": [
-      "Islands Of Adventure At Universal Orlando",
       "Universal Studios At Universal Orlando"
     ],
     "2026-10-20": [
-      "Universal Studios At Universal Orlando"
+      "Universal Epic Universe"
     ],
     "2026-10-21": [
-      "Universal Epic Universe"
+      "Islands Of Adventure At Universal Orlando"
     ]
   },
   "parks": {
@@ -169,22 +168,46 @@
       "text": "Semana da viagem: confirmar horarios oficiais dos 7 parques e refurbishments. Rodar tambem a verificacao de nomes da watchlist contra a API — nome de atracao muda sozinho. E conferir o duracoes.json: atracao sem duracao ali aparece sem duracao no /status, que e o certo, mas o dado nao vem da API e ninguem preenche sozinho."
     },
     {
-      "id": "multipass-hollywood-2026-10-10",
+      "id": "singlepass-flight-of-passage-2026-10-10",
       "date": "2026-10-10",
       "hour": "07:00",
-      "text": "Abre AGORA a compra do Lightning Lane Multi-Pass do Hollywood Studios (dia 13/10). E manual, no My Disney Experience, e as melhores janelas somem cedo."
+      "text": "Abre AGORA a compra do Single Pass do Avatar Flight of Passage (Animal Kingdom, dia 13/10). Pelo v11 o AK nao tem Multi-Pass: e so o Single do FoP. E manual, no My Disney Experience, e as melhores janelas somem cedo."
     },
     {
-      "id": "conferir-duracao-rise-2026-10-13",
-      "date": "2026-10-13",
-      "hour": "08:00",
-      "text": "Hoje no Hollywood Studios: conferir a duracao real do Rise of the Resistance. O duracoes.json diz 7 min, e ele destoa — em todas as outras com pre-show longo o TouringPlans soma o pre-show (Tower of Terror 15 contra 3:34 de ciclo). O Rise tem uns 10 min de pre-shows antes do trackless, entao 7 parece ser so a parte final. Cronometre da entrada da fila ate a saida e corrija o arquivo se for o caso."
+      "id": "multipass-hollywood-2026-10-11",
+      "date": "2026-10-11",
+      "hour": "07:00",
+      "text": "Abre AGORA a compra do Lightning Lane Multi-Pass do Hollywood Studios (dia 14/10). E manual, no My Disney Experience, e as melhores janelas somem cedo."
+    },
+    {
+      "id": "singlepass-guardians-2026-10-12",
+      "date": "2026-10-12",
+      "hour": "07:00",
+      "text": "Abre AGORA a compra do Single Pass do Guardians of the Galaxy: Cosmic Rewind (EPCOT, dia 15/10). Hoje e dia de voo: compre pelo celular na conexao do Panama, porque a janela nao espera o check-in em Kissimmee."
     },
     {
       "id": "multipass-magic-kingdom-2026-10-14",
       "date": "2026-10-14",
       "hour": "07:00",
-      "text": "Abre AGORA a compra do Lightning Lane Multi-Pass do Magic Kingdom (dia 17/10), mais os Single Pass de Tron e Tiana. Sabado de fall break: e o dia mais concorrido da viagem."
+      "text": "Abre AGORA a compra do Lightning Lane Multi-Pass do Magic Kingdom (dia 17/10), mais o Single Pass do Tron. A Tiana entra no proprio Multi-Pass, nao precisa de Single. Sabado de fall break: e o dia mais concorrido da viagem."
+    },
+    {
+      "id": "conferir-duracao-rise-2026-10-14",
+      "date": "2026-10-14",
+      "hour": "08:00",
+      "text": "Hoje no Hollywood Studios: cronometrar o Rise of the Resistance. O duracoes.json usa 18 min, posto a mao em _ajustes — os 7 min que o TouringPlans publica cobrem so o trecho final do veiculo, sem os pre-shows. Cronometre da entrada da fila ate a saida e corrija o _ajustes se o 18 nao bater."
+    },
+    {
+      "id": "fechamento-usf-hhn-2026-10-19",
+      "date": "2026-10-19",
+      "hour": "08:00",
+      "text": "Hoje o Universal Studios fecha as 17h para quem nao tem ingresso do Halloween Horror Nights (Premium Scream Night, 18h30 as 02h). O /status vai dizer que o parque opera ate tarde, porque o horario e medido pelo historico e a API continua publicando fila durante o evento: hoje NAO confie no 'Opera por volta de' nem no 'nao cabe antes de fechar' deste parque."
+    },
+    {
+      "id": "express-epic-2026-10-20",
+      "date": "2026-10-20",
+      "hour": "07:00",
+      "text": "Hoje e o Epic Universe, com Express Pass previsto no plano (opcao B) e compra ainda nao feita. Se for comprar, o preco muda por dia e por demanda — confira no app ou na bilheteria antes de entrar."
     }
   ],
   "database": {

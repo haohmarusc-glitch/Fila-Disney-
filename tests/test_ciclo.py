@@ -20,7 +20,8 @@ class TestRunCycle(BaseTeste):
         super().setUp()
         self.requests.roteador = lambda url: Resposta(PAYLOAD)
         self.parques = {"Disney Hollywood Studios": 7}
-        self.monitor.now_park = lambda _c: dt.datetime(2026, 10, 13, 14, 0, tzinfo=EDT)
+        # 14/10 é o dia do Hollywood Studios no calendário v11 (era 13/10 antes).
+        self.monitor.now_park = lambda _c: dt.datetime(2026, 10, 14, 14, 0, tzinfo=EDT)
 
     def linhas_gravadas(self):
         return self.conn.execute("SELECT COUNT(*) FROM wait_times").fetchone()[0]
@@ -58,7 +59,7 @@ class TestRunCycle(BaseTeste):
         self.assertEqual(self.linhas_gravadas(), 5, "mas continua coletando")
 
     def test_nao_alerta_em_quiet_hours(self):
-        self.monitor.now_park = lambda _c: dt.datetime(2026, 10, 13, 23, 0, tzinfo=EDT)
+        self.monitor.now_park = lambda _c: dt.datetime(2026, 10, 14, 23, 0, tzinfo=EDT)
         self.monitor.run_cycle(self.conn, self.config, self.parques)
         self.assertEqual(self.enviadas(), [])
 

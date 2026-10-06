@@ -1,5 +1,5 @@
 {
-  "_fonte": "Cronograma da família Neves e amigos, Flórida 2026 · 12 a 25 de outubro, versão de 12/09/2026. Transcrito das fotos legíveis enviadas pela família. Sincronizado com docs/ROTEIRO.md e watchlist.json; horários e disponibilidade devem ser conferidos nos apps.",
+  "_fonte": "Calendário mestre FIRME v11, da família Neves e amigos · Flórida, 12 a 25 de outubro de 2026 · recebido em 06/10/2026 e substitui a versão de 12/09. Sincronizado com docs/ROTEIRO.md e watchlist.json; horários e disponibilidade devem ser conferidos nos apps.",
   "titulo": "Viagem Flórida 2026",
   "subtitulo": "12 a 25 de outubro · família Neves e amigos · Kissimmee e Miami",
   "dias": [
@@ -10,36 +10,38 @@
       "destaque": "COPA via Panamá · chegada em MCO às 12h45",
       "timeline": [
         {"hora": "01h25", "texto": "COPA CM 424 sai de Florianópolis, com conexão no Panamá."},
-        {"hora": "12h45", "texto": "CM 446 chega em Orlando (MCO). Retirada da SUV no aeroporto."},
+        {"hora": "12h45", "texto": "CM 446 chega em Orlando (MCO). Retirada dos 2 Jeeps da Alamo no aeroporto."},
         {"hora": "Tarde", "texto": "Check-in na casa em Kissimmee, Formosa Valley."},
-        {"hora": "Noite", "texto": "Jantar em Disney Springs."}
+        {"hora": "Noite", "texto": "Florida Mall: Genius, Dick's e Walmart."}
       ],
       "notas": ""
     },
     {
       "data": "2026-10-13",
-      "rotulo": "Hollywood Studios",
-      "parque": "Disney Hollywood Studios",
-      "destaque": "Rope drop, Lightning Lane e Fantasmic à noite",
+      "rotulo": "Animal Kingdom",
+      "parque": "Disney Animal Kingdom",
+      "destaque": "Avatar Flight of Passage e shows ao longo do dia · 08h–18h",
       "timeline": [
-        {"hora": "Abertura", "texto": "Rope drop no Hollywood Studios."},
-        {"hora": "Dia", "texto": "Lightning Lane Multi-Pass previsto e Single Pass para Rise of the Resistance."},
-        {"hora": "Noite", "texto": "Fantasmic; conferir horário no app."}
+        {"hora": "08h", "texto": "Abertura do Animal Kingdom; o parque fecha às 18h, o mais cedo da semana."},
+        {"hora": "Dia", "texto": "Single Pass para Avatar Flight of Passage. Sem Multi-Pass neste dia, pela opção B."},
+        {"hora": "Shows", "texto": "Conferir os horários no app e distribuir os shows ao longo do dia."},
+        {"hora": "Sempre", "texto": "Água e protetor solar: é o parque mais exposto do roteiro."}
       ],
-      "notas": "",
-      "furafila": "Multi-Pass previsto e Single Pass para Rise of the Resistance; compra a confirmar."
+      "notas": "Festa de Halloween no Magic Kingdom nesta noite; não afeta o Animal Kingdom.",
+      "furafila": "Single Pass para Avatar Flight of Passage, sem Multi-Pass."
     },
     {
       "data": "2026-10-14",
-      "rotulo": "Animal Kingdom",
-      "parque": "Disney Animal Kingdom",
-      "destaque": "Avatar Flight of Passage e shows ao longo do dia",
+      "rotulo": "Hollywood Studios",
+      "parque": "Disney Hollywood Studios",
+      "destaque": "Rope drop, Multi-Pass e Fantasmic à noite · 09h–21h",
       "timeline": [
-        {"hora": "Dia", "texto": "Single Pass para Avatar Flight of Passage."},
-        {"hora": "Shows", "texto": "Conferir os horários no app e distribuir os shows ao longo do dia."}
+        {"hora": "Abertura", "texto": "Rope drop no Hollywood Studios; chegar cedo."},
+        {"hora": "Dia", "texto": "Lightning Lane Multi-Pass previsto para o dia, sem Single Pass."},
+        {"hora": "Noite", "texto": "Fantasmic; conferir horário no app."}
       ],
-      "notas": "",
-      "furafila": "Single Pass para Avatar Flight of Passage."
+      "notas": "Dia de cronometrar o Rise of the Resistance: o duracoes.json usa 18 min por ajuste manual e o número merece conferência in loco.",
+      "furafila": "Multi-Pass previsto; compra a confirmar."
     },
     {
       "data": "2026-10-15",
@@ -61,74 +63,73 @@
       "timeline": [
         {"hora": "Manhã", "texto": "Piscina na casa. Compras leves: Premium Outlets, Best Buy e Ross."},
         {"hora": "08h (5h PT)", "texto": "Pré-venda dos 2 iPhone Duo no app Apple Store, com retirada na Apple Aventura em 23/10, conforme o planejamento."},
-        {"hora": "19h", "texto": "NBA no Kia Center: Magic × Heat, pré-temporada. Ingressos a comprar."}
+        {"hora": "19h", "texto": "NBA no Kia Center: Magic × Heat, pré-temporada. Ingressos já comprados, 8 pessoas, estacionamento resolvido."}
       ],
-      "notas": "Segurar o ritmo antes do sábado cheio no Magic Kingdom. Sem pré-venda, há risco de não ter estoque. HHN nesta noite é improvável, pois conflita com o jogo. Datas de venda e retirada conforme o cronograma da família, a confirmar na Apple."
+      "notas": "Segurar o ritmo antes do sábado cheio no Magic Kingdom. Sem pré-venda, há risco de não ter estoque. Sem HHN nesta noite, por decisão da família. Datas de venda e retirada conforme o cronograma da família, a confirmar na Apple."
     },
     {
       "data": "2026-10-17",
       "rotulo": "Magic Kingdom, dia inteiro",
       "parque": "Disney Magic Kingdom",
-      "destaque": "Dia sem festa, horário completo e Happily Ever After",
+      "destaque": "Dia sem festa, horário completo e Happily Ever After · 08h–23h",
       "timeline": [
         {"hora": "Abertura", "texto": "Ritmo pós-NBA: entrar na abertura oficial, sem madrugada."},
-        {"hora": "Dia", "texto": "Multi-Pass e Singles: TRON e Tiana ou Seven Dwarfs; conferir no app."},
+        {"hora": "Dia", "texto": "Multi-Pass com a Tiana dentro, mais o Single Pass do TRON; conferir no app."},
         {"hora": "Noite", "texto": "Happily Ever After: conferir horário no app e chegar 45 a 60 minutos antes."}
       ],
-      "notas": "",
-      "furafila": "Multi-Pass e Singles previstos; confirmar opções e disponibilidade no app."
+      "notas": "17/10 não é noite de festa de Halloween: o parque vai até as 23h. Sábado de fall break, o dia mais cheio da viagem. O Walt Disney World Railroad está em reforma.",
+      "furafila": "Multi-Pass com a Tiana e Single Pass do TRON; confirmar disponibilidade no app."
     },
     {
       "data": "2026-10-18",
       "rotulo": "Islands of Adventure",
       "parque": "Islands Of Adventure At Universal Orlando",
-      "destaque": "Islands de dia · aniversário da Débora no California Grill",
+      "destaque": "Islands de dia leve · aniversário da Débora no California Grill",
       "timeline": [
         {"hora": "Dia", "texto": "Primeiro dia do ingresso Universal, usando um dos 2 dias grátis. Ritmo tranquilo: Hogsmeade, Hagrid’s, VelociCoaster e Hulk."},
-        {"hora": "18h", "texto": "Sair do parque por volta das 18h. Universal → Contemporary: 30 a 40 minutos previstos."},
+        {"hora": "18h", "texto": "Sair do parque por volta das 18h; o Islands fecha às 20h. Universal → Contemporary: 30 a 40 minutos previstos."},
         {"hora": "19h30", "texto": "California Grill, no Contemporary: jantar de aniversário da Débora, mesa para 8."},
-        {"hora": "~21h15", "texto": "Fogos da festa do Magic Kingdom na sobremesa; confirmar horário."}
+        {"hora": "22h", "texto": "Not-So-Spooky Spectacular, os fogos da festa do Magic Kingdom, vistos do California Grill; confirmar horário."}
       ],
-      "notas": "",
+      "notas": "O Jurassic Park River Adventure está em reforma até novembro e vai aparecer como fechado.",
       "furafila": "Sem Express."
     },
     {
       "data": "2026-10-19",
-      "rotulo": "Park-to-Park",
-      "parque": "Islands Of Adventure At Universal Orlando",
-      "destaque": "USF pela manhã e Hogwarts Express para Islands à tarde",
+      "rotulo": "Universal Studios Florida",
+      "parque": "Universal Studios At Universal Orlando",
+      "destaque": "Dia no Universal Studios · 09h–17h, rope drop no Gringotts",
       "timeline": [
-        {"hora": "Manhã", "texto": "Universal Studios Florida: Diagon Alley e Gringotts."},
-        {"hora": "Tarde", "texto": "Hogwarts Express para Islands of Adventure, repetindo o que valeu no domingo."}
+        {"hora": "Abertura", "texto": "Rope drop no Harry Potter and the Escape from Gringotts, na Diagon Alley."},
+        {"hora": "Dia", "texto": "Universal Studios Florida. O Hogwarts Express continua disponível pelo ingresso Park-to-Park, se der vontade de passar no Islands."},
+        {"hora": "17h", "texto": "O parque fecha às 17h para quem não tem ingresso do Halloween Horror Nights, que começa às 18h30. Planejar a saída; conferir o horário no app na véspera."}
       ],
-      "notas": "USF pode fechar cedo nesta noite por Premium Scream Night; conferir no app.",
-      "parques": [
-        "Islands Of Adventure At Universal Orlando",
-        "Universal Studios At Universal Orlando"
-      ],
+      "notas": "Noite de HHN Premium Scream Night. O /status do Universal Studios vai dizer que o parque opera até tarde, porque o horário é medido pelo histórico e a API publica fila durante o evento — hoje o aviso de fechamento do bot não vale para este parque.",
       "furafila": "Sem Express; ingresso Park-to-Park."
     },
     {
       "data": "2026-10-20",
-      "rotulo": "Universal Studios Florida",
-      "parque": "Universal Studios At Universal Orlando",
-      "destaque": "Universal Studios Florida, Diagon Alley e Hogwarts Express",
+      "rotulo": "Epic Universe",
+      "parque": "Universal Epic Universe",
+      "destaque": "Epic Universe com Express Pass · 10h–20h, o gran finale",
       "timeline": [
-        {"hora": "Dia", "texto": "Diagon Alley e Hogwarts Express com ingresso Park-to-Park."},
-        {"hora": "Noite", "texto": "Dia sem Halloween Horror Nights conforme o cronograma: horário noturno normal e show CineSational; conferir no app."}
+        {"hora": "10h", "texto": "Abertura do Epic Universe; o parque vai até as 20h."},
+        {"hora": "Dia", "texto": "Express Pass previsto no plano (opção B); orçamento guardado e compra ainda não feita."}
       ],
-      "notas": ""
+      "notas": "20/10 não é noite de HHN, e o evento acontece só no Universal Studios: o Epic opera normal.",
+      "furafila": "Express Pass previsto, ainda não comprado."
     },
     {
       "data": "2026-10-21",
-      "rotulo": "Epic Universe",
-      "parque": "Universal Epic Universe",
-      "destaque": "Express Pass previsto no plano, compra adiada",
+      "rotulo": "Islands of Adventure",
+      "parque": "Islands Of Adventure At Universal Orlando",
+      "destaque": "Islands o dia inteiro · 09h–20h, chegando cedo",
       "timeline": [
-        {"hora": "Dia", "texto": "Visita ao Epic Universe com Express Pass previsto; orçamento guardado e compra adiada."}
+        {"hora": "Abertura", "texto": "Chegar cedo: Hagrid’s e VelociCoaster são as filas que mais crescem no Islands."},
+        {"hora": "Dia", "texto": "Islands of Adventure o dia inteiro, usando single rider onde compensar."}
       ],
-      "notas": "A noite de HHN no Universal Studios Florida não afeta o Epic.",
-      "furafila": "Express Pass previsto, ainda não comprado."
+      "notas": "A noite de HHN no Universal Studios não afeta o Islands. O Jurassic Park River Adventure segue em reforma, e o Skull Island: Reign of Kong está operando com o final modificado.",
+      "furafila": "Sem Express; single rider onde houver."
     },
     {
       "data": "2026-10-22",
@@ -147,11 +148,11 @@
       "data": "2026-10-23",
       "rotulo": "Compras em Miami",
       "parque": null,
-      "destaque": "Aventura Mall, retirada dos iPhones e compras",
+      "destaque": "Design District, retirada dos iPhones e compras",
       "timeline": [
-        {"hora": "Manhã", "texto": "Aventura Mall: retirada dos 2 iPhone Duo na Apple Aventura, no dia do lançamento previsto no cronograma. Pedido feito na pré-venda de 16/10."},
-        {"hora": "Tarde", "texto": "Best Buy e Bal Harbour."},
-        {"hora": "Noite", "texto": "Jantar na Lincoln Road."}
+        {"hora": "Manhã", "texto": "Retirada dos 2 iPhone Duo na Apple Aventura, no dia do lançamento previsto no cronograma. Pedido feito na pré-venda de 16/10."},
+        {"hora": "Tarde", "texto": "Design District; ritmo leve."},
+        {"hora": "Noite", "texto": "Jantar em Miami."}
       ],
       "notas": "Retirada depende da pré-venda e da disponibilidade confirmada na Apple."
     },
@@ -163,10 +164,10 @@
       "timeline": [
         {"hora": "Até 11h", "texto": "Checkout da casa em Miami."},
         {"hora": "Manhã", "texto": "Passeio de carro pela Ocean Drive e almoço em Miami."},
-        {"hora": "Tarde", "texto": "Volta para Kissimmee."},
+        {"hora": "Tarde", "texto": "Volta para Kissimmee, com parada no Florida Mall no caminho."},
         {"hora": "Noite", "texto": "Na casa, organizar as malas com calma."}
       ],
-      "notas": "Plano reserva: se a retirada do iPhone Duo falhar no dia 23, tentar a Apple Florida Mall no caminho de volta."
+      "notas": "O Florida Mall entra no caminho de volta; também é o plano reserva se a retirada do iPhone Duo falhar no dia 23."
     },
     {
       "data": "2026-10-25",
@@ -174,7 +175,7 @@
       "parque": null,
       "destaque": "COPA CM 435 às 08h01 · chegada ao Brasil em 26/10",
       "timeline": [
-        {"hora": "Madrugada", "texto": "Devolução da SUV em MCO."},
+        {"hora": "Madrugada", "texto": "Devolução dos 2 Jeeps da Alamo em MCO."},
         {"hora": "08h01", "texto": "CM 435 sai de Orlando. Conexão de 4h42 no Panamá."},
         {"hora": "26/10 · 00h20", "texto": "CM 423 chega em Florianópolis, na segunda-feira."}
       ],

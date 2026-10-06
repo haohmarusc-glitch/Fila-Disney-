@@ -61,17 +61,43 @@ class TestRoteiroDoSite(unittest.TestCase):
                                       "2026-10-25"})
 
     def test_cronograma_universal_da_familia(self):
+        """Calendário mestre FIRME v11, de 06/10/2026.
+
+        O v11 trocou 20 com 21 e tirou o Park-to-Park do dia 19. A versão
+        anterior (12/09) tinha 19 = Islands + USF, 20 = USF e 21 = Epic.
+        """
         ioa = "Islands Of Adventure At Universal Orlando"
         usf = "Universal Studios At Universal Orlando"
+        epic = "Universal Epic Universe"
         self.assertEqual(self.watchlist["park_days"]["2026-10-18"], [ioa])
-        self.assertEqual(self.watchlist["park_days"]["2026-10-19"], [ioa, usf])
-        self.assertEqual(self.watchlist["park_days"]["2026-10-20"], [usf])
+        self.assertEqual(self.watchlist["park_days"]["2026-10-19"], [usf])
+        self.assertEqual(self.watchlist["park_days"]["2026-10-20"], [epic])
+        self.assertEqual(self.watchlist["park_days"]["2026-10-21"], [ioa])
+
+    def test_cronograma_disney_da_familia(self):
+        """O v11 também trocou 13 com 14: o Animal Kingdom passou para terça."""
+        self.assertEqual(self.watchlist["park_days"]["2026-10-13"],
+                         ["Disney Animal Kingdom"])
+        self.assertEqual(self.watchlist["park_days"]["2026-10-14"],
+                         ["Disney Hollywood Studios"])
+        self.assertEqual(self.watchlist["park_days"]["2026-10-15"], ["Epcot"])
+        self.assertEqual(self.watchlist["park_days"]["2026-10-17"],
+                         ["Disney Magic Kingdom"])
+
+    def test_nenhum_dia_do_v11_tem_dois_parques(self):
+        """O Park-to-Park saiu no v11; a chave `parques` não sobrou em lugar nenhum."""
+        for data, dia in self.dias.items():
+            with self.subTest(data=data):
+                self.assertNotIn("parques", dia)
+        for data, parques in self.watchlist["park_days"].items():
+            with self.subTest(data=data):
+                self.assertEqual(len(parques), 1)
 
     def test_detalhes_das_fotos_substituem_o_planejamento_antigo(self):
         jantar = self.dias["2026-10-18"]["timeline"]
         self.assertTrue(any(p["hora"] == "19h30" and "California Grill" in p["texto"]
                             for p in jantar))
-        self.assertIn("ainda não comprado", self.dias["2026-10-21"]["furafila"])
-        self.assertIn("compra adiada", self.dias["2026-10-21"]["destaque"])
+        self.assertIn("ainda não comprado", self.dias["2026-10-20"]["furafila"])
+        self.assertIn("Express Pass", self.dias["2026-10-20"]["destaque"])
         self.assertTrue(any(p["hora"] == "26/10 · 00h20"
                             for p in self.dias["2026-10-25"]["timeline"]))

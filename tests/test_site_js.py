@@ -37,12 +37,32 @@ def render(caso: dict) -> dict:
 
 @unittest.skipUnless(NODE, "Node necessário para testar o site")
 class TestRoteiroParkToPark(unittest.TestCase):
-    def test_oferece_filas_dos_dois_parques(self):
+    """Um botão de filas por parque quando o dia tem mais de um.
+
+    O calendário v11 tirou o Park-to-Park de 19/10, então nenhum dia de
+    produção usa a chave `parques` hoje. O caso vai por roteiro sintético: a
+    capacidade continua no `app.js` e não pode ficar sem teste só porque o
+    roteiro desta viagem deixou de exercê-la.
+    """
+    IOA = "Islands Of Adventure At Universal Orlando"
+    USF = "Universal Studios At Universal Orlando"
+
+    def test_dia_com_dois_parques_oferece_um_botao_para_cada(self):
+        roteiro = {"titulo": "Viagem", "subtitulo": "teste", "dias": [{
+            "data": "2026-10-19", "rotulo": "Park-to-Park", "parque": self.IOA,
+            "destaque": "USF de manhã e Islands à tarde", "timeline": [],
+            "notas": "", "parques": [self.IOA, self.USF]}]}
+        tela = render({"aba": "roteiro", "respostas": {"roteiro.json": roteiro}})
+        self.assertIn(f"ver filas: {self.IOA}", tela["roteiro"])
+        self.assertIn(f"ver filas: {self.USF}", tela["roteiro"])
+
+    def test_roteiro_de_producao_desenha_um_botao_por_dia(self):
         with open("site/roteiro.json", encoding="utf-8") as arquivo:
             roteiro = json.load(arquivo)
         tela = render({"aba": "roteiro", "respostas": {"roteiro.json": roteiro}})
-        self.assertIn("ver filas: Islands Of Adventure At Universal Orlando", tela["roteiro"])
-        self.assertIn("ver filas: Universal Studios At Universal Orlando", tela["roteiro"])
+        self.assertIn("ver filas agora", tela["roteiro"])
+        self.assertNotIn("ver filas:", tela["roteiro"],
+                         "nenhum dia do v11 tem dois parques")
         self.assertIn("Ocean Drive e estrada", tela["roteiro"])
 
 

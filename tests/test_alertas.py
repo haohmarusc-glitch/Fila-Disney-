@@ -7,7 +7,12 @@ from tests.apoio import BaseTeste
 EDT = dt.timezone(dt.timedelta(hours=-4))
 
 
-def fixar_hora(monitor, hora, minuto=0, dia=13, mes=10):
+def fixar_hora(monitor, hora, minuto=0, dia=14, mes=10):
+    """O dia padrão é o do Hollywood Studios, de onde saem os payloads daqui.
+
+    Era 13/10 até o calendário v11 trocar o Hollywood com o Animal Kingdom; num
+    dia que não é do parque do payload, o alerta simplesmente não sai.
+    """
     monitor.now_park = lambda _c: dt.datetime(2026, mes, dia, hora, minuto, tzinfo=EDT)
 
 
@@ -44,7 +49,7 @@ class TestCooldown(BaseTeste):
 class TestDiaDeParque(BaseTeste):
     def test_virada_do_dia_troca_o_parque(self):
         fixar_hora(self.monitor, 23, 59, dia=14)
-        self.assertEqual(self.monitor.is_alert_day(self.config), ["Disney Animal Kingdom"])
+        self.assertEqual(self.monitor.is_alert_day(self.config), ["Disney Hollywood Studios"])
         fixar_hora(self.monitor, 0, 1, dia=15)
         self.assertEqual(self.monitor.is_alert_day(self.config), ["Epcot"])
 

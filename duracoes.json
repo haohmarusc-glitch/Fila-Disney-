@@ -10,7 +10,7 @@
     "Disney Hollywood Studios": {
       "Star Wars: Rise of the Resistance": {
         "minutos": 18,
-        "fonte": "numero divulgado na abertura; infobox da Wikipedia tambem publica 18; cronometragem de 24/08/2026 confirma ~18. Os 7 do TouringPlans cobrem so o trecho final do veiculo. Reconferir in loco em 13/10 (lembrete armado)"
+        "fonte": "numero divulgado na abertura; infobox da Wikipedia tambem publica 18; cronometragem de 24/08/2026 confirma ~18. Os 7 do TouringPlans cobrem so o trecho final do veiculo. Reconferir in loco em 14/10, o dia do Hollywood Studios no calendario v11 (lembrete armado)"
       }
     }
   },
@@ -133,12 +133,5 @@
       "Stardust Racers": 7
     }
   },
-  "_por_que_esta_vazio": "A Queue-Times nao publica duracao, e a sessao que criou este arquivo (23/08/2026) rodava num ambiente cujo egresso so alcanca dominios do GitHub — Wikipedia, themeparks.wiki e os sites dos parques dao timeout. Escrever 54 numeros de memoria seria exatamente o 'numero inventado' que a regra 12 proibe, entao o arquivo ficou estruturado e vazio: enquanto estiver assim, nenhuma duracao aparece na tela, que e o comportamento correto.",
-  "_como_preencher_de_verdade": [
-    "OPCAO 1 — do proprio VPS, que tem internet aberta: buscar numa fonte publica e colar aqui.",
-    "OPCAO 2 — sessao num ambiente com politica de rede permissiva (ver code.claude.com/docs/en/claude-code-on-the-web); conferir cada duracao contra fonte oficial do parque antes de gravar.",
-    "OPCAO 3 — preencher a mao, aos poucos. Arquivo parcial funciona: atracao ausente so nao mostra duracao.",
-    "Em qualquer caso: minutos inteiros e positivos. Zero, texto ou nulo sao ignorados com aviso no log."
-  ],
-  "_origem": "Preenchido pelo duracoes.py a partir do infobox da Wikipedia em 24/08/2026. As 39 ausentes ou nao tem duration no infobox, ou nao tem pagina, ou o artigo cobre varios parques sem separar por instalacao — nesse ultimo caso o numero existe mas e de outro parque, e entrar com ele seria pior que ficar sem."
+  "_historico": "O arquivo nasceu em 23/08/2026 estruturado e VAZIO, porque a sessao que o criou so alcancava dominios do GitHub e escrever 54 numeros de memoria seria o 'numero inventado' que a regra 12 proibe. Deixou de estar vazio em 24/08/2026, quando o duracoes.py colheu os sete parques no TouringPlans: `rides` esta em 54 de 54 desde entao, e a secao `veiculo` recebeu 31 valores do infobox da Wikipedia. Dois comentarios antigos — `_por_que_esta_vazio` e `_origem` — descreviam o arquivo vazio e atribuiam o `rides` a Wikipedia; foram removidos em 06/10/2026 por contradizerem o `_medida`. As instrucoes de como preencher a mao sairam junto: a regra viva esta no `_regra`, e o que falta hoje nao e dado, e cronometragem in loco (ver `_limite_da_fonte`)."
 }
