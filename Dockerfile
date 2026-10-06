@@ -13,6 +13,11 @@ COPY coords.jso[n] ./
 # mesma coisa para as durações: arquivo ausente só desativa o recurso
 COPY duracoes.jso[n] ./
 
+# Só o verificador de nomes entra: ele é ferramenta de operação e precisa da
+# rede e do `requests` que só existem aqui dentro. Os outros scripts/ são de
+# deploy, rodam na VPS e não têm o que fazer na imagem.
+COPY scripts/verificar_nomes.py ./scripts/
+
 # Usuário não-root. O data/ é volume e precisa pertencer a ele.
 RUN useradd --create-home --uid 10001 fila \
     && mkdir -p /app/data \

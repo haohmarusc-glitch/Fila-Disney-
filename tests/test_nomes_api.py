@@ -172,5 +172,54 @@ class TestNomesDosOutrosParques(BaseTeste):
         self.assertIsNone(self.monitor.nome_watchlist(mk, "Dumbo the Flying Elephant"))
 
 
+class TestVerificacaoAoVivo(BaseTeste):
+    """A parte do `scripts/verificar_nomes.py` que decide, sem rede.
+
+    O script existe porque este arquivo responde outra pergunta: aqui os nomes
+    estão congelados em 23/08 e protegem a normalização contra regressão; lá a
+    pergunta é se a API de HOJE ainda casa. O fetch fica fora da função para
+    que a regra possa ser exercida com payload de mentira.
+    """
+    def setUp(self):
+        super().setUp()
+        from scripts import verificar_nomes
+        self.verificar = verificar_nomes
+
+    def park_cfg(self):
+        return self.config["parks"]["Disney Hollywood Studios"]
+
+    def payload(self, *nomes):
+        return {"lands": [{"name": "L", "rides": [
+            {"name": n, "wait_time": 10, "is_open": True} for n in nomes]}]}
+
+    def test_nome_que_sumiu_aparece_como_orfao(self):
+        rides = self.verificar.rides_do_payload(self.payload("Slinky Dog Dash"))
+        achado = self.verificar.conferir(self.park_cfg(), rides)
+        self.assertEqual(achado["casadas"], {"Slinky Dog Dash": ["Slinky Dog Dash"]})
+        self.assertIn("Tower of Terror", achado["orfas"])
+        self.assertEqual(achado["ambiguas"], {})
+
+    def test_pontuacao_da_api_continua_casando(self):
+        rides = self.verificar.rides_do_payload(
+            self.payload("The Twilight Zone™ Tower of Terror"))
+        achado = self.verificar.conferir(self.park_cfg(), rides)
+        self.assertIn("Tower of Terror", achado["casadas"])
+        self.assertNotIn("Tower of Terror", achado["orfas"])
+
+    def test_single_rider_nao_vira_casamento(self):
+        """Regra 10: a fila paralela casaria por substring se não fosse filtrada."""
+        rides = self.verificar.rides_do_payload(
+            self.payload("Slinky Dog Dash", "Slinky Dog Dash Single Rider"))
+        achado = self.verificar.conferir(self.park_cfg(), rides)
+        self.assertEqual(achado["casadas"]["Slinky Dog Dash"], ["Slinky Dog Dash"])
+        self.assertEqual(achado["ambiguas"], {})
+
+    def test_duas_atracoes_da_api_para_um_canonico_sao_ambiguas(self):
+        rides = self.verificar.rides_do_payload(
+            self.payload("Tower of Terror", "The Twilight Zone™ Tower of Terror"))
+        achado = self.verificar.conferir(self.park_cfg(), rides)
+        self.assertIn("Tower of Terror", achado["ambiguas"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -169,7 +169,7 @@ class TestResumoDiario(BaseTeste):
                 self.gravar("Disney Hollywood Studios", "Slinky Dog Dash Single Rider", 0, ts)
         self.parques = {"Disney Hollywood Studios": 7}
 
-    def hora(self, h, m=0, dia=13):
+    def hora(self, h, m=0, dia=14):   # 14/10 é o dia do Hollywood Studios no v11
         self.monitor.now_park = lambda _c: dt.datetime(2026, 10, dia, h, m, tzinfo=EDT)
 
     def test_manda_na_janela_e_so_uma_vez(self):

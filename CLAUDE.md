@@ -198,6 +198,11 @@ Monitor de filas dos parques de Orlando (Disney + Universal) para a viagem de 12
   O Caddyfile é do Premercado: dois blocos com o mesmo hostname fazem o Caddy
   recusar a config inteira e derrubam o `premercadosc.com` junto, que é o que o
   `cat >>` do runbook antigo produzia na segunda execução
+- `scripts/verificar_nomes.py` — confere os nomes da watchlist contra o que a
+  API publica agora, e sai com código 1 se algum deixou de casar. Roda dentro
+  do container, que é quem tem rede. É outra pergunta que a do
+  `tests/test_nomes_api.py`: lá os nomes estão congelados em 23/08 e protegem a
+  normalização contra regressão; aqui a pergunta é se a API de hoje ainda casa
 - `coords.py` — script avulso (roda uma vez) que busca coordenadas no OpenStreetMap
 - `duracoes.py` — script avulso (roda uma vez) que coleta duração das páginas
   públicas "Attraction Durations" do TouringPlans. A Queue-Times e a
@@ -255,7 +260,9 @@ docker compose exec fila-disney python analyze.py   # análise
 
 ## Datas críticas
 
-- Disney: 13/out HS, 14/out AK, 15/out EPCOT, 17/out MK (16/out sem parque). Lightning Lane compra 3 dias antes, manual, ~7h da manhã
-- Universal: 18/out IOA, 19/out Park-to-Park (IOA + USF), 20/out USF, 21/out EU (Express Pass previsto só no EU, compra adiada)
+- Disney: 13/out AK, 14/out HS, 15/out EPCOT, 17/out MK (16/out sem parque). Lightning Lane compra 3 dias antes, manual, ~7h da manhã
+- Universal: 18/out IOA (dia leve), 19/out USF, 20/out EU (Express Pass previsto só no EU, compra adiada), 21/out IOA (dia inteiro)
+- Calendário vigente: “FIRME v11”, de 06/10/2026. Ele trocou 13 com 14 e 20 com
+  21, e tirou o Park-to-Park do dia 19 — o cronograma de 12/09 não vale mais
 - 12, 16 e 22–25/out não têm parque: modo coleta apenas
 - Antes de 12/out: modo coleta. Durante: modo alerta automático via `park_days`.

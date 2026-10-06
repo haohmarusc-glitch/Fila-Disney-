@@ -134,6 +134,70 @@ class TestComandoLembretes(BaseTeste):
         self.assertIn("Multi-Pass", texto)
 
 
+class TestLembretesDoV11(BaseTeste):
+    """Os lembretes reais contra o `park_days` real, depois do calendário v11.
+
+    O cronograma de 12/09 tinha o Hollywood Studios em 13/10, e os lembretes de
+    compra apontavam para lá. O v11 moveu cinco dias; um lembrete que sobrevive
+    a essa troca manda comprar fura-fila para o parque errado, e dispara uma vez
+    só — não há segunda chance.
+    """
+    # (id do lembrete, dia do parque, parque). A janela do Lightning Lane abre
+    # 3 dias antes para quem não está em hotel da Disney, que é o caso da família.
+    COMPRAS = [
+        ("singlepass-flight-of-passage-2026-10-10", "2026-10-13", "Disney Animal Kingdom"),
+        ("multipass-hollywood-2026-10-11", "2026-10-14", "Disney Hollywood Studios"),
+        ("singlepass-guardians-2026-10-12", "2026-10-15", "Epcot"),
+        ("multipass-magic-kingdom-2026-10-14", "2026-10-17", "Disney Magic Kingdom"),
+    ]
+    # Ids aposentados na virada para o v11. O arquivo manda nunca reaproveitar
+    # um id, então eles não podem voltar nem com texto novo.
+    APOSENTADOS = ("multipass-hollywood-2026-10-10", "conferir-duracao-rise-2026-10-13")
+
+    def setUp(self):
+        super().setUp()
+        self.por_id = {lem["id"]: lem for lem in self.config["reminders"]}
+
+    def dia(self, texto):
+        return datetime.strptime(texto, "%Y-%m-%d").date()
+
+    def test_compra_cai_3_dias_antes_do_parque_certo(self):
+        for id_lembrete, dia_parque, parque in self.COMPRAS:
+            with self.subTest(id=id_lembrete):
+                self.assertIn(id_lembrete, self.por_id)
+                lembrete = self.por_id[id_lembrete]
+                self.assertEqual(
+                    (self.dia(dia_parque) - self.dia(lembrete["date"])).days, 3)
+                self.assertEqual(self.config["park_days"][dia_parque], [parque])
+
+    def test_lembrete_do_rise_cai_no_dia_do_hollywood(self):
+        self.assertEqual(self.por_id["conferir-duracao-rise-2026-10-14"]["date"],
+                         "2026-10-14")
+        self.assertEqual(self.config["park_days"]["2026-10-14"],
+                         ["Disney Hollywood Studios"])
+
+    def test_aviso_do_hhn_cai_no_dia_do_universal_studios(self):
+        """O horário medido não enxerga o fechamento às 17h; o lembrete cobre."""
+        lembrete = self.por_id["fechamento-usf-hhn-2026-10-19"]
+        self.assertEqual(lembrete["date"], "2026-10-19")
+        self.assertEqual(self.config["park_days"]["2026-10-19"],
+                         ["Universal Studios At Universal Orlando"])
+
+    def test_nenhum_id_aposentado_voltou(self):
+        for id_antigo in self.APOSENTADOS:
+            with self.subTest(id=id_antigo):
+                self.assertNotIn(id_antigo, self.por_id)
+
+    def test_todo_lembrete_de_dia_de_parque_cai_num_dia_de_parque(self):
+        """Lembrete que diz 'hoje no parque X' num dia sem parque é ruído."""
+        for id_lembrete in ("conferir-duracao-rise-2026-10-14",
+                            "fechamento-usf-hhn-2026-10-19",
+                            "express-epic-2026-10-20"):
+            with self.subTest(id=id_lembrete):
+                self.assertIn(self.por_id[id_lembrete]["date"],
+                              self.config["park_days"])
+
+
 class TestFusoDaAnalise(unittest.TestCase):
     """O `-4` cravado erraria em 1h todo o histórico assim que virasse novembro."""
 
