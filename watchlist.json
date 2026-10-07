@@ -55,7 +55,8 @@
         "Remy's Ratatouille Adventure": 40,
         "Test Track": 40,
         "Soarin'": 30,
-        "Mission: SPACE": 25
+        "Mission: SPACE": 25,
+        "Living with the Land": 20
       }
     },
     "Disney Hollywood Studios": {
@@ -122,6 +123,7 @@
       }
     }
   },
+  "_comment_epcot_seasonal": "Living with the Land - Glimmering Greenhouses e um overlay sazonal da mesma atracao, confirmado pela Disney para 27/11–30/12/2026. A viagem termina em 25/10, portanto nao se aplica ao roteiro. Nao cadastrar como atracao separada: o matcher por nome canonico casa automaticamente Living with the Land com o nome sazonal se a API passar a usa-lo.",
   "alert": {
     "cooldown_minutes": 45,
     "max_staleness_minutes": 30,
